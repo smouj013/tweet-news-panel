@@ -1,6 +1,8 @@
-<!-- index.html — News → Tweet Template Panel (tnp-v4.0.1) — X Clean Dark (10→50 cap) — IMPROVED
-  ✅ Mantiene TODOS los IDs/clases que tu app.js v4.0.1 usa (no rompe nada)
-  ✅ Mejoras: SEO/PWA meta, a11y (skip link, roles), mejor modal (aria), hints UX, perf (preconnect)
+<!-- index.html — News → Tweet Template Panel (tnp-v4.0.1) — X Clean Dark — PRO (10→50 cap)
+  ✅ 100% compatible con app.js tnp-v4.0.1 (mismos IDs/clases)
+  ✅ A11y PRO (skip link, roles, aria-live, modal aria-hidden sincronizado)
+  ✅ PWA/SEO meta + perf hints (preconnect/preload)
+  ✅ Sin dependencias externas, sin romper nada
 -->
 <!doctype html>
 <html lang="es">
@@ -11,22 +13,31 @@
   <meta name="theme-color" content="#000000" />
   <meta name="description" content="Panel PRO para extraer noticias (RSS/Atom/JSON), resolver link original, imágenes y generar plantilla lista para X." />
 
-  <!-- PWA / Icons (si existen en tu repo, perfecto; si no, no rompe nada) -->
+  <!-- PWA -->
   <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="application-name" content="Tweet News Panel" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <!-- Icons (si existen, perfecto; si no, no rompe) -->
   <link rel="icon" href="./assets/icons/favicon-32.png" sizes="32x32" />
   <link rel="icon" href="./assets/icons/icon-192.png" sizes="192x192" />
   <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon-180.png" sizes="180x180" />
 
-  <!-- Perf: preconnect a endpoints típicos (no obligatorio, ayuda un poco) -->
+  <!-- Perf: preconnect a endpoints típicos -->
   <link rel="preconnect" href="https://news.google.com" crossorigin />
   <link rel="preconnect" href="https://api.allorigins.win" crossorigin />
   <link rel="preconnect" href="https://r.jina.ai" crossorigin />
   <link rel="preconnect" href="https://translate.googleapis.com" crossorigin />
+  <link rel="preconnect" href="https://www.google.com" crossorigin />
 
-  <title>News → Tweet Template Panel</title>
+  <!-- Preload CSS -->
+  <link rel="preload" href="./styles.css" as="style" />
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- tiny a11y + nicer tap highlight -->
+  <title>News → Tweet Template Panel</title>
+
+  <!-- A11y + mobile tap highlight (no depende del CSS principal) -->
   <style>
     :focus-visible{ outline: 2px solid rgba(29,155,240,.55); outline-offset: 2px; border-radius: 12px; }
     *{ -webkit-tap-highlight-color: rgba(29,155,240,.18); }
@@ -95,7 +106,7 @@
         <input id="searchBox" class="input" placeholder="Buscar…" aria-label="Buscar noticias" autocomplete="off" />
 
         <button id="btnRefresh" class="btn primary" type="button" aria-label="Refrescar">⟳ Refrescar</button>
-        <button id="btnFeeds" class="btn" type="button" aria-label="Gestionar feeds">⚙ Feeds</button>
+        <button id="btnFeeds" class="btn" type="button" aria-label="Gestionar feeds" aria-controls="modal" aria-haspopup="dialog">⚙ Feeds</button>
       </div>
     </div>
 
@@ -261,13 +272,13 @@
         </div>
       </div>
 
-      <div id="newsList" class="newsList" aria-label="Lista de noticias" role="feed"></div>
+      <div id="newsList" class="newsList" aria-label="Lista de noticias" role="feed" aria-busy="false"></div>
     </section>
   </main>
 
   <!-- MODAL FEEDS -->
   <div id="modal" class="modal hidden" aria-hidden="true">
-    <div class="modalCard" role="dialog" aria-modal="true" aria-label="Gestionar feeds">
+    <div class="modalCard" role="dialog" aria-modal="true" aria-label="Gestionar feeds" tabindex="-1">
       <div class="modalHead">
         <h3>Feeds</h3>
         <button id="btnCloseModal" class="btn" type="button" aria-label="Cerrar modal">Cerrar</button>
@@ -292,7 +303,15 @@
           <button id="btnRestoreDefaultFeeds" class="btn" type="button">Defaults</button>
         </div>
 
-        <textarea id="feedsJson" class="textarea" rows="6" placeholder="Export/Import JSON aquí…" style="margin-top:10px;" spellcheck="false"></textarea>
+        <textarea
+          id="feedsJson"
+          class="textarea"
+          rows="6"
+          placeholder="Export/Import JSON aquí…"
+          style="margin-top:10px;"
+          spellcheck="false"
+          aria-label="JSON de feeds"
+        ></textarea>
 
         <div class="hr" role="separator" aria-hidden="true"></div>
         <div id="feedList" class="feedList" aria-label="Feeds actuales"></div>
@@ -304,6 +323,27 @@
       </div>
     </div>
   </div>
+
+  <!-- Sync aria-hidden del modal según .hidden (no interfiere con app.js) -->
+  <script>
+    (function(){
+      try{
+        var modal = document.getElementById("modal");
+        if(!modal) return;
+
+        function sync(){
+          var hidden = modal.classList.contains("hidden");
+          modal.setAttribute("aria-hidden", hidden ? "true" : "false");
+        }
+        sync();
+
+        if ("MutationObserver" in window) {
+          var mo = new MutationObserver(sync);
+          mo.observe(modal, { attributes:true, attributeFilter:["class"] });
+        }
+      }catch(e){}
+    })();
+  </script>
 
   <script src="./app.js"></script>
 </body>
