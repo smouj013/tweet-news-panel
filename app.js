@@ -1,15 +1,16 @@
 /* app.js — News → Tweet Template Panel (tnp-v4.0.1) — PRO FAST+ (50+ feeds + ES robust + AUTO-UPDATE PWA)
    ✅ Rendimiento PRO:
       - Render estable + firma (evita re-render inútil)
-      - Visible-only para resolve/OG, pero traducción ES prioritaria
-      - Concurrencias ajustadas y colas dedup
-      - Batch feeds (auto-refresh por lotes) + backoff por feed
+      - Visible-only para resolve/OG (no bloquea UI)
+      - Traducción ES prioritaria y agresiva (visible-first + retries)
+      - Concurrencias ajustadas + colas dedup + backoff por feed
+      - Batch feeds (auto-refresh por lotes) + “force refresh” con Shift
    ✅ ES “siempre” (modo por defecto):
-      - Traduce agresivamente títulos visibles (aunque el detector falle)
-      - Retries + parsing robusto del endpoint de Google Translate
+      - Traduce títulos visibles si falta titleEs (sin depender del detector)
+      - Parser robusto del endpoint de Google Translate + fallback AllOrigins
    ✅ Auto-update PWA real:
-      - update() periódica
-      - si hay SW nuevo -> SKIP_WAITING -> reload 1 vez (guard)
+      - update() periódica + al volver a la pestaña
+      - si hay SW nuevo -> SKIP_WAITING -> reload 1 vez (guard session)
    ✅ Mantiene tus IDs/UI + localStorage v4, migra v3→v4
 */
 
@@ -44,7 +45,7 @@
   const VISIBLE_RESOLVE_LIMIT = 60;   // se ajusta por showLimit
 
   // translate (prioridad)
-  const TR_CONCURRENCY = 4;           // un poco más agresivo (pero sin locura)
+  const TR_CONCURRENCY = 4;           // agresivo pero estable
   const VISIBLE_TRANSLATE_LIMIT = 80; // se ajusta por showLimit
 
   // OG visible-only
@@ -63,7 +64,7 @@
   const VERSION = "tnp-v4.0.1";
 
   // PWA update checks
-  const SW_UPDATE_CHECK_MS = 5 * 60_000;   // 5 min (barato)
+  const SW_UPDATE_CHECK_MS = 5 * 60_000;   // 5 min
   const SW_FORCE_RELOAD_GUARD = "tnp_sw_reloaded_once";
 
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
@@ -87,7 +88,7 @@ Fuente:
   const gdeltDoc = (query, max=60) =>
     `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=${encodeURIComponent(String(max))}&sort=HybridRel`;
 
-  // NOTA: muchos medios cambian RSS. Google News RSS (site:dominio) es más estable.
+  // NOTA: RSS “directos” cambian mucho; GN RSS (site:dominio) suele ser más estable.
   const DEFAULT_FEEDS = [
     // ── España (Top)
     { name: "Google News — España (Top)", url: gnTop("España OR Madrid OR Barcelona OR Valencia OR Sevilla"), enabled: true },
@@ -150,7 +151,7 @@ Fuente:
     { name: "GDELT — Breaking (JSON)", url: gdeltDoc("breaking OR urgent OR developing", 70), enabled: false },
     { name: "GDELT — Spain (JSON)", url: gdeltDoc("(Spain OR España) AND (breaking OR urgent OR developing)", 70), enabled: false },
 
-    // ── Más fuentes GN por site: (para llegar sobrado a 50)
+    // ── Más fuentes GN por site: (llegar sobrado a 50)
     { name: "CNN (GN)", url: gnSite("cnn.com", "world"), enabled: false },
     { name: "NYTimes (GN)", url: gnSite("nytimes.com", "world"), enabled: false },
     { name: "Washington Post (GN)", url: gnSite("washingtonpost.com", "world"), enabled: false },
@@ -201,7 +202,7 @@ Fuente:
   const imgInFlight = new Map();
 
   const feedFail = new Map();       // url -> { fails, nextAt }
-  const feedTextHash = new Map();   // url -> hash (para saltar parse si igual dentro de sesión)
+  const feedTextHash = new Map();   // url -> hash (sesión)
 
   let uiTickTimer = 0;
   let autoRefreshTimer = 0;
@@ -304,7 +305,7 @@ Fuente:
     el.delayMin.value = String(clampNum(state.settings.delayMin ?? 10, 0, 120));
     el.optOnlyReady.checked = !!state.settings.onlyReady;
 
-    // IMPORTANT: ES always by default
+    // ES always by default
     el.optOnlySpanish.checked = state.settings.onlySpanish !== false;
 
     el.sortBy.value = String(state.settings.sortBy || "recent");
@@ -323,6 +324,9 @@ Fuente:
     bindUI();
     renderFeedsModal();
     updatePreview();
+
+    // primer render “vacío” para que el layout esté estable antes de meter items
+    renderNewsList({ silent: true });
 
     refreshAll({ reason: "boot", force: true });
     startRealtime();
@@ -697,11 +701,11 @@ Fuente:
       it._hay = hay;
       if (search && !hay.includes(search)) return false;
 
-      const isReady = (now - Number(it.publishedMs || 0)) >= (delay * 60 * 1000);
+      const isReady = ms ? ((now - ms) >= (delay * 60 * 1000)) : false;
       if (onlyReady && !isReady) return false;
 
       it._ready = isReady;
-      it._ageMin = Math.max(0, Math.floor((now - Number(it.publishedMs || 0)) / 60000));
+      it._ageMin = ms ? Math.max(0, Math.floor((now - ms) / 60000)) : 0;
       it.impact = it.impact || calcImpact(it);
 
       return true;
@@ -796,13 +800,11 @@ Fuente:
       meta.appendChild(badge("domain", domain || "link"));
 
       const time = document.createElement("span");
-      time.className = "small";
       time.dataset.role = "age";
       time.textContent = ageLabel(it._ageMin);
       meta.appendChild(time);
 
       const src = document.createElement("span");
-      src.className = "small";
       src.textContent = "· " + String(it.feed || "Feed");
       meta.appendChild(src);
 
@@ -853,25 +855,12 @@ Fuente:
     el.newsList.appendChild(frag);
     if (silent) el.newsList.scrollTop = prevScroll;
 
-    // visible-only async (sin bloquear UI)
-    queueRerenderSoft();
-
-    // resolve visible
+    // (1) Traducción primero (se nota muchísimo)
+    runSoon(() => maybeTranslateVisible(visibleForTranslate).catch(() => {}));
+    // (2) Resolve después
     runSoon(() => maybeResolveVisible(visibleForResolve).catch(() => {}));
 
-    // translate visible (PRIORIDAD: corre antes y más agresivo)
-    runSoon(() => maybeTranslateVisible(visibleForTranslate).catch(() => {}));
-
     setStatus(`Listo · mostrando ${limited.length}/${filtered.length} · ventana ${hours}h`);
-  }
-
-  function queueRerenderSoft() {
-    if (state.rerenderQueued) return;
-    state.rerenderQueued = true;
-    setTimeout(() => {
-      state.rerenderQueued = false;
-      renderNewsList({ silent: true });
-    }, 320);
   }
 
   async function useItem(it) {
@@ -884,7 +873,7 @@ Fuente:
       await maybeResolveOne(it);
     }
 
-    // ES “siempre”: si no hay titleEs, intenta traducir aunque el detector diga ES (por si viene raro)
+    // ES “siempre”: si no hay titleEs, traduce
     if (wantSpanish && !it.titleEs) {
       const es = await translateToEsCached(it.title);
       if (es) it.titleEs = es;
@@ -904,6 +893,7 @@ Fuente:
 
   function updateDynamicLabels() {
     const now = Date.now();
+    const delay = clampNum(el.delayMin.value, 0, 120);
     const cards = el.newsList.querySelectorAll(".newsItem");
     cards.forEach(card => {
       const ms = Number(card.dataset.published || 0);
@@ -911,8 +901,7 @@ Fuente:
       const ageEl = card.querySelector("[data-role='age']");
       if (ageEl) ageEl.textContent = ageLabel(min);
 
-      const delay = clampNum(el.delayMin.value, 0, 120);
-      const isReady = (now - ms) >= (delay * 60 * 1000);
+      const isReady = ms ? ((now - ms) >= (delay * 60 * 1000)) : false;
       const badgeEl = card.querySelector(".badge.ready, .badge.queue");
       if (badgeEl) {
         badgeEl.className = "badge " + (isReady ? "ready" : "queue");
@@ -972,7 +961,6 @@ Fuente:
     state.refreshInFlight = true;
     state.refreshPending = false;
 
-    const seq = ++state.refreshSeq;
     const abort = new AbortController();
     state.refreshAbort = abort;
 
@@ -1006,7 +994,7 @@ Fuente:
 
       const results = [];
       await pool(jobs, FEED_CONCURRENCY, async (f) => {
-        const out = await fetchOneFeed(f, abort.signal, force, fetchCap).catch((e) => {
+        const out = await fetchOneFeed(f, abort.signal, force, fetchCap).catch(() => {
           bumpFeedFail(String(f?.url||""));
           return [];
         });
@@ -1026,9 +1014,11 @@ Fuente:
 
       lastRefreshAt = Date.now();
       setStatus(`✅ OK · ${state.items.length} en memoria · ${new Date(lastRefreshAt).toLocaleTimeString()}`);
-      renderNewsList({ silent: true, hardPurge: false });
 
-      // tras refrescar, prioriza traducción de lo visible (se nota “instantáneo”)
+      // Render en el siguiente frame (mejor “feel” en móviles)
+      requestAnimationFrame(() => renderNewsList({ silent: true, hardPurge: false }));
+
+      // tras refrescar, prioriza traducción de lo visible
       runSoon(() => {
         const wantSpanish = state.settings.onlySpanish !== false;
         if (!wantSpanish) return;
@@ -1050,9 +1040,6 @@ Fuente:
       if (state.refreshPending) {
         state.refreshPending = false;
         refreshAll({ reason: "queued", force: false });
-      }
-      if (seq === state.refreshSeq) {
-        // ok
       }
     }
   }
@@ -1210,9 +1197,7 @@ Fuente:
       impact: 0,
       image: canonicalizeUrl(image),
       ogImage: "",
-      used: false,
 
-      // cache para search
       _hay: (fixedTitle + " " + String(feed || "")).toLowerCase(),
     };
   }
@@ -1254,8 +1239,8 @@ Fuente:
       if (!type || type.startsWith("image/")) return canonicalizeUrl(url);
     }
 
-    const desc = cleanText(textOf(itemEl, "description"));
-    const ce = cleanText(textOf(itemEl, "content\\:encoded"));
+    const desc = String(textOf(itemEl, "description"));
+    const ce = String(textOf(itemEl, "content\\:encoded"));
     const html = (ce && ce.length > desc.length) ? ce : desc;
     const img = firstImgFromHtml(html);
     return canonicalizeUrl(img);
@@ -1288,8 +1273,8 @@ Fuente:
       if (rel === "enclosure" && (!type || type.startsWith("image/"))) return canonicalizeUrl(href);
     }
 
-    const content = cleanText(textOf(entryEl, "content"));
-    const summary = cleanText(textOf(entryEl, "summary"));
+    const content = String(textOf(entryEl, "content"));
+    const summary = String(textOf(entryEl, "summary"));
     const html = (content && content.length > summary.length) ? content : summary;
     const img = firstImgFromHtml(html);
     return canonicalizeUrl(img);
@@ -1342,6 +1327,7 @@ Fuente:
       if (!prev || publishedMs > Number(prev.publishedMs || 0)) map.set(link, fixed);
     }
 
+    // dedupe adicional por título (evita duplicados de distintas URLs)
     const byTitle = new Map();
     for (const it of map.values()) {
       const tkey = normalizeTitleKey(it.title);
@@ -1354,7 +1340,6 @@ Fuente:
       if (bScore > aScore) byTitle.set(tkey, b);
     }
 
-    // re-hay
     const out = Array.from(byTitle.values());
     for (const it of out) {
       const shown = String(it.titleEs || it.title || "");
@@ -1391,7 +1376,7 @@ Fuente:
     ];
     for (const k of hot) if (title.includes(k)) score += 8;
 
-    if (/presidente|gobierno|elecciones|parlamento|congreso|ue|unión europea|onu/.test(title)) score += 6;
+    if (/presidente|gobierno|elecciones|parlamento|congreso|senado|ue|unión europea|onu/.test(title)) score += 6;
     if (/inflación|pib|tipos|banco central|bolsa|petróleo|gas|recesión|deuda/.test(title)) score += 6;
 
     const ageMin = Math.max(0, Math.floor((Date.now() - Number(it.publishedMs || Date.now())) / 60000));
@@ -1648,7 +1633,7 @@ Fuente:
     if (!wantSpanish) return;
 
     const targets = (items || [])
-      .filter(it => it && it.title && !it.titleEs) // si no hay ES, traducimos (sin depender del detector)
+      .filter(it => it && it.title && !it.titleEs)
       .slice(0, 120);
 
     if (!targets.length) return;
@@ -1668,7 +1653,7 @@ Fuente:
     const t = cleanText(text);
     if (!t) return "";
 
-    // si ya parece español fuerte, no gastes (pero si viene raro, igual se puede traducir al usar)
+    // Si claramente es español, no gastes
     if (looksSpanishStrong(t)) return t;
 
     const key = "tr|" + t.toLowerCase().slice(0, 360);
@@ -1679,23 +1664,18 @@ Fuente:
     const p = (async () => {
       const base = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=" + encodeURIComponent(t);
 
-      // 2 intentos, con pequeño delay
       for (let attempt = 0; attempt < 2; attempt++) {
-        let raw = "";
         try {
-          raw = await tryFetchText(base, 14_000);
-        } catch {
-          raw = "";
-        }
+          const raw = await tryFetchText(base, 14_000);
+          const out = parseGoogleTranslate(raw);
+          const clean = cleanText(out);
+          if (clean) {
+            writeCache(trCache, key, clean, TR_CACHE_LIMIT, LS_TR_CACHE);
+            return clean;
+          }
+        } catch {}
 
-        const out = parseGoogleTranslate(raw);
-        const clean = cleanText(out);
-        if (clean) {
-          writeCache(trCache, key, clean, TR_CACHE_LIMIT, LS_TR_CACHE);
-          return clean;
-        }
-
-        // fallback: allorigins (por si el host bloquea raro)
+        // fallback: allorigins
         try {
           const ao = "https://api.allorigins.win/raw?url=" + encodeURIComponent(base);
           const raw2 = await tryFetchText(ao, 14_000);
@@ -1721,8 +1701,6 @@ Fuente:
   function parseGoogleTranslate(raw) {
     const j = safeJson(raw);
     if (!j) return "";
-
-    // formato típico: [ [ ["texto", "orig", ...], ... ], ...]
     try {
       if (Array.isArray(j) && Array.isArray(j[0])) {
         return j[0].map(x => (x && x[0]) ? String(x[0]) : "").join("");
@@ -1784,11 +1762,7 @@ Fuente:
     let url = String(f?.url || "").trim();
     if (url && url.startsWith("//")) url = "https:" + url;
     if (url && !/^https?:\/\//i.test(url) && /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(url)) url = "https://" + url;
-    return {
-      name,
-      url,
-      enabled: f?.enabled !== false,
-    };
+    return { name, url, enabled: f?.enabled !== false };
   }
 
   /* ───────────────────────────── SETTINGS / LOAD-SAVE ───────────────────────────── */
@@ -1800,7 +1774,7 @@ Fuente:
       const feeds = Array.isArray(arr)
         ? arr.map(normalizeFeed).filter(f => f.url)
         : DEFAULT_FEEDS.map(f => ({ ...f }));
-      try { localStorage.setItem(LS_FEEDS, JSON.stringify(feeds)); } catch {}
+      safeSetLS(LS_FEEDS, JSON.stringify(feeds));
       return feeds;
     } catch {
       return DEFAULT_FEEDS.map(f => ({ ...f }));
@@ -1808,14 +1782,14 @@ Fuente:
   }
 
   function saveFeeds(feeds) {
-    try { localStorage.setItem(LS_FEEDS, JSON.stringify(feeds || [])); } catch {}
+    safeSetLS(LS_FEEDS, JSON.stringify(feeds || []));
   }
 
   function loadTemplate() {
     try {
       const raw = localStorage.getItem(LS_TEMPLATE) || localStorage.getItem(LS_TEMPLATE_V3);
       if (!raw) return DEFAULT_TEMPLATE;
-      try { localStorage.setItem(LS_TEMPLATE, raw); } catch {}
+      safeSetLS(LS_TEMPLATE, String(raw));
       return String(raw || DEFAULT_TEMPLATE);
     } catch {
       return DEFAULT_TEMPLATE;
@@ -1823,7 +1797,7 @@ Fuente:
   }
 
   function saveTemplate(tpl) {
-    try { localStorage.setItem(LS_TEMPLATE, String(tpl || DEFAULT_TEMPLATE)); } catch {}
+    safeSetLS(LS_TEMPLATE, String(tpl || DEFAULT_TEMPLATE));
   }
 
   function loadSettings() {
@@ -1860,7 +1834,7 @@ Fuente:
   function saveSetting(k, v) {
     state.settings = state.settings || {};
     state.settings[k] = v;
-    try { localStorage.setItem(LS_SETTINGS, JSON.stringify(state.settings)); } catch {}
+    safeSetLS(LS_SETTINGS, JSON.stringify(state.settings));
   }
 
   function loadUsedSet() {
@@ -1869,7 +1843,7 @@ Fuente:
       if (!raw) return new Set();
       const arr = JSON.parse(raw);
       const s = new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
-      try { localStorage.setItem(LS_USED, JSON.stringify(Array.from(s))); } catch {}
+      safeSetLS(LS_USED, JSON.stringify(Array.from(s)));
       return s;
     } catch {
       return new Set();
@@ -1877,7 +1851,7 @@ Fuente:
   }
 
   function saveUsedSet(setObj) {
-    try { localStorage.setItem(LS_USED, JSON.stringify(Array.from(setObj || []))); } catch {}
+    safeSetLS(LS_USED, JSON.stringify(Array.from(setObj || [])));
   }
 
   function toggleUsed(id, forceOn) {
@@ -1895,13 +1869,17 @@ Fuente:
       if (!raw) return fallback;
       const j = JSON.parse(raw);
       if (j && typeof j === "object") {
-        try { localStorage.setItem(keyNew, JSON.stringify(j)); } catch {}
+        safeSetLS(keyNew, JSON.stringify(j));
         return j;
       }
       return fallback;
     } catch {
       return fallback;
     }
+  }
+
+  function safeSetLS(key, value) {
+    try { localStorage.setItem(key, value); } catch {}
   }
 
   function readCache(cacheObj, key) {
@@ -1915,7 +1893,7 @@ Fuente:
     if (!cacheObj || !key || !value) return;
     cacheObj[key] = { v: String(value), t: Date.now() };
     pruneCache(cacheObj, limit);
-    try { localStorage.setItem(lsKey, JSON.stringify(cacheObj)); } catch {}
+    safeSetLS(lsKey, JSON.stringify(cacheObj));
   }
 
   function pruneCache(cacheObj, limit) {
@@ -1982,7 +1960,9 @@ Fuente:
       return await res.text();
     } finally {
       clearTimeout(t);
-      if (parentSignal) parentSignal.removeEventListener?.("abort", onAbort);
+      if (parentSignal && parentSignal.removeEventListener) {
+        try { parentSignal.removeEventListener("abort", onAbort); } catch {}
+      }
     }
   }
 
@@ -2005,7 +1985,9 @@ Fuente:
 
   /* ───────────────────────────── HELPERS ───────────────────────────── */
   function cleanText(s) {
+    // limpia tags + entidades básicas + espacios
     return String(s || "")
+      .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .replace(/&amp;/g, "&")
       .replace(/&quot;/g, "\"")
@@ -2038,8 +2020,6 @@ Fuente:
         .forEach(k => url.searchParams.delete(k));
 
       let out = url.toString();
-
-      // normaliza: evita duplicar por trailing slash
       if (out.endsWith("/") && !/https?:\/\/[^/]+\/$/.test(out)) out = out.slice(0, -1);
       return out;
     } catch {
@@ -2084,7 +2064,6 @@ Fuente:
   }
 
   function fastHash(str) {
-    // djb2-ish (rápido)
     let h = 5381;
     for (let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
     return (h >>> 0).toString(16);
@@ -2145,7 +2124,8 @@ Fuente:
   }
 
   function twCharCount(text) {
-    // Aproximación práctica (X usa t.co). Para tu panel, la longitud humana es suficiente.
+    // Para el panel, el conteo humano (len) es suficiente.
+    // (X luego acorta URLs con t.co)
     return String(text || "").length;
   }
 
@@ -2193,6 +2173,9 @@ Fuente:
       try {
         swReg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
 
+        // si ya hay waiting al cargar (update previo)
+        try { swReg.waiting?.postMessage({ type: "SKIP_WAITING" }); } catch {}
+
         // check update now
         try { await swReg.update(); } catch {}
 
@@ -2202,21 +2185,17 @@ Fuente:
           try { swReg?.update?.(); } catch {}
         }, SW_UPDATE_CHECK_MS);
 
-        // when a new SW is found
         swReg.addEventListener("updatefound", () => {
           const nw = swReg.installing;
           if (!nw) return;
           nw.addEventListener("statechange", () => {
-            // installed + there is a controller => update available
             if (nw.state === "installed" && navigator.serviceWorker.controller) {
-              // activate asap
               try { swReg.waiting?.postMessage({ type: "SKIP_WAITING" }); } catch {}
               toast("⬆️ Actualización lista…");
             }
           });
         });
 
-        // when controller changes -> reload once (guard)
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           try {
             const already = sessionStorage.getItem(SW_FORCE_RELOAD_GUARD);
@@ -2224,12 +2203,10 @@ Fuente:
             sessionStorage.setItem(SW_FORCE_RELOAD_GUARD, "1");
           } catch {}
           toast("♻️ Actualizando…");
-          // small delay to let caches settle
           setTimeout(() => location.reload(), 350);
         });
 
       } catch (e) {
-        // no rompe
         console.warn("SW register failed:", e);
       }
     });
