@@ -1,33 +1,39 @@
-<!-- index.html — News → Tweet Template Panel (tnp-v4.0.1) — PRO FAST (10→50 cap) -->
+<!-- index.html — News → Tweet Template Panel (tnp-v4.0.1) — X Clean Dark (10→50 cap) -->
 <!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
-  <meta name="theme-color" content="#060812" />
+  <meta name="theme-color" content="#000000" />
   <meta name="description" content="Panel PRO para extraer noticias (RSS/Atom/JSON), resolver link original, imágenes y generar plantilla lista para X." />
   <title>News → Tweet Template Panel</title>
 
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="stylesheet" href="./styles.css" />
+
+  <!-- tiny a11y + nicer tap highlight -->
+  <style>
+    :focus-visible{ outline: 2px solid rgba(29,155,240,.55); outline-offset: 2px; border-radius: 12px; }
+    *{ -webkit-tap-highlight-color: rgba(29,155,240,.18); }
+  </style>
 </head>
 <body>
 
   <header class="topbar">
     <div class="topLeft">
-      <div class="brand">
-        <div class="dot"></div>
+      <div class="brand" role="banner" aria-label="Panel">
+        <div class="dot" aria-hidden="true"></div>
         <div>
           <div class="brandTitle">News → Tweet Template Panel</div>
           <div class="brandSub">RSS/Atom/JSON · Link original · Imágenes · X-count · PWA</div>
         </div>
       </div>
 
-      <div class="topControls">
+      <div class="topControls" aria-label="Controles superiores">
         <label class="mini">
-          Ventana:
-          <select id="timeFilter" class="select">
+          Ventana
+          <select id="timeFilter" class="select" aria-label="Ventana de tiempo">
             <option value="1">1h</option>
             <option value="3">3h</option>
             <option value="6">6h</option>
@@ -38,8 +44,8 @@
         </label>
 
         <label class="mini">
-          Mostrar:
-          <select id="showLimit" class="select">
+          Mostrar
+          <select id="showLimit" class="select" aria-label="Límite visual de noticias">
             <option value="10" selected>10</option>
             <option value="20">20</option>
             <option value="30">30</option>
@@ -47,29 +53,29 @@
           </select>
         </label>
 
-        <label class="mini">
-          Tope:
-          <input id="fetchCap" class="input" inputmode="numeric" type="number" min="80" max="2000" step="20" value="240" />
+        <label class="mini" title="Tope total en memoria (fetch cap). Evita colapsos si tienes muchos feeds.">
+          Tope
+          <input id="fetchCap" class="input" inputmode="numeric" type="number" min="80" max="2000" step="20" value="240" aria-label="Tope total de items" />
         </label>
 
-        <input id="searchBox" class="input" placeholder="Buscar." />
+        <input id="searchBox" class="input" placeholder="Buscar…" aria-label="Buscar noticias" />
 
-        <button id="btnRefresh" class="btn primary" type="button">⟳ Refrescar</button>
-        <button id="btnFeeds" class="btn" type="button">⚙ Feeds</button>
+        <button id="btnRefresh" class="btn primary" type="button" aria-label="Refrescar">⟳ Refrescar</button>
+        <button id="btnFeeds" class="btn" type="button" aria-label="Gestionar feeds">⚙ Feeds</button>
       </div>
     </div>
 
-    <div class="topRight">
-      <div id="status" class="status">Listo</div>
+    <div class="topRight" aria-label="Estado">
+      <div id="status" class="status" role="status" aria-live="polite">Listo</div>
     </div>
   </header>
 
   <main class="layout">
-    <!-- LEFT -->
-    <section class="panel left">
+    <!-- LEFT: COMPOSER -->
+    <section class="panel left" aria-label="Plantilla">
       <div class="panelHead">
         <h2>Plantilla</h2>
-        <div class="row wrap">
+        <div class="row wrap" aria-label="Acciones de plantilla">
           <button id="btnTrim" class="btn" type="button">✂ Ajustar</button>
           <button id="btnGenTags" class="btn" type="button">🏷 Hashtags</button>
           <button id="btnCopyUrl" class="btn" type="button">🔗 Copiar URL</button>
@@ -80,66 +86,67 @@
       </div>
 
       <div class="panelBody">
-        <div class="grid2">
+        <div class="grid2" role="group" aria-label="Opciones de plantilla">
           <label class="mini">
             LIVE_URL
-            <input id="liveUrl" class="input" placeholder="https://twitch.com/globaleyetv" />
+            <input id="liveUrl" class="input" placeholder="https://twitch.com/globaleyetv" autocomplete="off" />
           </label>
 
           <label class="mini">
             HASHTAGS
-            <input id="hashtags" class="input" placeholder="#ENVIVO #Breaking #Noticias" />
+            <input id="hashtags" class="input" placeholder="#ENVIVO #Breaking #Noticias" autocomplete="off" />
           </label>
 
-          <label class="mini checkbox">
+          <label class="mini checkbox" title="Añade/quita el bloque 🔴#ENVIVO del preview">
             <input id="optIncludeLive" type="checkbox" checked />
             Incluir LIVE_URL
           </label>
 
-          <label class="mini checkbox">
+          <label class="mini checkbox" title="Añade/quita el bloque Fuente del preview">
             <input id="optIncludeSource" type="checkbox" checked />
             Incluir Fuente
           </label>
         </div>
 
-        <div class="hr"></div>
+        <div class="hr" role="separator" aria-hidden="true"></div>
 
         <label class="mini">
           HEADLINE
-          <input id="headline" class="input" placeholder="Titular…" />
+          <input id="headline" class="input" placeholder="Titular…" autocomplete="off" />
         </label>
 
         <label class="mini" style="margin-top:10px;">
           SOURCE_URL
-          <input id="sourceUrl" class="input" placeholder="https://…" />
+          <input id="sourceUrl" class="input" placeholder="https://…" autocomplete="off" />
         </label>
 
-        <div class="hr"></div>
+        <div class="hr" role="separator" aria-hidden="true"></div>
 
         <label class="mini">
           TEMPLATE
-          <textarea id="template" class="textarea" rows="8"></textarea>
+          <textarea id="template" class="textarea" rows="8" spellcheck="false"></textarea>
         </label>
 
-        <div class="hr"></div>
+        <div class="hr" role="separator" aria-hidden="true"></div>
 
         <div class="row between">
           <div class="mini">X-count: <b id="charCount">0</b>/280</div>
           <div class="mini muted">Tip: “Usar” carga titular+link y marca como usado.</div>
         </div>
 
-        <pre id="preview" class="preview"></pre>
-        <div id="warn" class="warn hidden"></div>
+        <pre id="preview" class="preview" aria-label="Vista previa del tweet"></pre>
+        <div id="warn" class="warn hidden" role="alert" aria-live="polite"></div>
       </div>
     </section>
 
-    <!-- RIGHT -->
-    <section class="panel right">
+    <!-- RIGHT: NEWS -->
+    <section class="panel right" aria-label="Noticias">
       <div class="panelHead">
         <h2>Noticias</h2>
-        <div class="row wrap">
+
+        <div class="row wrap" aria-label="Filtros principales">
           <label class="mini">
-            Delay:
+            Delay
             <input id="delayMin" class="input" type="number" min="0" max="120" step="1" value="10" style="width:90px;" />
           </label>
 
@@ -154,7 +161,7 @@
           </label>
 
           <label class="mini">
-            Orden:
+            Orden
             <select id="sortBy" class="select">
               <option value="recent" selected>Recientes</option>
               <option value="impact">Impacto</option>
@@ -163,7 +170,7 @@
           </label>
 
           <label class="mini">
-            Cat:
+            Cat
             <select id="catFilter" class="select">
               <option value="all" selected>All</option>
               <option value="spain">España</option>
@@ -180,7 +187,7 @@
           </label>
         </div>
 
-        <div class="row wrap">
+        <div class="row wrap" aria-label="Opciones avanzadas">
           <label class="mini checkbox">
             <input id="optAutoRefresh" type="checkbox" checked />
             Auto-refresh
@@ -208,7 +215,7 @@
           </label>
 
           <label class="mini" title="Cuántos feeds se refrescan por ciclo (rendimiento). Manual/Force refresca todos.">
-            Batch:
+            Batch
             <input id="batchFeeds" class="input" type="number" min="4" max="50" step="1" value="12" style="width:90px;" />
           </label>
         </div>
@@ -220,13 +227,13 @@
         </div>
       </div>
 
-      <div id="newsList" class="newsList"></div>
+      <div id="newsList" class="newsList" aria-label="Lista de noticias"></div>
     </section>
   </main>
 
   <!-- MODAL FEEDS -->
   <div id="modal" class="modal hidden" aria-hidden="true">
-    <div class="modalCard" role="dialog" aria-modal="true">
+    <div class="modalCard" role="dialog" aria-modal="true" aria-label="Gestionar feeds">
       <div class="modalHead">
         <h3>Feeds</h3>
         <button id="btnCloseModal" class="btn" type="button">Cerrar</button>
@@ -236,11 +243,11 @@
         <div class="grid2">
           <label class="mini">
             Nombre
-            <input id="newFeedName" class="input" placeholder="Mi feed" />
+            <input id="newFeedName" class="input" placeholder="Mi feed" autocomplete="off" />
           </label>
           <label class="mini">
             URL RSS/Atom/JSON
-            <input id="newFeedUrl" class="input" placeholder="https://..." />
+            <input id="newFeedUrl" class="input" placeholder="https://..." autocomplete="off" />
           </label>
         </div>
 
@@ -251,10 +258,10 @@
           <button id="btnRestoreDefaultFeeds" class="btn" type="button">Defaults</button>
         </div>
 
-        <textarea id="feedsJson" class="textarea" rows="6" placeholder="Export/Import JSON aquí…" style="margin-top:10px;"></textarea>
+        <textarea id="feedsJson" class="textarea" rows="6" placeholder="Export/Import JSON aquí…" style="margin-top:10px;" spellcheck="false"></textarea>
 
-        <div class="hr"></div>
-        <div id="feedList" class="feedList"></div>
+        <div class="hr" role="separator" aria-hidden="true"></div>
+        <div id="feedList" class="feedList" aria-label="Feeds actuales"></div>
       </div>
 
       <div class="modalFoot">
