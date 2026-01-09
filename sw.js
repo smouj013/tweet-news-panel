@@ -1,4 +1,4 @@
-/* sw.js — News → Tweet Template Panel (tnp-v4.0.0) — PWA Service Worker
+/* sw.js — News → Tweet Template Panel (tnp-v4.0.1) — PWA Service Worker
    ✅ Offline-first para shell (HTML/CSS/JS/manifest/icons)
    ✅ Network-first para RSS/feeds (si falla: cache)
    ✅ Stale-while-revalidate para imágenes y favicons
@@ -7,7 +7,7 @@
 
 "use strict";
 
-const SW_VERSION = "tnp-v4.0.0";
+const SW_VERSION = "tnp-v4.0.1";
 const CACHE_PREFIX = "tnp";
 const CACHE_SHELL = `${CACHE_PREFIX}-shell-${SW_VERSION}`;
 const CACHE_RUNTIME = `${CACHE_PREFIX}-runtime-${SW_VERSION}`;
@@ -29,7 +29,6 @@ const SHELL_ASSETS = [
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_SHELL);
-    // Intenta precachear; si faltan algunos assets, no rompe instalación
     await Promise.allSettled(SHELL_ASSETS.map((u) => cache.add(u)));
     self.skipWaiting();
   })());
@@ -37,7 +36,6 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
-    // Limpia caches antiguos
     const keys = await caches.keys();
     const keep = new Set([CACHE_SHELL, CACHE_RUNTIME, CACHE_FEEDS, CACHE_IMAGES]);
     await Promise.allSettled(keys.map((k) => (keep.has(k) ? null : caches.delete(k))));
@@ -45,7 +43,6 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
-// Helpers
 function isSameOrigin(reqUrl) {
   try { return new URL(reqUrl).origin === self.location.origin; } catch { return false; }
 }
@@ -63,20 +60,17 @@ function isAsset(reqUrl) {
   );
 }
 function isFeedLike(reqUrl) {
-  // RSS/Atom/JSON feeds + proxies
   const u = new URL(reqUrl);
   const p = u.pathname.toLowerCase();
   const h = u.hostname.toLowerCase();
   const qs = u.search.toLowerCase();
 
-  // APIs/proxies típicos del app.js
   if (h.includes("allorigins.win")) return true;
   if (h.includes("r.jina.ai")) return true;
   if (h.includes("translate.googleapis.com")) return true;
   if (h.includes("news.google.com") && p.includes("/rss")) return true;
   if (h.includes("api.gdeltproject.org")) return true;
 
-  // Heurística por path/query
   if (p.includes("rss") || p.includes("atom") || p.endsWith(".xml")) return true;
   if (p.endsWith(".json") || qs.includes("format=json") || qs.includes("output=json")) return true;
 
@@ -123,7 +117,6 @@ async function staleWhileRevalidate(req, cacheName) {
     return res;
   }).catch(() => null);
 
-  // Si hay cache, responde ya. Si no, espera a network.
   return cached || (await fetchPromise) || new Response("", { status: 504, statusText: "Offline" });
 }
 
@@ -143,33 +136,32 @@ self.addEventListener("fetch", (event) => {
   const url = req.url;
   const same = isSameOrigin(url);
 
-  // 1) Navegación (HTML): network-first con fallback offline a index.html
+  // 1) Navegación: network-first con fallback a index.html
   if (req.mode === "navigate" || (same && isHtml(req))) {
     event.respondWith((async () => {
       try {
         const fresh = await networkFirst(req, CACHE_RUNTIME, 8000);
         if (fresh && fresh.ok) return fresh;
       } catch {}
-      // fallback a la shell
       const cache = await caches.open(CACHE_SHELL);
       return (await cache.match("./index.html")) || (await cache.match("./")) || new Response("Offline", { status: 200 });
     })());
     return;
   }
 
-  // 2) Assets locales: cache-first (rápido)
+  // 2) Assets locales: cache-first
   if (same && isAsset(url)) {
     event.respondWith(cacheFirst(req, CACHE_SHELL));
     return;
   }
 
-  // 3) Feeds / APIs / proxies: network-first (si falla: cache)
+  // 3) Feeds/APIs/proxies: network-first
   if (isFeedLike(url)) {
     event.respondWith(networkFirst(req, CACHE_FEEDS, 12000));
     return;
   }
 
-  // 4) Imágenes / favicons: stale-while-revalidate
+  // 4) Imágenes/favicons: SWR
   if (isImageLike(url)) {
     event.respondWith(staleWhileRevalidate(req, CACHE_IMAGES));
     return;

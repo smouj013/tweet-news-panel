@@ -1,4 +1,4 @@
-<!-- index.html — News → Tweet Template Panel (tnp-v4.0.0) — PRO UI -->
+<!-- index.html — News → Tweet Template Panel (tnp-v4.0.1) — PRO FAST (10→50 cap) -->
 <!doctype html>
 <html lang="es">
 <head>
@@ -6,7 +6,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#060812" />
+  <meta name="description" content="Panel PRO para extraer noticias (RSS/Atom/JSON), resolver link original, imágenes y generar plantilla lista para X." />
   <title>News → Tweet Template Panel</title>
+
+  <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -17,7 +20,7 @@
         <div class="dot"></div>
         <div>
           <div class="brandTitle">News → Tweet Template Panel</div>
-          <div class="brandSub">RSS/Atom/JSON · Link original · Imágenes · X-count · Thread</div>
+          <div class="brandSub">RSS/Atom/JSON · Link original · Imágenes · X-count · PWA</div>
         </div>
       </div>
 
@@ -32,6 +35,21 @@
             <option value="24" selected>24h</option>
             <option value="72">72h</option>
           </select>
+        </label>
+
+        <label class="mini">
+          Mostrar:
+          <select id="showLimit" class="select">
+            <option value="10" selected>10</option>
+            <option value="20">20</option>
+            <option value="30">30</option>
+            <option value="50">50</option>
+          </select>
+        </label>
+
+        <label class="mini">
+          Tope:
+          <input id="fetchCap" class="input" inputmode="numeric" type="number" min="80" max="2000" step="20" value="240" />
         </label>
 
         <input id="searchBox" class="input" placeholder="Buscar." />
@@ -56,138 +74,149 @@
           <button id="btnGenTags" class="btn" type="button">🏷 Hashtags</button>
           <button id="btnCopyUrl" class="btn" type="button">🔗 Copiar URL</button>
           <button id="btnX" class="btn" type="button">𝕏 Abrir X</button>
-          <button id="btnThread" class="btn" type="button">🧵 Thread</button>
           <button id="btnCopy" class="btn primary" type="button">📋 Copiar</button>
-          <button id="btnResetTemplate" class="btn danger" type="button">↩ Reset</button>
+          <button id="btnResetTemplate" class="btn" type="button">↩ Reset</button>
         </div>
       </div>
 
       <div class="panelBody">
         <div class="grid2">
-          <label class="field">
-            <span>LIVE_URL</span>
+          <label class="mini">
+            LIVE_URL
             <input id="liveUrl" class="input" placeholder="https://twitch.com/globaleyetv" />
           </label>
 
-          <label class="field">
-            <span>HASHTAGS</span>
-            <input id="hashtags" class="input" placeholder="#ÚltimaHora #Noticias" />
+          <label class="mini">
+            HASHTAGS
+            <input id="hashtags" class="input" placeholder="#ENVIVO #Breaking #Noticias" />
           </label>
-        </div>
 
-        <label class="field">
-          <span>HEADLINE</span>
-          <input id="headline" class="input" placeholder="Selecciona una noticia a la derecha." />
-        </label>
-
-        <label class="field">
-          <span>SOURCE_URL</span>
-          <input id="sourceUrl" class="input" placeholder="https://." />
-        </label>
-
-        <div class="row wrap">
-          <label class="check">
+          <label class="mini checkbox">
             <input id="optIncludeLive" type="checkbox" checked />
-            Incluir ENVIVO
+            Incluir LIVE_URL
           </label>
 
-          <label class="check">
+          <label class="mini checkbox">
             <input id="optIncludeSource" type="checkbox" checked />
             Incluir Fuente
           </label>
-
-          <div class="charBox">
-            <span class="mini">Caracteres (X):</span>
-            <span id="charCount" class="charCount">0</span>
-          </div>
         </div>
 
-        <label class="field">
-          <span>Template (usa {{HEADLINE}}, {{LIVE_URL}}, {{SOURCE_URL}}, {{HASHTAGS}})</span>
-          <textarea id="template" class="textarea" rows="10"></textarea>
+        <div class="hr"></div>
+
+        <label class="mini">
+          HEADLINE
+          <input id="headline" class="input" placeholder="Titular…" />
         </label>
 
-        <div class="previewBox">
-          <div class="previewTitle">Vista previa</div>
-          <pre id="preview" class="preview"></pre>
-          <div id="warn" class="warn hidden"></div>
+        <label class="mini" style="margin-top:10px;">
+          SOURCE_URL
+          <input id="sourceUrl" class="input" placeholder="https://…" />
+        </label>
+
+        <div class="hr"></div>
+
+        <label class="mini">
+          TEMPLATE
+          <textarea id="template" class="textarea" rows="8"></textarea>
+        </label>
+
+        <div class="hr"></div>
+
+        <div class="row between">
+          <div class="mini">X-count: <b id="charCount">0</b>/280</div>
+          <div class="mini muted">Tip: “Usar” carga titular+link y marca como usado.</div>
         </div>
+
+        <pre id="preview" class="preview"></pre>
+        <div id="warn" class="warn hidden"></div>
       </div>
     </section>
 
     <!-- RIGHT -->
     <section class="panel right">
-      <div class="newsTop">
-        <div class="filtersRow">
-          <label class="miniLabel">
-            Delay (min)
-            <input id="delayMin" class="input smallInput" type="number" min="0" max="120" value="10" />
+      <div class="panelHead">
+        <h2>Noticias</h2>
+        <div class="row wrap">
+          <label class="mini">
+            Delay:
+            <input id="delayMin" class="input" type="number" min="0" max="120" step="1" value="10" style="width:90px;" />
           </label>
 
-          <label class="check mini">
+          <label class="mini checkbox">
             <input id="optOnlyReady" type="checkbox" />
             Solo LISTO
           </label>
 
-          <label class="check mini">
+          <label class="mini checkbox">
             <input id="optOnlySpanish" type="checkbox" checked />
-            Español
+            ES (auto)
           </label>
 
-          <label class="miniLabel">
-            Orden
+          <label class="mini">
+            Orden:
             <select id="sortBy" class="select">
               <option value="recent" selected>Recientes</option>
-              <option value="impact">Impacto (TOP)</option>
+              <option value="impact">Impacto</option>
               <option value="source">Fuente</option>
             </select>
           </label>
 
-          <label class="miniLabel">
-            Categoría
+          <label class="mini">
+            Cat:
             <select id="catFilter" class="select">
-              <option value="all" selected>Todas</option>
+              <option value="all" selected>All</option>
               <option value="spain">España</option>
               <option value="world">Mundo</option>
+              <option value="war">Guerra</option>
               <option value="politics">Política</option>
-              <option value="war">Guerra/Defensa</option>
               <option value="economy">Economía</option>
-              <option value="tech">Tecnología</option>
-              <option value="energy">Energía</option>
-              <option value="crime">Crimen</option>
+              <option value="tech">Tech</option>
+              <option value="crime">Sucesos</option>
               <option value="health">Salud</option>
               <option value="sports">Deportes</option>
-              <option value="culture">Cultura</option>
               <option value="ent">Entretenimiento</option>
             </select>
           </label>
         </div>
 
-        <div class="filtersRow second">
-          <label class="check mini">
+        <div class="row wrap">
+          <label class="mini checkbox">
             <input id="optAutoRefresh" type="checkbox" checked />
-            Auto refresh
+            Auto-refresh
           </label>
 
-          <label class="miniLabel">
-            cada (s)
-            <input id="refreshSec" class="input smallInput" type="number" min="15" max="600" value="30" />
+          <label class="mini">
+            cada
+            <input id="refreshSec" class="input" type="number" min="15" max="600" step="5" value="30" style="width:90px;" />
+            s
           </label>
 
-          <label class="check mini">
+          <label class="mini checkbox">
             <input id="optResolveLinks" type="checkbox" checked />
             Resolver links
           </label>
 
-          <label class="check mini">
+          <label class="mini checkbox">
             <input id="optShowOriginal" type="checkbox" checked />
-            Mostrar original
+            Ver original
           </label>
 
-          <label class="check mini">
+          <label class="mini checkbox">
             <input id="optHideUsed" type="checkbox" />
-            Ocultar usadas
+            Ocultar usados
           </label>
+
+          <label class="mini" title="Cuántos feeds se refrescan por ciclo (rendimiento). Manual/Force refresca todos.">
+            Batch:
+            <input id="batchFeeds" class="input" type="number" min="4" max="50" step="1" value="12" style="width:90px;" />
+          </label>
+        </div>
+      </div>
+
+      <div class="newsTop">
+        <div class="mini muted">
+          Consejo: con muchos feeds, sube Batch a 16–20 o sube el intervalo; el sistema rota por lotes para no colapsar.
         </div>
       </div>
 
@@ -196,8 +225,8 @@
   </main>
 
   <!-- MODAL FEEDS -->
-  <div id="modal" class="modal hidden">
-    <div class="modalCard">
+  <div id="modal" class="modal hidden" aria-hidden="true">
+    <div class="modalCard" role="dialog" aria-modal="true">
       <div class="modalHead">
         <h3>Feeds</h3>
         <button id="btnCloseModal" class="btn" type="button">Cerrar</button>
@@ -205,34 +234,32 @@
 
       <div class="modalBody">
         <div class="grid2">
-          <label class="field">
-            <span>Nombre</span>
+          <label class="mini">
+            Nombre
             <input id="newFeedName" class="input" placeholder="Mi feed" />
           </label>
-
-          <label class="field">
-            <span>URL RSS/Atom o JSON</span>
+          <label class="mini">
+            URL RSS/Atom/JSON
             <input id="newFeedUrl" class="input" placeholder="https://..." />
           </label>
         </div>
 
-        <div class="row wrap">
+        <div class="row wrap" style="margin-top:10px;">
           <button id="btnAddFeed" class="btn primary" type="button">+ Añadir</button>
-          <button id="btnRestoreDefaultFeeds" class="btn" type="button">↩ Defaults</button>
-          <button id="btnSaveFeeds" class="btn primary" type="button">💾 Guardar</button>
+          <button id="btnExportFeeds" class="btn" type="button">Exportar</button>
+          <button id="btnImportFeeds" class="btn" type="button">Importar</button>
+          <button id="btnRestoreDefaultFeeds" class="btn" type="button">Defaults</button>
         </div>
 
+        <textarea id="feedsJson" class="textarea" rows="6" placeholder="Export/Import JSON aquí…" style="margin-top:10px;"></textarea>
+
+        <div class="hr"></div>
         <div id="feedList" class="feedList"></div>
+      </div>
 
-        <div class="row wrap">
-          <button id="btnExportFeeds" class="btn" type="button">Exportar JSON</button>
-          <button id="btnImportFeeds" class="btn" type="button">Importar JSON</button>
-        </div>
-
-        <label class="field">
-          <span>JSON (array de {name,url,enabled})</span>
-          <textarea id="feedsJson" class="textarea" rows="8" placeholder='[{"name":"...","url":"...","enabled":true}]'></textarea>
-        </label>
+      <div class="modalFoot">
+        <div class="mini muted">Activa/desactiva feeds y guarda. Los cambios se aplican al cerrar.</div>
+        <button id="btnSaveFeeds" class="btn primary" type="button">Guardar</button>
       </div>
     </div>
   </div>
