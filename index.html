@@ -1,0 +1,242 @@
+<!-- index.html — News → Tweet Template Panel (tnp-v4.0.0) — PRO UI -->
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#060812" />
+  <title>News → Tweet Template Panel</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topLeft">
+      <div class="brand">
+        <div class="dot"></div>
+        <div>
+          <div class="brandTitle">News → Tweet Template Panel</div>
+          <div class="brandSub">RSS/Atom/JSON · Link original · Imágenes · X-count · Thread</div>
+        </div>
+      </div>
+
+      <div class="topControls">
+        <label class="mini">
+          Ventana:
+          <select id="timeFilter" class="select">
+            <option value="1">1h</option>
+            <option value="3">3h</option>
+            <option value="6">6h</option>
+            <option value="12">12h</option>
+            <option value="24" selected>24h</option>
+            <option value="72">72h</option>
+          </select>
+        </label>
+
+        <input id="searchBox" class="input" placeholder="Buscar." />
+
+        <button id="btnRefresh" class="btn primary" type="button">⟳ Refrescar</button>
+        <button id="btnFeeds" class="btn" type="button">⚙ Feeds</button>
+      </div>
+    </div>
+
+    <div class="topRight">
+      <div id="status" class="status">Listo</div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT -->
+    <section class="panel left">
+      <div class="panelHead">
+        <h2>Plantilla</h2>
+        <div class="row wrap">
+          <button id="btnTrim" class="btn" type="button">✂ Ajustar</button>
+          <button id="btnGenTags" class="btn" type="button">🏷 Hashtags</button>
+          <button id="btnCopyUrl" class="btn" type="button">🔗 Copiar URL</button>
+          <button id="btnX" class="btn" type="button">𝕏 Abrir X</button>
+          <button id="btnThread" class="btn" type="button">🧵 Thread</button>
+          <button id="btnCopy" class="btn primary" type="button">📋 Copiar</button>
+          <button id="btnResetTemplate" class="btn danger" type="button">↩ Reset</button>
+        </div>
+      </div>
+
+      <div class="panelBody">
+        <div class="grid2">
+          <label class="field">
+            <span>LIVE_URL</span>
+            <input id="liveUrl" class="input" placeholder="https://twitch.com/globaleyetv" />
+          </label>
+
+          <label class="field">
+            <span>HASHTAGS</span>
+            <input id="hashtags" class="input" placeholder="#ÚltimaHora #Noticias" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span>HEADLINE</span>
+          <input id="headline" class="input" placeholder="Selecciona una noticia a la derecha." />
+        </label>
+
+        <label class="field">
+          <span>SOURCE_URL</span>
+          <input id="sourceUrl" class="input" placeholder="https://." />
+        </label>
+
+        <div class="row wrap">
+          <label class="check">
+            <input id="optIncludeLive" type="checkbox" checked />
+            Incluir ENVIVO
+          </label>
+
+          <label class="check">
+            <input id="optIncludeSource" type="checkbox" checked />
+            Incluir Fuente
+          </label>
+
+          <div class="charBox">
+            <span class="mini">Caracteres (X):</span>
+            <span id="charCount" class="charCount">0</span>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>Template (usa {{HEADLINE}}, {{LIVE_URL}}, {{SOURCE_URL}}, {{HASHTAGS}})</span>
+          <textarea id="template" class="textarea" rows="10"></textarea>
+        </label>
+
+        <div class="previewBox">
+          <div class="previewTitle">Vista previa</div>
+          <pre id="preview" class="preview"></pre>
+          <div id="warn" class="warn hidden"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT -->
+    <section class="panel right">
+      <div class="newsTop">
+        <div class="filtersRow">
+          <label class="miniLabel">
+            Delay (min)
+            <input id="delayMin" class="input smallInput" type="number" min="0" max="120" value="10" />
+          </label>
+
+          <label class="check mini">
+            <input id="optOnlyReady" type="checkbox" />
+            Solo LISTO
+          </label>
+
+          <label class="check mini">
+            <input id="optOnlySpanish" type="checkbox" checked />
+            Español
+          </label>
+
+          <label class="miniLabel">
+            Orden
+            <select id="sortBy" class="select">
+              <option value="recent" selected>Recientes</option>
+              <option value="impact">Impacto (TOP)</option>
+              <option value="source">Fuente</option>
+            </select>
+          </label>
+
+          <label class="miniLabel">
+            Categoría
+            <select id="catFilter" class="select">
+              <option value="all" selected>Todas</option>
+              <option value="spain">España</option>
+              <option value="world">Mundo</option>
+              <option value="politics">Política</option>
+              <option value="war">Guerra/Defensa</option>
+              <option value="economy">Economía</option>
+              <option value="tech">Tecnología</option>
+              <option value="energy">Energía</option>
+              <option value="crime">Crimen</option>
+              <option value="health">Salud</option>
+              <option value="sports">Deportes</option>
+              <option value="culture">Cultura</option>
+              <option value="ent">Entretenimiento</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="filtersRow second">
+          <label class="check mini">
+            <input id="optAutoRefresh" type="checkbox" checked />
+            Auto refresh
+          </label>
+
+          <label class="miniLabel">
+            cada (s)
+            <input id="refreshSec" class="input smallInput" type="number" min="15" max="600" value="30" />
+          </label>
+
+          <label class="check mini">
+            <input id="optResolveLinks" type="checkbox" checked />
+            Resolver links
+          </label>
+
+          <label class="check mini">
+            <input id="optShowOriginal" type="checkbox" checked />
+            Mostrar original
+          </label>
+
+          <label class="check mini">
+            <input id="optHideUsed" type="checkbox" />
+            Ocultar usadas
+          </label>
+        </div>
+      </div>
+
+      <div id="newsList" class="newsList"></div>
+    </section>
+  </main>
+
+  <!-- MODAL FEEDS -->
+  <div id="modal" class="modal hidden">
+    <div class="modalCard">
+      <div class="modalHead">
+        <h3>Feeds</h3>
+        <button id="btnCloseModal" class="btn" type="button">Cerrar</button>
+      </div>
+
+      <div class="modalBody">
+        <div class="grid2">
+          <label class="field">
+            <span>Nombre</span>
+            <input id="newFeedName" class="input" placeholder="Mi feed" />
+          </label>
+
+          <label class="field">
+            <span>URL RSS/Atom o JSON</span>
+            <input id="newFeedUrl" class="input" placeholder="https://..." />
+          </label>
+        </div>
+
+        <div class="row wrap">
+          <button id="btnAddFeed" class="btn primary" type="button">+ Añadir</button>
+          <button id="btnRestoreDefaultFeeds" class="btn" type="button">↩ Defaults</button>
+          <button id="btnSaveFeeds" class="btn primary" type="button">💾 Guardar</button>
+        </div>
+
+        <div id="feedList" class="feedList"></div>
+
+        <div class="row wrap">
+          <button id="btnExportFeeds" class="btn" type="button">Exportar JSON</button>
+          <button id="btnImportFeeds" class="btn" type="button">Importar JSON</button>
+        </div>
+
+        <label class="field">
+          <span>JSON (array de {name,url,enabled})</span>
+          <textarea id="feedsJson" class="textarea" rows="8" placeholder='[{"name":"...","url":"...","enabled":true}]'></textarea>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
