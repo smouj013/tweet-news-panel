@@ -1,43 +1,46 @@
-/* styles.css — News → Tweet Template Panel (tnp-v4.0.1) — X Clean Dark (NO Neo-Atlas)
-   ✅ Look X clásico: negro + grises + azul sobrio
-   ✅ Sin neones / sin overlays raros / más “serio”
-   ✅ Mantiene tus clases/IDs (NO rompe markup)
+/* styles.css — News → Tweet Template Panel (tnp-v4.0.1) — X Classic Dark (Timeline + Pills)
+   ✅ Look “X” clásico: fondo negro, bordes #2F3336, hover sutil, azul sobrio
+   ✅ Timeline real: items “flat” con separadores (no tarjetas flotantes)
+   ✅ Mantiene clases/IDs (NO rompe markup)
+   ✅ Rendimiento: sin sombras caras, animaciones mínimas, layout estable
 */
 
 :root{
-  --bg:#000;
-  --panel:#0b0f14;
-  --panel2:#0a0d12;
+  /* Core (X-like) */
+  --bg: #000000;
+  --surface: #000000;               /* panel base */
+  --surface2: rgba(255,255,255,.03);/* sutil elevación */
+  --border: #2F3336;                /* X dark divider */
+  --borderSoft: rgba(255,255,255,.08);
 
-  --stroke: rgba(255,255,255,.10);
-  --strokeSoft: rgba(255,255,255,.07);
+  --text: #E7E9EA;                  /* X primary text */
+  --muted: #71767B;                 /* X secondary text */
+  --muted2: rgba(231,233,234,.62);
 
-  --text: rgba(255,255,255,.92);
-  --muted: rgba(255,255,255,.62);
-  --muted2: rgba(255,255,255,.45);
+  --xBlue: #1D9BF0;
+  --xBlueSoft: rgba(29,155,240,.14);
 
-  --xBlue:#1D9BF0;
-  --xBlueSoft: rgba(29,155,240,.15);
+  --good: #00BA7C;
+  --warn: #F5A524;
+  --bad:  #F4212E;
 
-  --good:#00BA7C;
-  --warn:#F5A524;
-  --bad:#F4212E;
-
-  --shadow: 0 20px 60px rgba(0,0,0,.55);
-  --shadow2: 0 10px 24px rgba(0,0,0,.35);
-
-  --r: 16px;
-  --r2: 14px;
+  /* Geometry */
+  --r: 16px;        /* big radius */
+  --r2: 14px;       /* small radius */
   --pill: 999px;
 
-  --topbarH: 64px;
+  /* Sizes */
+  --topbarH: 64px;  /* JS lo ajusta con ResizeObserver */
+  --tap: rgba(29,155,240,.18);
 
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  /* Typography */
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
   text-rendering: optimizeLegibility;
 }
 
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
+
 body{
   margin:0;
   background: var(--bg);
@@ -47,11 +50,21 @@ body{
 }
 
 .hidden{ display:none !important; }
-.hr{ height:1px; background: var(--strokeSoft); margin: 14px 0; }
+.hr{ height:1px; background: var(--borderSoft); margin: 14px 0; }
 .muted{ color: var(--muted); }
 
-a{ color: var(--xBlue); }
-a:hover{ color: rgba(29,155,240,.85); }
+a{ color: var(--xBlue); text-decoration: none; }
+a:hover{ color: rgba(29,155,240,.9); }
+
+/* Focus (coherente con tu inline style, pero aquí por si acaso) */
+:focus-visible{
+  outline: 2px solid rgba(29,155,240,.55);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+/* Tap highlight */
+*{ -webkit-tap-highlight-color: var(--tap); }
 
 /* Scrollbars (sutil) */
 *{
@@ -62,7 +75,7 @@ a:hover{ color: rgba(29,155,240,.85); }
 *::-webkit-scrollbar-thumb{
   background: rgba(255,255,255,.14);
   border-radius: 999px;
-  border: 2px solid rgba(0,0,0,.45);
+  border: 2px solid rgba(0,0,0,.55);
 }
 *::-webkit-scrollbar-track{ background: rgba(0,0,0,.35); }
 
@@ -71,7 +84,8 @@ a:hover{ color: rgba(29,155,240,.85); }
   position: sticky;
   top:0;
   z-index: 30;
-  border-bottom: 1px solid var(--strokeSoft);
+  width: 100%;
+  border-bottom: 1px solid var(--border);
   background: rgba(0,0,0,.92);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -82,27 +96,34 @@ a:hover{ color: rgba(29,155,240,.85); }
   gap: 12px;
 }
 
-.topLeft{ display:flex; align-items:center; gap: 14px; flex-wrap: wrap; }
+.topLeft{ display:flex; align-items:center; gap: 14px; flex-wrap: wrap; min-width: 0; }
 .topRight{ display:flex; align-items:center; gap: 10px; }
 
-.brand{ display:flex; align-items:center; gap: 10px; }
+.brand{ display:flex; align-items:center; gap: 10px; min-width: 240px; }
 .dot{
   width: 12px; height: 12px;
   border-radius: 999px;
   background: var(--xBlue);
-  box-shadow: 0 0 0 4px rgba(29,155,240,.12);
+  box-shadow: 0 0 0 4px rgba(29,155,240,.10);
 }
-.brandTitle{ font-weight: 900; letter-spacing:.2px; }
+.brandTitle{ font-weight: 900; letter-spacing:.2px; line-height: 1.05; }
 .brandSub{ color: var(--muted); font-size: 12px; margin-top: 2px; }
 
-.topControls{ display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+.topControls{
+  display:flex;
+  gap: 10px;
+  align-items:center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
 
+/* “status chip” como en X */
 .status{
-  border: 1px solid var(--strokeSoft);
+  border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
   padding: 8px 12px;
   border-radius: var(--pill);
-  color: rgba(255,255,255,.78);
+  color: rgba(231,233,234,.80);
   font-size: 12px;
   max-width: 46vw;
   overflow:hidden;
@@ -111,23 +132,28 @@ a:hover{ color: rgba(29,155,240,.85); }
 }
 
 /* ───────────────── LAYOUT ───────────────── */
+/* X centra contenido y limita ancho */
 .layout{
   height: calc(100vh - var(--topbarH));
   padding: 12px;
   display:grid;
   grid-template-columns: 1fr 1.25fr;
   gap: 12px;
+
+  max-width: 1265px;
+  margin: 0 auto;
 }
+
 @media (max-width: 980px){
   .layout{ grid-template-columns: 1fr; height: auto; }
 }
 
 /* ───────────────── PANELS ───────────────── */
+/* En X el look es “flat”: borde + fondo, casi sin sombra */
 .panel{
-  border: 1px solid var(--strokeSoft);
+  border: 1px solid var(--border);
   border-radius: var(--r);
-  background: rgba(11,15,20,.92);
-  box-shadow: var(--shadow);
+  background: var(--surface);
   overflow:hidden;
   display:flex;
   flex-direction: column;
@@ -136,7 +162,7 @@ a:hover{ color: rgba(29,155,240,.85); }
 
 .panelHead{
   padding: 12px 14px;
-  border-bottom: 1px solid var(--strokeSoft);
+  border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,.02);
   display:flex;
   align-items:center;
@@ -157,13 +183,16 @@ a:hover{ color: rgba(29,155,240,.85); }
   min-height: 0;
 }
 
+/* “News timeline” se ve mejor sin padding excesivo y con separadores */
 .newsTop{
   padding: 12px 14px;
-  border-bottom: 1px solid var(--strokeSoft);
+  border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,.02);
 }
+
+/* Importante: timeline real = sin padding lateral, para que parezca feed */
 .newsList{
-  padding: 10px;
+  padding: 0;
   overflow:auto;
   min-height: 0;
 }
@@ -198,8 +227,9 @@ a:hover{ color: rgba(29,155,240,.85); }
   user-select: none;
 }
 
+/* Inputs estilo X: bordes claros y fondo sutil */
 .input, .select, .textarea{
-  border: 1px solid var(--strokeSoft);
+  border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
   color: var(--text);
   border-radius: 12px;
@@ -208,10 +238,18 @@ a:hover{ color: rgba(29,155,240,.85); }
 }
 
 .select{ cursor:pointer; }
-.input::placeholder, .textarea::placeholder{ color: var(--muted2); }
+
+/* Topbar suele usar “pills” (más X) */
+.topControls .input,
+.topControls .select{
+  border-radius: var(--pill);
+  padding: 9px 12px;
+}
+
+.input::placeholder, .textarea::placeholder{ color: rgba(231,233,234,.45); }
 
 .input:focus, .select:focus, .textarea:focus{
-  border-color: rgba(29,155,240,.55);
+  border-color: rgba(29,155,240,.75);
   box-shadow: 0 0 0 3px rgba(29,155,240,.12);
   background: rgba(29,155,240,.06);
 }
@@ -225,37 +263,38 @@ input[type="checkbox"]{
 
 /* ───────────────── BUTTONS (X clean) ───────────────── */
 .btn{
-  border: 1px solid var(--strokeSoft);
+  border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
   color: var(--text);
   border-radius: var(--pill);
   padding: 9px 12px;
   cursor:pointer;
-  transition: transform .10s ease, border-color .12s ease, background .12s ease;
+  transition: border-color .12s ease, background .12s ease, filter .12s ease;
   line-height: 1;
   font-weight: 750;
 }
+
 .btn:hover{
-  transform: translateY(-1px);
-  border-color: rgba(255,255,255,.16);
+  border-color: rgba(255,255,255,.18);
   background: rgba(255,255,255,.06);
 }
-.btn:active{ transform: translateY(0px); }
+
+.btn:active{ filter: brightness(.96); }
 
 .btn.primary{
-  border-color: rgba(29,155,240,.65);
+  border-color: rgba(29,155,240,.85);
   background: var(--xBlue);
   color: #fff;
 }
 .btn.primary:hover{
   background: rgba(29,155,240,.92);
-  border-color: rgba(29,155,240,.80);
+  border-color: rgba(29,155,240,1);
 }
 
 /* ───────────────── PREVIEW ───────────────── */
 .preview{
   margin: 12px 0 0 0;
-  border: 1px solid var(--strokeSoft);
+  border: 1px solid var(--border);
   border-radius: var(--r2);
   background: rgba(255,255,255,.03);
   padding: 12px;
@@ -274,41 +313,48 @@ input[type="checkbox"]{
   color: rgba(255,230,236,.95);
 }
 
-/* ───────────────── NEWS CARDS (Timeline) ───────────────── */
+/* ───────────────── NEWS CARDS (Timeline real tipo X) ───────────────── */
+/* En X: items “flat”, separador y hover de fondo */
 .newsItem{
   display:grid;
   grid-template-columns: 112px 1fr;
   gap: 12px;
   align-items:start;
 
-  border: 1px solid var(--strokeSoft);
-  border-radius: var(--r2);
-  padding: 12px;
-  background: rgba(255,255,255,.02);
-  margin-bottom: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
 
-  transition: border-color .12s ease, background .12s ease, transform .10s ease;
+  /* nada de translateY -> mejor perf */
+  transition: background .12s ease;
 }
+
+/* borde superior en el primero, para que parezca columna X */
+.newsList .newsItem:first-child{
+  border-top: 1px solid var(--border);
+}
+
 .newsItem:hover{
-  transform: translateY(-1px);
-  border-color: rgba(255,255,255,.14);
-  background: rgba(255,255,255,.03);
+  background: rgba(255,255,255,.03); /* hover X */
 }
+
 .newsItem.top{
-  border-color: rgba(245,158,11,.28);
-  background: rgba(245,158,11,.05);
+  background: rgba(245,158,11,.06);
 }
 
 @media (max-width: 520px){
-  .newsItem{ grid-template-columns: 96px 1fr; }
+  .newsItem{ grid-template-columns: 96px 1fr; padding: 12px; }
 }
 
+/* Media thumb similar a X (rounded media) */
 .newsThumbWrap{
   width: 112px;
   aspect-ratio: 16/10;
-  border-radius: 14px;
+  border-radius: 16px;
   overflow:hidden;
-  border: 1px solid rgba(255,255,255,.10);
+  border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
   cursor:pointer;
 }
@@ -325,17 +371,18 @@ input[type="checkbox"]{
 
 .newsTitle{
   font-weight: 900;
-  letter-spacing: .15px;
+  letter-spacing: .12px;
   line-height: 1.18;
   word-break: break-word;
   margin-bottom: 8px;
   font-size: 15px;
 }
+
 .newsTitle .orig{
   display:block;
   margin-top: 6px;
   font-weight: 650;
-  color: rgba(255,255,255,.55);
+  color: rgba(231,233,234,.62);
   font-size: 12px;
 }
 
@@ -349,30 +396,31 @@ input[type="checkbox"]{
   font-size: 12px;
 }
 
-/* Badges sobrios */
+/* Badges: compactos, “chip” */
 .badge{
   font-size: 11px;
   padding: 4px 9px;
   border-radius: var(--pill);
   border: 1px solid rgba(255,255,255,.10);
   background: rgba(255,255,255,.04);
-  color: rgba(255,255,255,.88);
+  color: rgba(231,233,234,.92);
 }
+
 .badge.ready{
   border-color: rgba(0,186,124,.30);
-  background: rgba(0,186,124,.08);
+  background: rgba(0,186,124,.10);
 }
 .badge.queue{
   border-color: rgba(245,158,11,.30);
-  background: rgba(245,158,11,.08);
+  background: rgba(245,158,11,.10);
 }
 .badge.top{
   border-color: rgba(245,158,11,.38);
-  background: rgba(245,158,11,.10);
+  background: rgba(245,158,11,.12);
 }
 .badge.domain{
-  border-color: rgba(29,155,240,.28);
-  background: rgba(29,155,240,.08);
+  border-color: rgba(29,155,240,.30);
+  background: rgba(29,155,240,.10);
 }
 .badge.cat{
   border-color: rgba(255,255,255,.12);
@@ -387,35 +435,36 @@ input[type="checkbox"]{
   align-items:center;
 }
 
-/* Action links como pills */
+/* Action links como “buttons” pequeños (X style) */
 .newsLink{
   display:inline-flex;
   align-items:center;
+  justify-content:center;
   gap: 6px;
   height: 34px;
   padding: 0 12px;
   border-radius: var(--pill);
-  border: 1px solid rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.04);
   color: var(--text);
-  text-decoration:none;
   cursor:pointer;
   font-size: 13px;
   font-weight: 800;
-  transition: transform .10s ease, border-color .12s ease, background .12s ease;
+  transition: background .12s ease, border-color .12s ease, filter .12s ease;
 }
+
 .newsLink:hover{
-  transform: translateY(-1px);
-  border-color: rgba(29,155,240,.28);
-  background: rgba(29,155,240,.08);
+  border-color: rgba(29,155,240,.30);
+  background: rgba(29,155,240,.10);
 }
-.newsLink:active{ transform: translateY(0); }
+
+.newsLink:active{ filter: brightness(.97); }
 
 /* ───────────────── MODAL ───────────────── */
 .modal{
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.70);
+  background: rgba(0,0,0,.72);
   display:flex;
   align-items:center;
   justify-content:center;
@@ -430,9 +479,8 @@ input[type="checkbox"]{
   max-height: min(86vh, 980px);
   overflow: hidden;
   border-radius: 18px;
-  border: 1px solid var(--strokeSoft);
-  background: rgba(11,15,20,.96);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,.92);
   display:flex;
   flex-direction: column;
 }
@@ -442,7 +490,7 @@ input[type="checkbox"]{
   align-items:center;
   justify-content:space-between;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--strokeSoft);
+  border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,.02);
 }
 .modalHead h3{
@@ -463,10 +511,11 @@ input[type="checkbox"]{
   align-items:center;
   justify-content:space-between;
   padding: 12px 14px;
-  border-top: 1px solid var(--strokeSoft);
+  border-top: 1px solid var(--border);
   background: rgba(255,255,255,.02);
 }
 
+/* Feeds list */
 .feedList{ display:flex; flex-direction: column; gap: 10px; }
 
 .feedRow{
@@ -480,17 +529,25 @@ input[type="checkbox"]{
   justify-content:center;
   align-items:center;
 }
+
 @media (max-width: 980px){
   .feedRow{ grid-template-columns: 42px 1fr; grid-auto-rows:auto; }
 }
 
-/* A11Y */
+/* ───────────────── A11Y / MOTION ───────────────── */
 @media (prefers-reduced-motion: reduce){
   *{ transition:none !important; animation:none !important; scroll-behavior:auto !important; }
 }
 
+/* ───────────────── Small screen tweaks ───────────────── */
 @media (max-width: 520px){
   .brandSub{ display:none; }
   .status{ max-width: 62vw; }
   .newsTitle{ font-size: 14px; }
+}
+
+/* ───────────────── Optional: “columna” más X en pantallas grandes ───────────────── */
+/* Si quieres aún más parecido a X: reduce padding lateral del timeline */
+@media (min-width: 1100px){
+  .panel.right .newsList .newsItem{ padding-left: 16px; padding-right: 16px; }
 }
