@@ -1,20 +1,21 @@
-/* styles.css — News → Tweet Template Panel (tnp-v4.0.1) — X Classic Dark (Timeline + Pills)
-   ✅ Look “X” clásico: fondo negro, bordes #2F3336, hover sutil, azul sobrio
-   ✅ Timeline real: items “flat” con separadores (no tarjetas flotantes)
+/* styles.css — News → Tweet Template Panel (tnp-v4.0.1) — X Classic Dark PRO (Timeline + Pills)
+   ✅ Look “X” clásico: negro + divisores #2F3336 + hover sutil + azul sobrio
+   ✅ Timeline real: items “flat” con separadores (sin tarjetas flotantes)
    ✅ Mantiene clases/IDs (NO rompe markup)
-   ✅ Rendimiento: sin sombras caras, animaciones mínimas, layout estable
+   ✅ Rendimiento: sin sombras caras, animaciones mínimas, layout estable, contain donde ayuda
+   ✅ Ajustes PRO: mejor responsive, mejor topbar wrap, mejor “composer”, modal más fino, accesibilidad
 */
 
 :root{
   /* Core (X-like) */
   --bg: #000000;
-  --surface: #000000;               /* panel base */
-  --surface2: rgba(255,255,255,.03);/* sutil elevación */
-  --border: #2F3336;                /* X dark divider */
+  --surface: #000000;                /* panel base */
+  --surface2: rgba(255,255,255,.03); /* sutil elevación */
+  --border: #2F3336;                 /* X dark divider */
   --borderSoft: rgba(255,255,255,.08);
 
-  --text: #E7E9EA;                  /* X primary text */
-  --muted: #71767B;                 /* X secondary text */
+  --text: #E7E9EA;                   /* X primary text */
+  --muted: #71767B;                  /* X secondary text */
   --muted2: rgba(231,233,234,.62);
 
   --xBlue: #1D9BF0;
@@ -25,22 +26,25 @@
   --bad:  #F4212E;
 
   /* Geometry */
-  --r: 16px;        /* big radius */
-  --r2: 14px;       /* small radius */
+  --r: 16px;
+  --r2: 14px;
   --pill: 999px;
 
   /* Sizes */
-  --topbarH: 64px;  /* JS lo ajusta con ResizeObserver */
+  --topbarH: 64px; /* JS puede ajustarlo si implementas ResizeObserver */
   --tap: rgba(29,155,240,.18);
 
+  /* Layout caps */
+  --maxW: 1265px;
+
   /* Typography */
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    "Apple Color Emoji","Segoe UI Emoji";
   text-rendering: optimizeLegibility;
 }
 
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
-
 body{
   margin:0;
   background: var(--bg);
@@ -54,9 +58,9 @@ body{
 .muted{ color: var(--muted); }
 
 a{ color: var(--xBlue); text-decoration: none; }
-a:hover{ color: rgba(29,155,240,.9); }
+a:hover{ color: rgba(29,155,240,.92); }
 
-/* Focus (coherente con tu inline style, pero aquí por si acaso) */
+/* Focus */
 :focus-visible{
   outline: 2px solid rgba(29,155,240,.55);
   outline-offset: 2px;
@@ -94,20 +98,49 @@ a:hover{ color: rgba(29,155,240,.9); }
   align-items:center;
   justify-content: space-between;
   gap: 12px;
+
+  /* estabilidad de layout */
+  contain: layout paint style;
 }
 
-.topLeft{ display:flex; align-items:center; gap: 14px; flex-wrap: wrap; min-width: 0; }
-.topRight{ display:flex; align-items:center; gap: 10px; }
+.topLeft{
+  display:flex;
+  align-items:center;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.topRight{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
 
-.brand{ display:flex; align-items:center; gap: 10px; min-width: 240px; }
+/* Brand */
+.brand{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  min-width: 220px;
+}
 .dot{
   width: 12px; height: 12px;
   border-radius: 999px;
   background: var(--xBlue);
   box-shadow: 0 0 0 4px rgba(29,155,240,.10);
 }
-.brandTitle{ font-weight: 900; letter-spacing:.2px; line-height: 1.05; }
-.brandSub{ color: var(--muted); font-size: 12px; margin-top: 2px; }
+.brandTitle{
+  font-weight: 900;
+  letter-spacing:.2px;
+  line-height: 1.05;
+}
+.brandSub{
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
 
 .topControls{
   display:flex;
@@ -117,7 +150,7 @@ a:hover{ color: rgba(29,155,240,.9); }
   min-width: 0;
 }
 
-/* “status chip” como en X */
+/* status chip */
 .status{
   border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
@@ -140,16 +173,22 @@ a:hover{ color: rgba(29,155,240,.9); }
   grid-template-columns: 1fr 1.25fr;
   gap: 12px;
 
-  max-width: 1265px;
+  max-width: var(--maxW);
   margin: 0 auto;
+
+  /* evita “jank” al renderizar listas largas */
+  align-content: start;
 }
 
 @media (max-width: 980px){
-  .layout{ grid-template-columns: 1fr; height: auto; }
+  .layout{
+    grid-template-columns: 1fr;
+    height: auto;
+    padding-bottom: 18px;
+  }
 }
 
 /* ───────────────── PANELS ───────────────── */
-/* En X el look es “flat”: borde + fondo, casi sin sombra */
 .panel{
   border: 1px solid var(--border);
   border-radius: var(--r);
@@ -158,6 +197,9 @@ a:hover{ color: rgba(29,155,240,.9); }
   display:flex;
   flex-direction: column;
   min-height: 0;
+
+  /* perf: el scroll dentro no fuerza reflow global */
+  contain: layout paint;
 }
 
 .panelHead{
@@ -183,18 +225,20 @@ a:hover{ color: rgba(29,155,240,.9); }
   min-height: 0;
 }
 
-/* “News timeline” se ve mejor sin padding excesivo y con separadores */
+/* “News timeline” */
 .newsTop{
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,.02);
 }
-
-/* Importante: timeline real = sin padding lateral, para que parezca feed */
 .newsList{
   padding: 0;
   overflow:auto;
   min-height: 0;
+
+  /* perf: render diferido (Chrome/Edge) */
+  content-visibility: auto;
+  contain-intrinsic-size: 800px;
 }
 
 /* ───────────────── ROWS / GRIDS ───────────────── */
@@ -227,7 +271,7 @@ a:hover{ color: rgba(29,155,240,.9); }
   user-select: none;
 }
 
-/* Inputs estilo X: bordes claros y fondo sutil */
+/* Inputs estilo X */
 .input, .select, .textarea{
   border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
@@ -238,14 +282,6 @@ a:hover{ color: rgba(29,155,240,.9); }
 }
 
 .select{ cursor:pointer; }
-
-/* Topbar suele usar “pills” (más X) */
-.topControls .input,
-.topControls .select{
-  border-radius: var(--pill);
-  padding: 9px 12px;
-}
-
 .input::placeholder, .textarea::placeholder{ color: rgba(231,233,234,.45); }
 
 .input:focus, .select:focus, .textarea:focus{
@@ -254,14 +290,27 @@ a:hover{ color: rgba(29,155,240,.9); }
   background: rgba(29,155,240,.06);
 }
 
-.textarea{ width:100%; resize: vertical; }
+.textarea{
+  width:100%;
+  resize: vertical;
+  min-height: 110px;
+  line-height: 1.25;
+}
 
+/* Topbar: pills + compact */
+.topControls .input,
+.topControls .select{
+  border-radius: var(--pill);
+  padding: 9px 12px;
+}
+
+/* Checkbox */
 input[type="checkbox"]{
   width: 16px; height: 16px;
   accent-color: var(--xBlue);
 }
 
-/* ───────────────── BUTTONS (X clean) ───────────────── */
+/* ───────────────── BUTTONS ───────────────── */
 .btn{
   border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
@@ -269,16 +318,15 @@ input[type="checkbox"]{
   border-radius: var(--pill);
   padding: 9px 12px;
   cursor:pointer;
-  transition: border-color .12s ease, background .12s ease, filter .12s ease;
+  transition: background .12s ease, border-color .12s ease, filter .12s ease;
   line-height: 1;
   font-weight: 750;
+  user-select: none;
 }
-
 .btn:hover{
   border-color: rgba(255,255,255,.18);
   background: rgba(255,255,255,.06);
 }
-
 .btn:active{ filter: brightness(.96); }
 
 .btn.primary{
@@ -289,6 +337,11 @@ input[type="checkbox"]{
 .btn.primary:hover{
   background: rgba(29,155,240,.92);
   border-color: rgba(29,155,240,1);
+}
+
+/* Botones en topbar: más “X” */
+.topControls .btn{
+  padding: 9px 12px;
 }
 
 /* ───────────────── PREVIEW ───────────────── */
@@ -302,6 +355,10 @@ input[type="checkbox"]{
   white-space: pre-wrap;
   word-break: break-word;
   min-height: 120px;
+
+  /* monospace NO: se ve más X si es sans */
+  font-family: inherit;
+  line-height: 1.25;
 }
 
 .warn{
@@ -313,8 +370,7 @@ input[type="checkbox"]{
   color: rgba(255,230,236,.95);
 }
 
-/* ───────────────── NEWS CARDS (Timeline real tipo X) ───────────────── */
-/* En X: items “flat”, separador y hover de fondo */
+/* ───────────────── NEWS TIMELINE (X-like) ───────────────── */
 .newsItem{
   display:grid;
   grid-template-columns: 112px 1fr;
@@ -327,28 +383,29 @@ input[type="checkbox"]{
   border-bottom: 1px solid var(--border);
   background: transparent;
 
-  /* nada de translateY -> mejor perf */
   transition: background .12s ease;
 }
 
-/* borde superior en el primero, para que parezca columna X */
 .newsList .newsItem:first-child{
   border-top: 1px solid var(--border);
 }
-
 .newsItem:hover{
-  background: rgba(255,255,255,.03); /* hover X */
+  background: rgba(255,255,255,.03);
 }
 
 .newsItem.top{
   background: rgba(245,158,11,.06);
 }
 
+/* Responsive */
 @media (max-width: 520px){
-  .newsItem{ grid-template-columns: 96px 1fr; padding: 12px; }
+  .newsItem{
+    grid-template-columns: 96px 1fr;
+    padding: 12px;
+  }
 }
 
-/* Media thumb similar a X (rounded media) */
+/* Thumb */
 .newsThumbWrap{
   width: 112px;
   aspect-ratio: 16/10;
@@ -357,6 +414,9 @@ input[type="checkbox"]{
   border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
   cursor:pointer;
+
+  /* evita reflow por imágenes */
+  contain: paint;
 }
 @media (max-width: 520px){ .newsThumbWrap{ width: 96px; } }
 
@@ -369,6 +429,7 @@ input[type="checkbox"]{
 
 .newsBody{ min-width: 0; }
 
+/* Title */
 .newsTitle{
   font-weight: 900;
   letter-spacing: .12px;
@@ -377,7 +438,6 @@ input[type="checkbox"]{
   margin-bottom: 8px;
   font-size: 15px;
 }
-
 .newsTitle .orig{
   display:block;
   margin-top: 6px;
@@ -386,6 +446,7 @@ input[type="checkbox"]{
   font-size: 12px;
 }
 
+/* Meta */
 .newsMeta{
   display:flex;
   flex-wrap: wrap;
@@ -396,7 +457,7 @@ input[type="checkbox"]{
   font-size: 12px;
 }
 
-/* Badges: compactos, “chip” */
+/* Badges (chips) */
 .badge{
   font-size: 11px;
   padding: 4px 9px;
@@ -405,7 +466,6 @@ input[type="checkbox"]{
   background: rgba(255,255,255,.04);
   color: rgba(231,233,234,.92);
 }
-
 .badge.ready{
   border-color: rgba(0,186,124,.30);
   background: rgba(0,186,124,.10);
@@ -435,7 +495,7 @@ input[type="checkbox"]{
   align-items:center;
 }
 
-/* Action links como “buttons” pequeños (X style) */
+/* Action links */
 .newsLink{
   display:inline-flex;
   align-items:center;
@@ -452,12 +512,10 @@ input[type="checkbox"]{
   font-weight: 800;
   transition: background .12s ease, border-color .12s ease, filter .12s ease;
 }
-
 .newsLink:hover{
   border-color: rgba(29,155,240,.30);
   background: rgba(29,155,240,.10);
 }
-
 .newsLink:active{ filter: brightness(.97); }
 
 /* ───────────────── MODAL ───────────────── */
@@ -517,7 +575,6 @@ input[type="checkbox"]{
 
 /* Feeds list */
 .feedList{ display:flex; flex-direction: column; gap: 10px; }
-
 .feedRow{
   display:grid;
   grid-template-columns: 42px 1fr 2fr auto;
@@ -544,10 +601,29 @@ input[type="checkbox"]{
   .brandSub{ display:none; }
   .status{ max-width: 62vw; }
   .newsTitle{ font-size: 14px; }
+  .panelHead{ padding: 12px; }
+  .panelBody{ padding: 12px; }
 }
 
-/* ───────────────── Optional: “columna” más X en pantallas grandes ───────────────── */
-/* Si quieres aún más parecido a X: reduce padding lateral del timeline */
+/* ───────────────── Big screens: más “columna X” ───────────────── */
 @media (min-width: 1100px){
-  .panel.right .newsList .newsItem{ padding-left: 16px; padding-right: 16px; }
+  .panel.right .newsList .newsItem{
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* ───────────────── Extra: sticky panel heads en scroll (súper útil) ───────────────── */
+/* Mantiene el estilo X (headers pegados) sin romper layout */
+.panel .panelHead{
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.panel.right .panelHead{ top: 0; }
+.panel.left .panelHead{ top: 0; }
+
+/* En móvil (layout 1 columna) evita doble sticky “extraño” */
+@media (max-width: 980px){
+  .panel .panelHead{ position: static; }
 }
