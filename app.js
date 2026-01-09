@@ -1,11 +1,33 @@
-/* app.js — News → Tweet Template Panel (tnp-v4.0.0) — PRO HARDENED + IMAGES + THREAD (MAX UPGRADE)
-   ✅ Anti “pantalla en blanco”: overlay + window.onerror + unhandledrejection
-   ✅ Refresh PRO: no solapa (cola), force abort, backoff por feed, pool concurrency
-   ✅ Rendimiento: render por chunks (no bloquea), tick UI sin re-render, visible-only translate/resolve/OG
-   ✅ Links reales: resolver Google News + redirects + clean tracking + cache
-   ✅ Imágenes: RSS media/enclosure + <img> en description + og:image/twitter:image + favicon fallback
-   ✅ De-dupe: por URL canónica + por título normalizado
-   ✅ 🧵 Thread: parte automáticamente en varios tweets (con 1/N) y copia al portapapeles
+/* app.js — News → Tweet Template Panel (tnp-v4.0.0) — HARDENED+PRO + IMAGES (MAX UPGRADE)
+   ✅ FIXES CRÍTICOS (no más “pantalla en blanco”):
+      - Spread/clone seguro ({ ...obj }) en todo el código
+      - Debounce correcto (...args)
+      - Limpieza tracking correcta (itera keys de searchParams)
+      - crashOverlay rgba correcto (.88)
+      - Toggle “Incluir Fuente” funciona siempre (no depende de {{SOURCE_URL}})
+   ✅ Rendimiento / Anti-bloqueos:
+      - Refresh NO solapado (cola + abort en “force”)
+      - Concurrencia limitada: feeds + resolver + traducción + OG images
+      - Backoff por feed que falla (evita martilleo)
+      - Tick UI NO re-render: solo actualiza “hace X min” + LISTO/EN COLA
+      - visibilitychange listener anti-duplicado
+      - De-dupe agresivo (URL canónica + título normalizado)
+      - Render eficiente (DocumentFragment)
+   ✅ “Mejores noticias”:
+      - Heurística de impacto (fuente + keywords + frescura)
+      - Badge 🔥 TOP
+      - En “Recientes” prioriza TOP sin perder frescura
+   ✅ Enlaces originales:
+      - Resolver Google News + redirects con varios métodos + caché + limpieza tracking
+      - Badge de dominio real (si está resuelto)
+   ✅ IMÁGENES:
+      - RSS/Atom: media:thumbnail/media:content/enclosure/<img> en description/content
+      - JSON (GDELT): image/socialimage/urlToImage
+      - Fallback: og:image/twitter:image (CORS-safe con proxies) + caché
+      - Fallback final: favicon del dominio
+      - OG solo para visibles (IntersectionObserver) + concurrencia baja
+   ✅ Compatibilidad:
+      - Mantiene IDs/UI y tu localStorage v4 (migra v3->v4)
 */
 
 (() => {
@@ -30,18 +52,18 @@
   /* ───────────────────────────── REALTIME ───────────────────────────── */
   const AUTO_REFRESH_FEEDS_SEC_DEFAULT = 30;
   const AUTO_TICK_UI_SEC = 10;
-
   const MAX_ITEMS_KEEP = 900;
 
   const FEED_CONCURRENCY = 6;
   const RESOLVE_CONCURRENCY = 3;
   const TR_CONCURRENCY = 2;
 
+  // visibles-only
   const IMG_CONCURRENCY = 2;
   const VISIBLE_TRANSLATE_LIMIT = 70;
   const VISIBLE_RESOLVE_LIMIT = 60;
-  const OBSERVE_OG_VISIBLE_LIMIT = 80;
 
+  const OBSERVE_OG_VISIBLE_LIMIT = 80;
   const OG_FETCH_TIMEOUT_MS = 14_000;
 
   const TR_CACHE_LIMIT = 1400;
@@ -72,10 +94,11 @@ Fuente:
   const gdeltDoc = (query, max=50) =>
     `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=${encodeURIComponent(String(max))}&sort=HybridRel`;
 
+  // Defaults (puedes meter 100+ desde el modal; esto no te limita)
   const DEFAULT_FEEDS = [
     { name: "DW Español (RSS)", url: "https://rss.dw.com/rdf/rss-es-all", enabled: true },
     { name: "Euronews (MRSS)", url: "https://www.euronews.com/rss?format=mrss", enabled: true },
-    { name: "Google News — España (RSS)", url: gn("España OR Madrid OR Barcelona"), enabled: true },
+    { name: "Google News — España (RSS)", url: gn("España OR Madrid OR Barcelona OR Valencia"), enabled: true },
     { name: "Google News — Mundo (RSS)", url: gn("World OR International OR ONU OR UE"), enabled: true },
     { name: "Reuters — World (via GN)", url: gn("site:reuters.com world"), enabled: false },
     { name: "AP — World (via GN)", url: gn("site:apnews.com world"), enabled: false },
@@ -109,15 +132,15 @@ Fuente:
   const resInFlight = new Map();
   const imgInFlight = new Map();
 
-  const feedFail = new Map(); // url -> { fails, nextAt }
-  const feedTextHash = new Map(); // url -> hash (para saltar parse si igual dentro de sesión)
+  const feedFail = new Map();       // url -> { fails, nextAt }
+  const feedTextHash = new Map();   // url -> hash (evita re-parse dentro de sesión si idéntico)
 
   let uiTickTimer = 0;
   let autoRefreshTimer = 0;
   let visHandlerInstalled = false;
   let lastRefreshAt = 0;
 
-  // OG visible-only
+  // IntersectionObserver para OG (solo visibles)
   let ogObserver = null;
 
   /* ───────────────────────────── DOM ───────────────────────────── */
@@ -140,7 +163,7 @@ Fuente:
     el.btnGenTags = must("#btnGenTags");
     el.btnCopyUrl = must("#btnCopyUrl");
     el.btnX = must("#btnX");
-    el.btnThread = must("#btnThread");
+    el.btnThread = q("#btnThread"); // opcional
     el.btnCopy = must("#btnCopy");
     el.btnResetTemplate = must("#btnResetTemplate");
 
@@ -188,7 +211,11 @@ Fuente:
   function init() {
     grabEls();
     syncTopbarHeight();
+    injectThumbCss();
     setupOgObserver();
+
+    // PWA: registra SW si existe (no rompe si no hay)
+    registerServiceWorkerSafe();
 
     state.template = loadTemplate();
     state.feeds = loadFeeds();
@@ -222,6 +249,7 @@ Fuente:
     refreshAll({ reason: "boot", force: true });
     startRealtime();
 
+    // debug
     window.TNP_DEBUG = { state, trCache, resolveCache, imgCache, VERSION };
   }
 
@@ -252,26 +280,59 @@ Fuente:
     el.modal.addEventListener("click", (e) => { if (e.target === el.modal) openModal(false); });
 
     el.timeFilter.addEventListener("change", () => renderNewsList({ silent: true }));
-    el.searchBox.addEventListener("input", debounce(() => renderNewsList({ silent: true }), 120));
+    el.searchBox.addEventListener("input", debounce(() => renderNewsList({ silent: true }), 140));
 
     el.delayMin.addEventListener("input", () => {
       saveSetting("delayMin", clampNum(el.delayMin.value, 0, 120));
       renderNewsList({ silent: true });
     });
 
-    el.optOnlyReady.addEventListener("change", () => { saveSetting("onlyReady", !!el.optOnlyReady.checked); renderNewsList({ silent: true }); });
-    el.optOnlySpanish.addEventListener("change", () => { saveSetting("onlySpanish", !!el.optOnlySpanish.checked); renderNewsList({ silent: true }); });
-    el.sortBy.addEventListener("change", () => { saveSetting("sortBy", el.sortBy.value); renderNewsList({ silent: true }); });
-    if (el.catFilter) el.catFilter.addEventListener("change", () => { saveSetting("catFilter", el.catFilter.value); renderNewsList({ silent: true }); });
+    el.optOnlyReady.addEventListener("change", () => {
+      saveSetting("onlyReady", !!el.optOnlyReady.checked);
+      renderNewsList({ silent: true });
+    });
 
-    if (el.optAutoRefresh) el.optAutoRefresh.addEventListener("change", () => { saveSetting("autoRefresh", !!el.optAutoRefresh.checked); startRealtime(); });
-    if (el.refreshSec) el.refreshSec.addEventListener("input", () => { saveSetting("refreshSec", clampNum(el.refreshSec.value, 15, 600)); startRealtime(); });
+    el.optOnlySpanish.addEventListener("change", () => {
+      saveSetting("onlySpanish", !!el.optOnlySpanish.checked);
+      renderNewsList({ silent: true });
+    });
 
-    if (el.optResolveLinks) el.optResolveLinks.addEventListener("change", () => { saveSetting("resolveLinks", !!el.optResolveLinks.checked); renderNewsList({ silent: true }); });
-    if (el.optShowOriginal) el.optShowOriginal.addEventListener("change", () => { saveSetting("showOriginal", !!el.optShowOriginal.checked); renderNewsList({ silent: true }); });
-    if (el.optHideUsed) el.optHideUsed.addEventListener("change", () => { saveSetting("hideUsed", !!el.optHideUsed.checked); renderNewsList({ silent: true }); });
+    el.sortBy.addEventListener("change", () => {
+      saveSetting("sortBy", el.sortBy.value);
+      renderNewsList({ silent: true });
+    });
 
-    // composer
+    if (el.catFilter) el.catFilter.addEventListener("change", () => {
+      saveSetting("catFilter", el.catFilter.value);
+      renderNewsList({ silent: true });
+    });
+
+    if (el.optAutoRefresh) el.optAutoRefresh.addEventListener("change", () => {
+      saveSetting("autoRefresh", !!el.optAutoRefresh.checked);
+      startRealtime();
+    });
+
+    if (el.refreshSec) el.refreshSec.addEventListener("input", () => {
+      saveSetting("refreshSec", clampNum(el.refreshSec.value, 15, 600));
+      startRealtime();
+    });
+
+    if (el.optResolveLinks) el.optResolveLinks.addEventListener("change", () => {
+      saveSetting("resolveLinks", !!el.optResolveLinks.checked);
+      renderNewsList({ silent: true });
+    });
+
+    if (el.optShowOriginal) el.optShowOriginal.addEventListener("change", () => {
+      saveSetting("showOriginal", !!el.optShowOriginal.checked);
+      renderNewsList({ silent: true });
+    });
+
+    if (el.optHideUsed) el.optHideUsed.addEventListener("change", () => {
+      saveSetting("hideUsed", !!el.optHideUsed.checked);
+      renderNewsList({ silent: true });
+    });
+
+    // composer inputs
     const composerInputs = [el.liveUrl, el.hashtags, el.optIncludeLive, el.optIncludeSource, el.template, el.headline, el.sourceUrl];
     composerInputs.forEach(n => {
       const ev = (n.tagName === "INPUT" || n.tagName === "TEXTAREA") ? "input" : "change";
@@ -307,25 +368,31 @@ Fuente:
       window.open(url, "_blank", "noopener,noreferrer");
     });
 
-    el.btnThread.addEventListener("click", async () => {
-      const txt = String(el.preview.textContent || "");
-      if (!txt.trim()) return toast("⚠️ No hay texto.");
-      const parts = buildThreadFromText(txt);
-      if (parts.length <= 1) {
-        await copyToClipboard(parts[0] || txt);
-        toast("🧵 Cabe en 1 tweet (copiado).");
-        return;
-      }
-      const joined = parts.map((p, i) => `(${i+1}/${parts.length})\n${p}`).join("\n\n— — —\n\n");
-      await copyToClipboard(joined);
-      toast(`🧵 Thread listo: ${parts.length} tweets (copiado).`);
-    });
+    if (el.btnThread) {
+      el.btnThread.addEventListener("click", async () => {
+        const txt = String(el.preview.textContent || "");
+        if (!txt.trim()) return toast("⚠️ No hay texto.");
+        const parts = buildThread(txt);
+        if (parts.length <= 1) {
+          const url = "https://twitter.com/intent/tweet?text=" + encodeURIComponent(parts[0]);
+          window.open(url, "_blank", "noopener,noreferrer");
+          return;
+        }
+        // abrimos el primero, y copiamos el resto listo para pegar
+        const firstUrl = "https://twitter.com/intent/tweet?text=" + encodeURIComponent(parts[0]);
+        window.open(firstUrl, "_blank", "noopener,noreferrer");
+        const rest = parts.slice(1).join("\n\n—\n\n");
+        await copyToClipboard(rest);
+        toast(`🧵 Thread: ${parts.length} tweets (resto copiado).`);
+      });
+    }
 
     el.btnTrim.addEventListener("click", () => {
       const out = String(el.preview.textContent || "");
       const count = twCharCount(out);
       if (count <= 280) return toast("✅ Ya cabe en 280.");
 
+      // recorta headline “inteligente”
       const tpl = String(el.template.value || DEFAULT_TEMPLATE);
       const includeLive = !!el.optIncludeLive.checked;
       const includeSource = !!el.optIncludeSource.checked;
@@ -343,6 +410,7 @@ Fuente:
       if (!includeLive) base = base.replace(/^\s*🔴#ENVIVO[^\n]*\n?/mi, "").trim();
       if (!includeSource) base = base.replace(/^\s*Fuente:\s*\n[^\n]*\n?/mi, "").trim();
 
+      // calcula “espacio” restante para headline
       const budget = 280 - twCharCount(base);
       if (budget <= 10) return toast("⚠️ Muy poco margen (quita hashtags o fuente).");
 
@@ -433,6 +501,20 @@ Fuente:
     if (show) el.feedsJson.value = "";
   }
 
+  function setStatus(s) {
+    el.status.textContent = String(s || "Listo");
+  }
+
+  function toast(msg) {
+    setStatus(msg);
+    const mySeq = ++state.refreshSeq;
+    setTimeout(() => {
+      if (state.refreshInFlight) return;
+      if (mySeq !== state.refreshSeq) return;
+      setStatus("Listo");
+    }, 2200);
+  }
+
   function syncTopbarHeight() {
     const topbar = document.querySelector(".topbar");
     if (!topbar) return;
@@ -443,6 +525,42 @@ Fuente:
       ro.observe(topbar);
     }
     window.addEventListener("resize", apply, { passive: true });
+  }
+
+  /* ───────────────────────────── THUMB CSS (injected) ───────────────────────────── */
+  function injectThumbCss() {
+    if (document.getElementById("tnpThumbCss")) return;
+    const st = document.createElement("style");
+    st.id = "tnpThumbCss";
+    st.textContent = `
+/* ——— thumbnails (injected) ——— */
+.newsItem{ display:grid; grid-template-columns: 112px 1fr; gap: 12px; align-items:start; }
+@media (max-width: 520px){ .newsItem{ grid-template-columns: 92px 1fr; } }
+.newsThumbWrap{
+  width: 112px;
+  aspect-ratio: 16 / 10;
+  border-radius: 12px;
+  overflow:hidden;
+  border: 1px solid rgba(255,255,255,.10);
+  background:
+    radial-gradient(120px 70px at 15% 15%, rgba(124,58,237,.22), transparent 60%),
+    radial-gradient(120px 70px at 80% 20%, rgba(34,211,238,.16), transparent 60%),
+    rgba(0,0,0,.18);
+  box-shadow: 0 12px 28px rgba(0,0,0,.22);
+  cursor: pointer;
+}
+@media (max-width: 520px){ .newsThumbWrap{ width:92px; } }
+.newsThumb{
+  width:100%;
+  height:100%;
+  object-fit: cover;
+  display:block;
+  transform: scale(1.001);
+}
+.newsBody{ min-width: 0; }
+.newsTitle .orig{ display:block; margin-top:6px; font-size:12px; opacity:.70; }
+`;
+    document.head.appendChild(st);
   }
 
   /* ───────────────────────────── PREVIEW ───────────────────────────── */
@@ -464,20 +582,25 @@ Fuente:
     out = out.replace(/\{\{HASHTAGS\}\}/g, hashtags);
 
     if (!includeLive) out = out.replace(/^\s*🔴#ENVIVO[^\n]*\n?/mi, "").trim();
-    // FIX: ya NO buscamos "{{SOURCE_URL}}" (porque ya fue reemplazado)
+
+    // ✅ FIX: ya NO buscamos "{{SOURCE_URL}}" (porque ya fue reemplazado)
     if (!includeSource) out = out.replace(/^\s*Fuente:\s*\n[^\n]*\n?/mi, "").trim();
 
-    el.preview.textContent = String(out || "");
+    setPreview(out);
 
     const count = twCharCount(out);
     el.charCount.textContent = String(count);
 
     const warn = [];
-    if (count > 280) warn.push(`Te pasas: ${count}/280 (usa ✂ o 🧵)`);
+    if (count > 280) warn.push(`Te pasas: ${count}/280`);
     if (!headline) warn.push("Falta HEADLINE.");
     if (includeSource && !sourceUrl) warn.push("Falta SOURCE_URL.");
     if (includeLive && !liveUrl) warn.push("Falta LIVE_URL.");
     setWarn(warn);
+  }
+
+  function setPreview(txt) {
+    el.preview.textContent = String(txt || "");
   }
 
   function setWarn(lines) {
@@ -491,6 +614,273 @@ Fuente:
     el.warn.textContent = arr.join("\n");
   }
 
+  /* ───────────────────────────── NEWS LIST ───────────────────────────── */
+  function renderNewsList({ silent = false } = {}) {
+    const items = (state.items || []).slice();
+
+    const hours = clampNum(el.timeFilter.value, 1, 72);
+    const search = String(el.searchBox.value || "").trim().toLowerCase();
+
+    const delay = clampNum(el.delayMin.value, 0, 120);
+    const onlyReady = !!el.optOnlyReady.checked;
+
+    const wantSpanish = state.settings.onlySpanish !== false;
+    const hideUsed = !!state.settings.hideUsed;
+    const sortBy = String(state.settings.sortBy || "recent");
+    const cat = String(state.settings.catFilter || "all");
+
+    const now = Date.now();
+    const minMs = now - (hours * 60 * 60 * 1000);
+
+    const filtered = items.filter(it => {
+      if (!it) return false;
+      const ms = Number(it.publishedMs || 0) || 0;
+      if (ms && ms < minMs) return false;
+
+      if (hideUsed && state.used.has(it.id)) return false;
+
+      if (cat && cat !== "all" && String(it.cat || "all") !== cat) return false;
+
+      const shownTitle = String(it.titleEs || it.title || "");
+      const hay = (shownTitle + " " + String(it.feed || "")).toLowerCase();
+      if (search && !hay.includes(search)) return false;
+
+      const isReady = (now - Number(it.publishedMs || 0)) >= (delay * 60 * 1000);
+      if (onlyReady && !isReady) return false;
+
+      it._ready = isReady;
+      it._ageMin = Math.max(0, Math.floor((now - Number(it.publishedMs || 0)) / 60000));
+      it.impact = it.impact || calcImpact(it);
+
+      return true;
+    });
+
+    // sort
+    if (sortBy === "impact") {
+      filtered.sort((a, b) => (calcImpact(b) - calcImpact(a)) || (b.publishedMs - a.publishedMs));
+    } else if (sortBy === "source") {
+      filtered.sort((a, b) => String(a.feed).localeCompare(String(b.feed)) || (b.publishedMs - a.publishedMs));
+    } else {
+      // recientes + boost TOP
+      filtered.sort((a, b) => {
+        const ai = calcImpact(a), bi = calcImpact(b);
+        const aTop = ai >= 70 ? 1 : 0;
+        const bTop = bi >= 70 ? 1 : 0;
+        if (bTop !== aTop) return bTop - aTop;
+        return (b.publishedMs - a.publishedMs);
+      });
+    }
+
+    const prevScroll = el.newsList.scrollTop;
+
+    el.newsList.innerHTML = "";
+    const frag = document.createDocumentFragment();
+
+    const resolveLinks = state.settings.resolveLinks !== false;
+
+    const visibleForResolve = [];
+    const visibleForTranslate = [];
+    let observed = 0;
+
+    for (const it of filtered) {
+      const shownUrl = canonicalizeUrl((resolveLinks ? (it.linkResolved || it.link) : it.link) || it.link);
+      const domain = shownUrl ? getDomain(shownUrl) : "";
+
+      const top = calcImpact(it) >= 70;
+      const origNeeded = !!(state.settings.showOriginal !== false) && !!it.titleEs && it.titleEs !== it.title;
+
+      const card = document.createElement("div");
+      card.className = "newsItem" + (top ? " top" : "");
+      card.dataset.id = it.id;
+      card.dataset.url = shownUrl || it.link || "";
+      card.dataset.link = it.link || "";
+      card.dataset.published = String(it.publishedMs || 0);
+
+      // thumb
+      const thumbWrap = document.createElement("div");
+      thumbWrap.className = "newsThumbWrap";
+      const img = document.createElement("img");
+      img.className = "newsThumb";
+      img.alt = "";
+      const best = pickBestThumb(it, shownUrl || it.link);
+      img.src = best || faviconUrl(shownUrl || it.link);
+      thumbWrap.appendChild(img);
+
+      thumbWrap.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (shownUrl) window.open(shownUrl, "_blank", "noopener,noreferrer");
+      });
+
+      // body
+      const body = document.createElement("div");
+      body.className = "newsBody";
+
+      const title = document.createElement("div");
+      title.className = "newsTitle";
+      title.textContent = it.titleEs || it.title || "—";
+
+      if (origNeeded) {
+        const orig = document.createElement("span");
+        orig.className = "orig";
+        orig.textContent = it.title || "";
+        title.appendChild(orig);
+      }
+
+      const meta = document.createElement("div");
+      meta.className = "newsMeta";
+
+      meta.appendChild(badge("cat", it.cat || "all"));
+      if (top) meta.appendChild(badge("top", "🔥 TOP"));
+
+      meta.appendChild(badge(it._ready ? "ready" : "queue", it._ready ? "LISTO" : "EN COLA"));
+      meta.appendChild(badge("domain", domain || "link"));
+
+      const time = document.createElement("span");
+      time.className = "small";
+      time.dataset.role = "age";
+      time.textContent = ageLabel(it._ageMin);
+      meta.appendChild(time);
+
+      const src = document.createElement("span");
+      src.className = "small";
+      src.textContent = "· " + String(it.feed || "Feed");
+      meta.appendChild(src);
+
+      const actions = document.createElement("div");
+      actions.className = "actionsRow";
+
+      const btnUse = linkBtn("Usar", "#");
+      btnUse.addEventListener("click", async (e) => {
+        e.preventDefault();
+        await useItem(it);
+      });
+
+      const btnOpen = linkBtn("Abrir", shownUrl || it.link);
+      btnOpen.target = "_blank";
+      btnOpen.rel = "noopener noreferrer";
+
+      const btnMark = linkBtn(state.used.has(it.id) ? "Desmarcar" : "Marcar", "#");
+      btnMark.addEventListener("click", (e) => {
+        e.preventDefault();
+        toggleUsed(it.id);
+        renderNewsList({ silent: true });
+      });
+
+      actions.appendChild(btnUse);
+      actions.appendChild(btnOpen);
+      actions.appendChild(btnMark);
+
+      body.appendChild(title);
+      body.appendChild(meta);
+      body.appendChild(actions);
+
+      card.appendChild(thumbWrap);
+      card.appendChild(body);
+      frag.appendChild(card);
+
+      // visibles-only pools
+      if (visibleForResolve.length < VISIBLE_RESOLVE_LIMIT) visibleForResolve.push(it);
+      if (wantSpanish && visibleForTranslate.length < VISIBLE_TRANSLATE_LIMIT) visibleForTranslate.push(it);
+
+      // observe OG solo si no tiene thumb y no es GN
+      if (ogObserver && observed < OBSERVE_OG_VISIBLE_LIMIT) {
+        const lacks = !(it.image || it.ogImage || readCache(imgCache, imgCacheKey(shownUrl || it.link)));
+        if (lacks && shownUrl && !isGoogleNews(shownUrl)) {
+          ogObserver.observe(card);
+          observed++;
+        }
+      }
+    }
+
+    el.newsList.appendChild(frag);
+
+    if (silent) el.newsList.scrollTop = prevScroll;
+
+    // visible-only async (sin bloquear UI)
+    queueRerenderSoft();
+    idle(async () => { await maybeResolveVisible(visibleForResolve).catch(() => {}); });
+    idle(async () => { await maybeTranslateVisible(visibleForTranslate).catch(() => {}); });
+  }
+
+  function queueRerenderSoft() {
+    if (state.rerenderQueued) return;
+    state.rerenderQueued = true;
+    setTimeout(() => {
+      state.rerenderQueued = false;
+      renderNewsList({ silent: true });
+    }, 350);
+  }
+
+  async function useItem(it) {
+    if (!it) return;
+
+    const resolveLinks = state.settings.resolveLinks !== false;
+
+    // 1) resolver si procede
+    if (resolveLinks && it.link && !it.linkResolved && (isGoogleNews(it.link) || looksLikeRedirect(it.link))) {
+      await maybeResolveOne(it);
+    }
+
+    // 2) traducir si procede
+    if (state.settings.onlySpanish !== false && !it.titleEs && !looksSpanish(it.title)) {
+      const es = await translateToEsCached(it.title);
+      if (es) it.titleEs = es;
+    }
+
+    const shownUrl = canonicalizeUrl((resolveLinks ? (it.linkResolved || it.link) : it.link) || it.link) || "";
+    const headline = cleanText((it.titleEs || it.title || "").trim());
+
+    el.headline.value = headline;
+    el.sourceUrl.value = shownUrl;
+
+    toggleUsed(it.id, true);
+
+    updatePreview();
+    toast("✅ Cargado en plantilla.");
+  }
+
+  function updateDynamicLabels() {
+    const now = Date.now();
+    const cards = el.newsList.querySelectorAll(".newsItem");
+    cards.forEach(card => {
+      const ms = Number(card.dataset.published || 0);
+      const min = ms ? Math.max(0, Math.floor((now - ms) / 60000)) : 0;
+      const ageEl = card.querySelector("[data-role='age']");
+      if (ageEl) ageEl.textContent = ageLabel(min);
+
+      const delay = clampNum(el.delayMin.value, 0, 120);
+      const isReady = (now - ms) >= (delay * 60 * 1000);
+      const badgeEl = card.querySelector(".badge.ready, .badge.queue");
+      if (badgeEl) {
+        badgeEl.className = "badge " + (isReady ? "ready" : "queue");
+        badgeEl.textContent = isReady ? "LISTO" : "EN COLA";
+      }
+    });
+  }
+
+  function badge(cls, text) {
+    const b = document.createElement("span");
+    b.className = "badge " + cls;
+    b.textContent = text;
+    return b;
+  }
+
+  function linkBtn(text, href) {
+    const a = document.createElement("a");
+    a.className = "newsLink";
+    a.href = href || "#";
+    a.textContent = text;
+    return a;
+  }
+
+  function ageLabel(min) {
+    if (min <= 0) return "ahora";
+    if (min < 60) return `hace ${min} min`;
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m ? `hace ${h}h ${m}m` : `hace ${h}h`;
+  }
+
   /* ───────────────────────────── REALTIME ───────────────────────────── */
   function startRealtime() {
     if (uiTickTimer) clearInterval(uiTickTimer);
@@ -502,30 +892,18 @@ Fuente:
     const sec = clampNum(state.settings.refreshSec ?? AUTO_REFRESH_FEEDS_SEC_DEFAULT, 15, 600);
 
     if (auto) {
-      autoRefreshTimer = setInterval(() => refreshAll({ reason: "auto", force: false }), sec * 1000);
+      autoRefreshTimer = setInterval(() => {
+        refreshAll({ reason: "auto", force: false });
+      }, sec * 1000);
     }
   }
 
-  /* ───────────────────────────── STATUS / TOAST ───────────────────────────── */
-  function setStatus(msg) {
-    el.status.textContent = String(msg || "Listo");
-  }
-
-  let toastTimer = 0;
-  function toast(msg) {
-    setStatus(msg);
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      const tail = lastRefreshAt ? `Listo · ${state.items.length}` : "Listo";
-      setStatus(tail);
-    }, 2200);
-  }
-
-  /* ───────────────────────────── REFRESH PIPELINE ───────────────────────────── */
+  /* ───────────────────────────── REFRESH ───────────────────────────── */
   async function refreshAll({ reason = "manual", force = false } = {}) {
+    // cola
     if (state.refreshInFlight) {
       state.refreshPending = true;
-      if (force) { try { state.refreshAbort?.abort(); } catch {} }
+      if (force && state.refreshAbort) { try { state.refreshAbort.abort(); } catch {} }
       return;
     }
 
@@ -540,7 +918,10 @@ Fuente:
       setStatus(`⟳ Refrescando… (${reason})`);
 
       const enabled = (state.feeds || []).filter(f => f && f.url && f.enabled !== false);
-      if (!enabled.length) { toast("⚠️ No hay feeds activos."); return; }
+      if (!enabled.length) {
+        toast("⚠️ No hay feeds activos.");
+        return;
+      }
 
       // backoff skip
       const jobs = enabled.filter(f => {
@@ -552,35 +933,29 @@ Fuente:
 
       const results = [];
       await pool(jobs, FEED_CONCURRENCY, async (f) => {
-        const out = await fetchOneFeed(f, abort.signal, force).catch(() => null);
+        const out = await fetchOneFeed(f, abort.signal, force).catch(() => []);
         if (out && out.length) results.push(...out);
       });
 
       // merge + dedupe + trim
       const merged = dedupeNormalize([...(state.items || []), ...results]);
-      merged.sort((a,b) => (Number(b.publishedMs||0) - Number(a.publishedMs||0)));
 
+      merged.sort((a,b) => (Number(b.publishedMs||0) - Number(a.publishedMs||0)));
       state.items = merged.slice(0, MAX_ITEMS_KEEP);
 
       lastRefreshAt = Date.now();
       setStatus(`✅ OK · ${state.items.length} items · ${new Date(lastRefreshAt).toLocaleTimeString()}`);
-
       renderNewsList({ silent: true });
 
     } catch (e) {
-      if (abort.signal.aborted) {
-        setStatus("⛔ Refresh abortado.");
-      } else {
-        setStatus("❌ Error refrescando. (mira consola)");
-        console.error(e);
-      }
+      if (abort.signal.aborted) setStatus("⛔ Refresh abortado.");
+      else { setStatus("❌ Error refrescando. (mira consola)"); console.error(e); }
     } finally {
-      if (seq === state.refreshSeq) {
-        state.refreshInFlight = false;
-        state.refreshAbort = null;
-      } else {
-        state.refreshInFlight = false;
-        state.refreshAbort = null;
+      state.refreshInFlight = false;
+      state.refreshAbort = null;
+
+      if (seq !== state.refreshSeq) {
+        // había otra cola cambiando seq; no hacemos nada especial
       }
 
       if (state.refreshPending) {
@@ -602,7 +977,7 @@ Fuente:
     const txt = await fetchTextWithFallbacks(url, 18_000, parentSignal);
     if (!txt) throw new Error("empty feed " + url);
 
-    // si en esta sesión el texto es igual, saltamos parse
+    // micro-optim: si el payload es idéntico en sesión, evita parse
     const h = fastHash(txt);
     if (!force && feedTextHash.get(url) === h) return [];
     feedTextHash.set(url, h);
@@ -618,19 +993,13 @@ Fuente:
     return items || [];
   }
 
-  function feedFailBump(url) {
-    const cur = feedFail.get(url) || { fails: 0, nextAt: 0 };
-    const fails = Math.min(50, (cur.fails || 0) + 1);
-    const backoff = Math.min(FEED_FAIL_BACKOFF_MAX_MS, FEED_FAIL_BACKOFF_BASE_MS * Math.pow(1.6, fails - 1));
-    feedFail.set(url, { fails, nextAt: Date.now() + backoff });
-  }
-
   /* ───────────────────────────── PARSERS ───────────────────────────── */
   function parseJsonFeed(jsonText, feedName) {
     const out = [];
     const j = safeJson(jsonText);
     if (!j) return out;
 
+    // GDELT doc API: { articles: [...] } o { results: [...] } o { ... }
     let arr = [];
     if (Array.isArray(j)) arr = j;
     else if (Array.isArray(j.articles)) arr = j.articles;
@@ -698,7 +1067,7 @@ Fuente:
   }
 
   function makeItem({ feed, title, link, publishedMs, image = "" }) {
-    const fixedLink = canonicalizeUrl(link);
+    const fixedLink = cleanTracking(canonicalizeUrl(link));
     const fixedTitle = cleanText(title);
     const cat = detectCategory(fixedTitle, feed);
 
@@ -712,8 +1081,9 @@ Fuente:
       publishedMs: Number(publishedMs || Date.now()),
       cat,
       impact: 0,
-      image: canonicalizeUrl(image),
+      image: cleanTracking(canonicalizeUrl(image)),
       ogImage: "",
+      used: false,
     };
   }
 
@@ -808,12 +1178,10 @@ Fuente:
     return n ? (n.textContent || "").trim() : "";
   }
 
-  /* ───────────────────────────── DEDUPE ───────────────────────────── */
   function dedupeNormalize(items) {
     const map = new Map();
-
     for (const it of (items || [])) {
-      const link = canonicalizeUrl(it?.link || "");
+      const link = cleanTracking(canonicalizeUrl(it?.link || ""));
       if (!link) continue;
 
       const title = cleanText(it?.title || "");
@@ -830,10 +1198,8 @@ Fuente:
         title,
         publishedMs,
         cat: it?.cat || detectCategory(title, feed),
-        image: canonicalizeUrl(it?.image || ""),
-        ogImage: canonicalizeUrl(it?.ogImage || ""),
-        linkResolved: canonicalizeUrl(it?.linkResolved || ""),
-        titleEs: cleanText(it?.titleEs || ""),
+        image: cleanTracking(canonicalizeUrl(it?.image || "")),
+        ogImage: cleanTracking(canonicalizeUrl(it?.ogImage || "")),
       };
 
       const prev = map.get(link);
@@ -867,10 +1233,9 @@ Fuente:
     return String(t || "")
       .toLowerCase()
       .replace(/\s+/g, " ")
-      .replace(/[“”"']/g, "")
-      .replace(/[^\p{L}\p{N}\s]/gu, "")
+      .replace(/[^\p{L}\p{N} ]/gu, "")
       .trim()
-      .slice(0, 160);
+      .slice(0, 180);
   }
 
   /* ───────────────────────────── IMPACT ───────────────────────────── */
@@ -882,9 +1247,11 @@ Fuente:
     const title = String((it.titleEs || it.title || "")).toLowerCase();
     const feed = String(it.feed || "").toLowerCase();
 
+    // fuentes “premium”
     if (/reuters|apnews|associated press|bbc|financial times|ft\.com/.test(feed)) score += 18;
     if (/elpais|el país|elmundo|la vanguardia|abc|expansión|eleconomista/.test(feed)) score += 10;
 
+    // keywords “hot”
     const hot = [
       "última hora","breaking","urgent","en directo","atentado","misil","ataque","explosión",
       "otan","nato","ucrania","rusia","israel","gaza","trump","biden","sánchez","putin",
@@ -892,9 +1259,11 @@ Fuente:
     ];
     for (const k of hot) if (title.includes(k)) score += 8;
 
+    // política/economía
     if (/presidente|gobierno|elecciones|parlamento|congreso|ue|unión europea|onu/.test(title)) score += 6;
     if (/inflación|pib|tipos|banco central|bolsa|petróleo|gas|recesión|deuda/.test(title)) score += 6;
 
+    // recencia
     const ageMin = Math.max(0, Math.floor((Date.now() - Number(it.publishedMs || Date.now())) / 60000));
     if (ageMin <= 10) score += 18;
     else if (ageMin <= 30) score += 12;
@@ -917,311 +1286,24 @@ Fuente:
     if (/(otan|nato|ucrania|rusia|gaza|israel|misil|ataque|defensa|ejército)/i.test(t)) return "war";
     if (/(elecciones|presidente|gobierno|parlamento|congreso|senado|partido|ministro)/i.test(t)) return "politics";
     if (/(bolsa|ibex|dow|nasdaq|inflación|pib|banco|tipos|petróleo|gas|mercados)/i.test(t)) return "economy";
-    if (/(energía|petróleo|gas|opep|repsol|chevron|shell|bp)/i.test(t)) return "energy";
+    if (/(energía|petróleo|gas|opep|repsol|chevron|bp|shell)/i.test(t)) return "energy";
     if (/(ia|ai|openai|microsoft|google|meta|apple|android|iphone|chip|nvidia|ciber|hack)/i.test(t)) return "tech";
     if (/(asesin|tiroteo|secuestro|narc|policía|detenido|crimen|sucesos)/i.test(t)) return "crime";
     if (/(salud|virus|covid|vacuna|hospital|epidemia)/i.test(t)) return "health";
     if (/(fútbol|liga|champions|nba|nfl|tenis|golf|baloncesto)/i.test(t)) return "sports";
-    if (/(cultura|arte|libro|premio|exposición)/i.test(t)) return "culture";
+    if (/(cultura|arte|libro|museo|teatro|exposición|poesía)/i.test(t)) return "culture";
     if (/(cine|serie|netflix|música|festival|oscar|grammy)/i.test(t)) return "ent";
 
     return "world";
   }
 
-  /* ───────────────────────────── NEWS LIST (FAST RENDER) ───────────────────────────── */
-  function renderNewsList({ silent = false } = {}) {
-    const items = (state.items || []).slice();
-
-    const hours = clampNum(el.timeFilter.value, 1, 72);
-    const search = String(el.searchBox.value || "").trim().toLowerCase();
-
-    const delay = clampNum(el.delayMin.value, 0, 120);
-    const onlyReady = !!el.optOnlyReady.checked;
-
-    const wantSpanish = !!el.optOnlySpanish.checked;
-    const hideUsed = !!(el.optHideUsed && el.optHideUsed.checked);
-    const sortBy = String(el.sortBy.value || "recent");
-    const cat = String((el.catFilter && el.catFilter.value) || "all");
-
-    const now = Date.now();
-    const minMs = now - (hours * 60 * 60 * 1000);
-
-    const filtered = items.filter(it => {
-      if (!it) return false;
-      const ms = Number(it.publishedMs || 0) || 0;
-      if (ms && ms < minMs) return false;
-
-      if (hideUsed && state.used.has(it.id)) return false;
-      if (cat && cat !== "all" && String(it.cat || "all") !== cat) return false;
-
-      const shownTitle = String(it.titleEs || it.title || "");
-      const hay = (shownTitle + " " + String(it.feed || "")).toLowerCase();
-      if (search && !hay.includes(search)) return false;
-
-      const isReady = (now - Number(it.publishedMs || 0)) >= (delay * 60 * 1000);
-      if (onlyReady && !isReady) return false;
-
-      it._ready = isReady;
-      it._ageMin = Math.max(0, Math.floor((now - Number(it.publishedMs || 0)) / 60000));
-      it.impact = it.impact || calcImpact(it);
-      return true;
-    });
-
-    if (sortBy === "impact") {
-      filtered.sort((a, b) => (calcImpact(b) - calcImpact(a)) || (b.publishedMs - a.publishedMs));
-    } else if (sortBy === "source") {
-      filtered.sort((a, b) => String(a.feed).localeCompare(String(b.feed)) || (b.publishedMs - a.publishedMs));
-    } else {
-      filtered.sort((a, b) => {
-        const ai = calcImpact(a), bi = calcImpact(b);
-        const aTop = ai >= 70 ? 1 : 0;
-        const bTop = bi >= 70 ? 1 : 0;
-        if (bTop !== aTop) return bTop - aTop;
-        return (b.publishedMs - a.publishedMs);
-      });
-    }
-
-    const prevScroll = el.newsList.scrollTop;
-
-    // reset observer (evita leaks al re-render)
-    if (ogObserver) {
-      try { ogObserver.disconnect(); } catch {}
-      setupOgObserver();
-    }
-
-    el.newsList.innerHTML = "";
-
-    const resolveLinks = state.settings.resolveLinks !== false;
-
-    const visibleForResolve = [];
-    const visibleForTranslate = [];
-
-    // Render por chunks (más fluido con listas largas)
-    let i = 0;
-    const CHUNK = 40;
-
-    const renderChunk = () => {
-      const frag = document.createDocumentFragment();
-
-      for (let c = 0; c < CHUNK && i < filtered.length; c++, i++) {
-        const it = filtered[i];
-
-        const shownUrl = canonicalizeUrl((resolveLinks ? (it.linkResolved || it.link) : it.link) || it.link);
-        const domain = shownUrl ? getDomain(shownUrl) : "";
-
-        const top = calcImpact(it) >= 70;
-        const origNeeded = !!(state.settings.showOriginal !== false) && !!it.titleEs && it.titleEs !== it.title;
-
-        const card = document.createElement("div");
-        card.className = "newsItem" + (top ? " top" : "");
-        card.dataset.id = it.id;
-        card.dataset.url = shownUrl || it.link || "";
-        card.dataset.link = it.link || "";
-        card.dataset.published = String(it.publishedMs || 0);
-
-        // thumb
-        const thumbWrap = document.createElement("div");
-        thumbWrap.className = "newsThumbWrap";
-        const img = document.createElement("img");
-        img.className = "newsThumb";
-        img.alt = "";
-        img.loading = "lazy";
-
-        const best = pickBestThumb(it, shownUrl || it.link);
-        img.src = best || faviconUrl(shownUrl || it.link);
-
-        img.addEventListener("error", () => {
-          const fallback = faviconUrl(shownUrl || it.link);
-          if (img.src !== fallback) img.src = fallback;
-        });
-
-        thumbWrap.appendChild(img);
-        thumbWrap.addEventListener("click", (e) => {
-          e.preventDefault();
-          if (shownUrl) window.open(shownUrl, "_blank", "noopener,noreferrer");
-        });
-
-        // body
-        const body = document.createElement("div");
-        body.className = "newsBody";
-
-        const title = document.createElement("div");
-        title.className = "newsTitle";
-        title.textContent = it.titleEs || it.title || "—";
-
-        if (origNeeded) {
-          const orig = document.createElement("span");
-          orig.className = "orig";
-          orig.textContent = it.title || "";
-          title.appendChild(orig);
-        }
-
-        const meta = document.createElement("div");
-        meta.className = "newsMeta";
-
-        meta.appendChild(badge("cat", it.cat || "all"));
-        if (top) meta.appendChild(badge("top", "🔥 TOP"));
-
-        meta.appendChild(badge(it._ready ? "ready" : "queue", it._ready ? "LISTO" : "EN COLA"));
-        meta.appendChild(badge("domain", domain || "link"));
-
-        const time = document.createElement("span");
-        time.className = "small";
-        time.dataset.role = "age";
-        time.textContent = ageLabel(it._ageMin);
-        meta.appendChild(time);
-
-        const src = document.createElement("span");
-        src.className = "small";
-        src.textContent = "· " + String(it.feed || "Feed");
-        meta.appendChild(src);
-
-        const actions = document.createElement("div");
-        actions.className = "actionsRow";
-
-        const btnUse = linkBtn("Usar", "#");
-        btnUse.addEventListener("click", async (e) => { e.preventDefault(); await useItem(it); });
-
-        const btnOpen = linkBtn("Abrir", shownUrl || it.link);
-        btnOpen.target = "_blank";
-        btnOpen.rel = "noopener noreferrer";
-
-        const btnMark = linkBtn(state.used.has(it.id) ? "Desmarcar" : "Marcar", "#");
-        btnMark.addEventListener("click", (e) => {
-          e.preventDefault();
-          toggleUsed(it.id);
-          renderNewsList({ silent: true });
-        });
-
-        actions.appendChild(btnUse);
-        actions.appendChild(btnOpen);
-        actions.appendChild(btnMark);
-
-        body.appendChild(title);
-        body.appendChild(meta);
-        body.appendChild(actions);
-
-        card.appendChild(thumbWrap);
-        card.appendChild(body);
-        frag.appendChild(card);
-
-        // visibles-only pools (primeros N)
-        if (visibleForResolve.length < VISIBLE_RESOLVE_LIMIT) visibleForResolve.push(it);
-        if (wantSpanish && visibleForTranslate.length < VISIBLE_TRANSLATE_LIMIT) visibleForTranslate.push(it);
-
-        // observe OG si falta thumb y no es GN
-        if (ogObserver && i < OBSERVE_OG_VISIBLE_LIMIT) {
-          const lacks = !(it.image || it.ogImage || readCache(imgCache, imgCacheKey(shownUrl || it.link)));
-          if (lacks && shownUrl && !isGoogleNews(shownUrl)) {
-            try { ogObserver.observe(card); } catch {}
-          }
-        }
-      }
-
-      el.newsList.appendChild(frag);
-
-      if (i < filtered.length) {
-        requestAnimationFrame(renderChunk);
-      } else {
-        if (silent) el.newsList.scrollTop = prevScroll;
-
-        // async visible-only (no bloquea UI)
-        queueRerenderSoft();
-        maybeResolveVisible(visibleForResolve).catch(() => {});
-        maybeTranslateVisible(visibleForTranslate).catch(() => {});
-      }
-    };
-
-    requestAnimationFrame(renderChunk);
-  }
-
-  function queueRerenderSoft() {
-    if (state.rerenderQueued) return;
-    state.rerenderQueued = true;
-    setTimeout(() => {
-      state.rerenderQueued = false;
-      renderNewsList({ silent: true });
-    }, 420);
-  }
-
-  async function useItem(it) {
-    if (!it) return;
-
-    const resolveLinks = state.settings.resolveLinks !== false;
-
-    // 1) resolver si procede
-    if (resolveLinks && it.link && !it.linkResolved && (isGoogleNews(it.link) || looksLikeRedirect(it.link))) {
-      await maybeResolveOne(it);
-    }
-
-    // 2) traducir si procede
-    if (!!el.optOnlySpanish.checked && !it.titleEs && !looksSpanish(it.title)) {
-      const es = await translateToEsCached(it.title);
-      if (es) it.titleEs = es;
-    }
-
-    const shownUrl = canonicalizeUrl((resolveLinks ? (it.linkResolved || it.link) : it.link) || it.link) || "";
-    const headline = cleanText((it.titleEs || it.title || "").trim());
-
-    el.headline.value = headline;
-    el.sourceUrl.value = shownUrl;
-
-    toggleUsed(it.id, true);
-
-    updatePreview();
-    toast("✅ Cargado en plantilla.");
-  }
-
-  function updateDynamicLabels() {
-    const now = Date.now();
-    const cards = el.newsList.querySelectorAll(".newsItem");
-    cards.forEach(card => {
-      const ms = Number(card.dataset.published || 0);
-      const min = ms ? Math.max(0, Math.floor((now - ms) / 60000)) : 0;
-      const ageEl = card.querySelector("[data-role='age']");
-      if (ageEl) ageEl.textContent = ageLabel(min);
-
-      const delay = clampNum(el.delayMin.value, 0, 120);
-      const isReady = (now - ms) >= (delay * 60 * 1000);
-      const badgeEl = card.querySelector(".badge.ready, .badge.queue");
-      if (badgeEl) {
-        badgeEl.className = "badge " + (isReady ? "ready" : "queue");
-        badgeEl.textContent = isReady ? "LISTO" : "EN COLA";
-      }
-    });
-  }
-
-  function badge(cls, text) {
-    const b = document.createElement("span");
-    b.className = "badge " + cls;
-    b.textContent = text;
-    return b;
-  }
-
-  function linkBtn(text, href) {
-    const a = document.createElement("a");
-    a.className = "newsLink";
-    a.href = href || "#";
-    a.textContent = text;
-    return a;
-  }
-
-  function ageLabel(min) {
-    if (min <= 0) return "ahora";
-    if (min < 60) return `hace ${min} min`;
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return m ? `hace ${h}h ${m}m` : `hace ${h}h`;
-  }
-
   /* ───────────────────────────── OG OBSERVER ───────────────────────────── */
   function setupOgObserver() {
-    if (!("IntersectionObserver" in window)) { ogObserver = null; return; }
-
+    if (!("IntersectionObserver" in window)) return;
     ogObserver = new IntersectionObserver(async (entries) => {
       const visible = entries.filter(e => e.isIntersecting).slice(0, IMG_CONCURRENCY);
       for (const e of visible) {
-        try { ogObserver.unobserve(e.target); } catch {}
+        ogObserver.unobserve(e.target);
         const card = e.target;
         const id = card.dataset.id;
         const it = (state.items || []).find(x => x.id === id);
@@ -1266,7 +1348,8 @@ Fuente:
     if (imgInFlight.has(ck)) return imgInFlight.get(ck);
 
     const p = (async () => {
-      const html = await fetchTextWithFallbacks(shownUrl, OG_FETCH_TIMEOUT_MS);
+      const html = await fetchTextWithFallbacks(shownUrl, OG_FETCH_TIMEOUT_MS).catch(() => "");
+      if (!html) return "";
       const og = pickMeta(html, "property", "og:image") || pickMeta(html, "name", "og:image");
       const tw = pickMeta(html, "name", "twitter:image") || pickMeta(html, "property", "twitter:image");
       const img = canonicalizeUrl(absoluteMaybe(og || tw, shownUrl));
@@ -1311,10 +1394,6 @@ Fuente:
     }
   }
 
-  function getDomain(url) {
-    try { return new URL(url).hostname.replace(/^www\./i, ""); } catch { return ""; }
-  }
-
   /* ───────────────────────────── RESOLVE LINKS (visible-only) ───────────────────────────── */
   async function maybeResolveVisible(items) {
     const on = state.settings.resolveLinks !== false;
@@ -1341,23 +1420,20 @@ Fuente:
 
       // 1) extraer param
       out = extractUrlParam(url);
-      out = canonicalizeUrl(out);
-      out = cleanTracking(out);
+      out = cleanTracking(canonicalizeUrl(out));
       if (out) return out;
 
       // 2) fetch html y rascar redirect/canonical/json-ld
       const html = await fetchTextWithFallbacks(url, 12_000).catch(() => "");
       if (html) {
         out = pickCanonical(html) || pickMetaRefresh(html) || pickJsonLdUrl(html) || extractUrlFromHtml(html);
-        out = canonicalizeUrl(out);
-        out = cleanTracking(out);
+        out = cleanTracking(canonicalizeUrl(out));
         if (out) return out;
       }
 
-      // 3) último: si se puede, seguir redirect (a veces CORS lo impide)
+      // 3) último: seguir redirect (si CORS lo permite)
       out = await tryFollowRedirect(url).catch(() => "");
-      out = canonicalizeUrl(out);
-      out = cleanTracking(out);
+      out = cleanTracking(canonicalizeUrl(out));
       return out || "";
     })();
 
@@ -1392,7 +1468,6 @@ Fuente:
   }
 
   function extractUrlFromHtml(html) {
-    // Google News a veces incluye "https://www.google.com/url?url=..."
     const m = String(html || "").match(/https?:\/\/www\.google\.com\/url\?[^"'<> ]+/i);
     if (m && m[0]) {
       const u = extractUrlParam(m[0]);
@@ -1443,7 +1518,7 @@ Fuente:
 
   /* ───────────────────────────── TRANSLATE (visible-only) ───────────────────────────── */
   async function maybeTranslateVisible(items) {
-    const wantSpanish = !!el.optOnlySpanish.checked;
+    const wantSpanish = state.settings.onlySpanish !== false;
     if (!wantSpanish) return;
 
     const targets = (items || []).filter(it => it && it.title && !it.titleEs && !looksSpanish(it.title));
@@ -1546,7 +1621,7 @@ Fuente:
       const feeds = Array.isArray(arr)
         ? arr.map(normalizeFeed).filter(f => f.url)
         : DEFAULT_FEEDS.map(f => ({ ...f }));
-      try { localStorage.setItem(LS_FEEDS, JSON.stringify(feeds)); } catch {}
+      safeLSSet(LS_FEEDS, JSON.stringify(feeds));
       return feeds;
     } catch {
       return DEFAULT_FEEDS.map(f => ({ ...f }));
@@ -1554,14 +1629,14 @@ Fuente:
   }
 
   function saveFeeds(feeds) {
-    try { localStorage.setItem(LS_FEEDS, JSON.stringify(feeds || [])); } catch {}
+    safeLSSet(LS_FEEDS, JSON.stringify(feeds || []));
   }
 
   function loadTemplate() {
     try {
       const raw = localStorage.getItem(LS_TEMPLATE) || localStorage.getItem(LS_TEMPLATE_V3);
       if (!raw) return DEFAULT_TEMPLATE;
-      try { localStorage.setItem(LS_TEMPLATE, raw); } catch {}
+      safeLSSet(LS_TEMPLATE, String(raw));
       return String(raw || DEFAULT_TEMPLATE);
     } catch {
       return DEFAULT_TEMPLATE;
@@ -1569,7 +1644,7 @@ Fuente:
   }
 
   function saveTemplate(tpl) {
-    try { localStorage.setItem(LS_TEMPLATE, String(tpl || DEFAULT_TEMPLATE)); } catch {}
+    safeLSSet(LS_TEMPLATE, String(tpl || DEFAULT_TEMPLATE));
   }
 
   function loadSettings() {
@@ -1597,7 +1672,7 @@ Fuente:
   function saveSetting(k, v) {
     state.settings = state.settings || {};
     state.settings[k] = v;
-    try { localStorage.setItem(LS_SETTINGS, JSON.stringify(state.settings)); } catch {}
+    safeLSSet(LS_SETTINGS, JSON.stringify(state.settings));
   }
 
   function loadUsedSet() {
@@ -1606,7 +1681,7 @@ Fuente:
       if (!raw) return new Set();
       const arr = JSON.parse(raw);
       const s = new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
-      try { localStorage.setItem(LS_USED, JSON.stringify(Array.from(s))); } catch {}
+      safeLSSet(LS_USED, JSON.stringify(Array.from(s)));
       return s;
     } catch {
       return new Set();
@@ -1614,7 +1689,7 @@ Fuente:
   }
 
   function saveUsedSet(setObj) {
-    try { localStorage.setItem(LS_USED, JSON.stringify(Array.from(setObj || []))); } catch {}
+    safeLSSet(LS_USED, JSON.stringify(Array.from(setObj || [])));
   }
 
   function toggleUsed(id, forceOn) {
@@ -1632,7 +1707,7 @@ Fuente:
       if (!raw) return fallback;
       const j = JSON.parse(raw);
       if (j && typeof j === "object") {
-        try { localStorage.setItem(keyNew, JSON.stringify(j)); } catch {}
+        safeLSSet(keyNew, JSON.stringify(j));
         return j;
       }
       return fallback;
@@ -1652,7 +1727,7 @@ Fuente:
     if (!cacheObj || !key || !value) return;
     cacheObj[key] = { v: String(value), t: Date.now() };
     pruneCache(cacheObj, limit);
-    try { localStorage.setItem(lsKey, JSON.stringify(cacheObj)); } catch {}
+    safeLSSet(lsKey, JSON.stringify(cacheObj));
   }
 
   function pruneCache(cacheObj, limit) {
@@ -1663,18 +1738,22 @@ Fuente:
     for (let i=0; i<kill; i++) delete cacheObj[keys[i]];
   }
 
+  function safeLSSet(k, v) {
+    try { localStorage.setItem(k, v); } catch {}
+  }
+
   /* ───────────────────────────── FETCH (CORS FALLBACKS) ───────────────────────────── */
   async function fetchTextWithFallbacks(url, timeoutMs, parentSignal) {
     // direct
     try { return await tryFetchText(url, timeoutMs, parentSignal); } catch {}
 
-    // AllOrigins raw
+    // allorigins raw
     try {
       const ao = "https://api.allorigins.win/raw?url=" + encodeURIComponent(url);
       return await tryFetchText(ao, timeoutMs, parentSignal);
     } catch {}
 
-    // r.jina.ai (HTML/JSON proxy)
+    // r.jina.ai (strips)
     const forced = url.startsWith("http") ? url : ("https://" + url);
     try {
       const viaJina = await tryFetchText("https://r.jina.ai/" + forced, timeoutMs, parentSignal);
@@ -1700,7 +1779,9 @@ Fuente:
         method: "GET",
         signal: ctrl.signal,
         cache: "no-store",
-        headers: { "accept": "text/html,application/xml,application/rss+xml,application/atom+xml,application/json;q=0.9,*/*;q=0.8" }
+        headers: {
+          "accept": "text/html,application/xml,application/rss+xml,application/atom+xml,application/json;q=0.9,*/*;q=0.8"
+        }
       });
       if (!res.ok) throw new Error("HTTP " + res.status);
       return await res.text();
@@ -1745,45 +1826,51 @@ Fuente:
     const s = String(u || "").trim();
     if (!s) return "";
     try {
-      const url = new URL(s, location.href);
-      // normaliza trackers comunes
+      const url = new URL(s);
       return url.toString();
     } catch {
+      if (s.startsWith("//")) return "https:" + s;
+      if (/^https?:\/\//i.test(s)) return s;
       return s;
     }
-  }
-
-  function isGoogleNews(u) {
-    const s = String(u || "").toLowerCase();
-    return s.includes("news.google.") || s.includes("news.google.com");
   }
 
   function cleanTracking(u) {
-    const s = String(u || "").trim();
-    if (!s) return "";
+    if (!u) return "";
     try {
-      const url = new URL(s);
-      const bad = [
+      const url = new URL(u);
+      const kill = new Set([
         "utm_source","utm_medium","utm_campaign","utm_term","utm_content",
-        "fbclid","gclid","igshid","mc_cid","mc_eid","ref","ref_src","cmpid","mkt_tok",
-        "s","spm","ved","usg","opi"
-      ];
-      bad.forEach(k => url.searchParams.delete(k));
-      // limpia query vacía
-      if ([...url.searchParams.keys()].length === 0) url.search = "";
+        "fbclid","gclid","igshid","mc_cid","mc_eid","ref","ref_src","s"
+      ]);
+
+      // elimina utm_* y conocidos
+      const keys = Array.from(url.searchParams.keys());
+      for (const k of keys) {
+        if (kill.has(k) || /^utm_/i.test(k)) url.searchParams.delete(k);
+      }
       return url.toString();
-    } catch {
-      return s;
-    }
+    } catch { return u; }
+  }
+
+  function getDomain(u) {
+    try { return new URL(u).hostname.replace(/^www\./,""); }
+    catch { return ""; }
+  }
+
+  function isGoogleNews(u) {
+    return /news\.google\.com/i.test(String(u || ""));
   }
 
   function looksSpanish(t) {
     const s = String(t || "");
-    if (!s) return false;
-    // heurística: tildes/ñ/palabras típicas
-    const marks = /[áéíóúñ¿¡]/i.test(s);
-    const common = /\b(el|la|los|las|de|del|y|en|para|con|por|un|una|hoy|última)\b/i.test(s);
-    return marks || common;
+    return /[áéíóúñ¿¡]/i.test(s) || /\b(el|la|los|las|un|una|de|del|y|para|con|por)\b/i.test(s.toLowerCase());
+  }
+
+  function clampNum(v, a, b) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return a;
+    return Math.max(a, Math.min(b, n));
   }
 
   function debounce(fn, ms) {
@@ -1794,52 +1881,63 @@ Fuente:
     };
   }
 
-  async function pool(list, concurrency, worker) {
-    const arr = Array.isArray(list) ? list : [];
-    const n = Math.max(1, Number(concurrency || 1));
-    let i = 0;
-    const run = async () => {
-      while (i < arr.length) {
-        const idx = i++;
-        await worker(arr[idx], idx);
+  async function pool(items, limit, worker) {
+    const arr = Array.from(items || []);
+    if (!arr.length) return;
+    const n = Math.max(1, Math.min(limit || 1, 32));
+    let idx = 0;
+    const runners = new Array(n).fill(0).map(async () => {
+      while (idx < arr.length) {
+        const i = idx++;
+        await worker(arr[i]);
       }
-    };
-    const workers = Array.from({ length: Math.min(n, arr.length) }, () => run());
-    await Promise.all(workers);
+    });
+    await Promise.all(runners);
   }
 
-  function clampNum(v, min, max) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return min;
-    return Math.max(min, Math.min(max, n));
+  function hashId(s) {
+    const str = String(s || "");
+    let h1 = 0xdeadbeef ^ str.length, h2 = 0x41c6ce57 ^ str.length;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = (h1 ^ (h1 >>> 16)) >>> 0;
+    h2 = (h2 ^ (h2 >>> 16)) >>> 0;
+    return (h1.toString(16) + h2.toString(16));
   }
 
   function escapeHtml(s) {
     return String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;")
+      .replace(/'/g,"&#39;");
   }
 
   function escapeRe(s) {
     return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  function fastHash(str) {
-    // FNV-1a 32-bit
-    let h = 0x811c9dc5;
-    const s = String(str || "");
-    for (let i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = (h + (h<<1) + (h<<4) + (h<<7) + (h<<8) + (h<<24)) >>> 0;
+  function fastHash(s) {
+    // hash ligero (para comparar payloads de feed en sesión)
+    const str = String(s || "");
+    let h = 2166136261;
+    for (let i=0;i<str.length;i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
     }
-    return h >>> 0;
+    return (h >>> 0).toString(16);
   }
 
-  function hashId(s) {
-    return String(fastHash(String(s || "")));
+  function idle(fn) {
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(() => { try { fn(); } catch {} }, { timeout: 700 });
+    } else {
+      setTimeout(() => { try { fn(); } catch {} }, 0);
+    }
   }
 
   async function copyToClipboard(text) {
@@ -1851,10 +1949,11 @@ Fuente:
       // fallback
       const ta = document.createElement("textarea");
       ta.value = t;
-      ta.setAttribute("readonly", "true");
       ta.style.position = "fixed";
       ta.style.left = "-9999px";
+      ta.style.top = "0";
       document.body.appendChild(ta);
+      ta.focus();
       ta.select();
       try { document.execCommand("copy"); } catch {}
       document.body.removeChild(ta);
@@ -1863,82 +1962,75 @@ Fuente:
   }
 
   function smartTrimHeadline(h, maxLen) {
-    const s = cleanText(h);
+    let s = cleanText(h);
     if (s.length <= maxLen) return s;
+    // recorta por palabras y limpia separadores raros
+    s = s.replace(/\s*[-–—|:]\s*[^-–—|:]{0,120}$/g, "").trim();
+    if (s.length <= maxLen) return s;
+
     const cut = s.slice(0, maxLen);
     const lastSpace = cut.lastIndexOf(" ");
-    const out = (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim();
-    return out.replace(/[,:;.-]$/,"") + "…";
+    if (lastSpace > 40) return cut.slice(0, lastSpace).trim() + "…";
+    return cut.trim() + "…";
   }
 
   function genHashtags(headline) {
-    const s = String(headline || "").toLowerCase();
-    if (!s.trim()) return "";
-
+    const text = String(headline || "").toLowerCase();
+    if (!text.trim()) return "";
     const stop = new Set([
-      "el","la","los","las","de","del","y","en","para","con","por","un","una","unos","unas",
-      "a","al","se","su","sus","que","como","más","menos","hoy","ayer","mañana","última","hora",
-      "nuevo","nueva","sobre","tras","ante","durante","contra","entre","sin","desde","hasta"
+      "de","del","la","las","los","el","un","una","y","o","en","a","por","para","con","sin","al",
+      "sobre","tras","ante","entre","más","menos","hoy","ayer","mañana","última","hora","ultimo","ultima",
+      "se","su","sus","ya","muy","también","contra","desde","hasta","durante","según"
     ]);
-
-    const words = s
+    const words = text
+      .replace(/https?:\/\/\S+/g, " ")
       .replace(/[^\p{L}\p{N}\s]/gu, " ")
       .split(/\s+/)
+      .map(w => w.trim())
       .filter(w => w.length >= 4 && !stop.has(w));
 
-    // prefer “entities” por mayúsculas en original (simple) + frecuencia
+    // prioriza keywords
+    const priority = ["españa","madrid","barcelona","otan","ucrania","rusia","gaza","israel","ibex","bolsa","inflación","petróleo","gas","openai","google","microsoft"];
+    const out = [];
+    for (const p of priority) if (words.includes(p)) out.push(p);
+
+    // completa con top freq
     const freq = new Map();
     for (const w of words) freq.set(w, (freq.get(w) || 0) + 1);
+    const sorted = Array.from(freq.entries()).sort((a,b) => b[1]-a[1]).map(x => x[0]);
 
-    const sorted = [...freq.entries()].sort((a,b) => b[1]-a[1] || b[0].length-a[0].length);
-    const pick = sorted.slice(0, 4).map(([w]) => "#" + toTag(w));
-    const base = ["#ÚltimaHora"];
-    const all = [...base, ...pick].slice(0, 5);
+    for (const w of sorted) {
+      if (out.length >= 5) break;
+      if (!out.includes(w)) out.push(w);
+    }
 
-    // evita duplicados
-    return Array.from(new Set(all)).join(" ");
+    const tags = out.slice(0, 5).map(w => "#" + w.replace(/[^a-z0-9áéíóúñ]/gi, "").replace(/[á]/gi,"a").replace(/[é]/gi,"e").replace(/[í]/gi,"i").replace(/[ó]/gi,"o").replace(/[ú]/gi,"u").replace(/[ñ]/gi,"n"));
+    return tags.join(" ");
   }
 
-  function toTag(w) {
-    return String(w || "")
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^\p{L}\p{N}]/gu, "")
-      .replace(/^\d+/, "")
-      .slice(0, 24);
-  }
-
-  /* ───────────────────────────── X (Twitter) COUNT ───────────────────────────── */
   function twCharCount(text) {
-    // aproximación buena: URLs cuentan como 23 (t.co), resto por codepoints
+    // Aproximación sólida: URLs = 23 chars (Twitter rule)
     const s = String(text || "");
     const urlRe = /https?:\/\/[^\s]+/gi;
     let count = 0;
     let last = 0;
     let m;
     while ((m = urlRe.exec(s))) {
-      count += countCodepoints(s.slice(last, m.index));
+      count += (m.index - last);
       count += 23;
       last = m.index + m[0].length;
     }
-    count += countCodepoints(s.slice(last));
+    count += (s.length - last);
     return count;
   }
 
-  function countCodepoints(s) {
-    // cuenta por codepoints (emoji = 1)
-    let c = 0;
-    for (const _ch of String(s || "")) c++;
-    return c;
-  }
+  function buildThread(fullText) {
+    const s = String(fullText || "").trim();
+    if (!s) return [];
+    if (twCharCount(s) <= 280) return [s];
 
-  function buildThreadFromText(text) {
-    const raw = String(text || "").trim();
-    if (!raw) return [""];
-
-    if (twCharCount(raw) <= 280) return [raw];
-
-    // Intento: mantener bloques por líneas (más bonito para tu plantilla)
-    const lines = raw.split("\n");
+    // split por bloques (doble salto) y luego por líneas si hace falta
+    const blocks = s.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
     const parts = [];
     let cur = "";
 
@@ -1948,69 +2040,64 @@ Fuente:
       cur = "";
     };
 
-    for (const line of lines) {
-      const next = cur ? (cur + "\n" + line) : line;
-      if (twCharCount(next) <= 280) {
-        cur = next;
-      } else {
-        // si la línea sola es demasiado larga, partir por palabras
-        if (!cur) {
-          const chunks = splitByWords(line, 260); // deja margen para (1/N)
-          for (const ch of chunks) parts.push(ch.trim());
+    for (const b of blocks) {
+      const candidate = cur ? (cur + "\n\n" + b) : b;
+      if (twCharCount(candidate) <= 280) {
+        cur = candidate;
+        continue;
+      }
+      // si el bloque no cabe, cerramos cur y partimos b por líneas/frases
+      pushCur();
+      if (twCharCount(b) <= 280) {
+        cur = b;
+        continue;
+      }
+      const lines = b.split("\n").map(x => x.trim()).filter(Boolean);
+      for (const line of lines) {
+        const c2 = cur ? (cur + "\n" + line) : line;
+        if (twCharCount(c2) <= 280) { cur = c2; continue; }
+        pushCur();
+
+        // si una sola línea supera, recortamos duro
+        if (twCharCount(line) > 280) {
+          const trimmed = smartTrimHeadline(line, 270);
+          parts.push(trimmed);
           cur = "";
         } else {
-          pushCur();
-          if (twCharCount(line) <= 280) cur = line;
-          else {
-            const chunks = splitByWords(line, 260);
-            for (const ch of chunks) parts.push(ch.trim());
-            cur = "";
-          }
+          cur = line;
         }
       }
     }
     pushCur();
 
-    // añade sufijo 1/N dentro del límite (mejor UX para threads)
-    const N = parts.length;
-    return parts.map((p, i) => {
-      const suffix = ` ${i+1}/${N}`;
-      if (twCharCount(p + suffix) <= 280) return p + suffix;
-      // si no cabe, recorta un poco
-      return smartTrimHeadline(p, Math.max(40, 280 - twCharCount(suffix) - 2)) + suffix;
-    });
-  }
-
-  function splitByWords(line, max) {
-    const words = String(line || "").split(/\s+/);
-    const out = [];
-    let cur = "";
-    for (const w of words) {
-      const next = cur ? (cur + " " + w) : w;
-      if (twCharCount(next) <= max) cur = next;
-      else {
-        if (cur) out.push(cur);
-        cur = w;
-      }
+    // numeración suave si son muchas
+    if (parts.length > 1) {
+      return parts.map((p, i) => {
+        const suffix = ` (${i+1}/${parts.length})`;
+        if (twCharCount(p + suffix) <= 280) return p + suffix;
+        return smartTrimHeadline(p, 280 - suffix.length - 1) + suffix;
+      });
     }
-    if (cur) out.push(cur);
-    return out;
+    return parts;
   }
 
-  /* ───────────────────────────── BOOT HARDENING ───────────────────────────── */
-  window.addEventListener("error", (e) => {
-    try { crashOverlay(e.error || e.message || e); } catch {}
-  });
+  /* ───────────────────────────── PWA (safe) ───────────────────────────── */
+  function registerServiceWorkerSafe() {
+    try {
+      if (!("serviceWorker" in navigator)) return;
+      // evita registros duplicados agresivos: deja que el browser gestione updates
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    } catch {}
+  }
 
-  window.addEventListener("unhandledrejection", (e) => {
-    try { crashOverlay(e.reason || e); } catch {}
-  });
-
+  /* ───────────────────────────── BOOT ───────────────────────────── */
   try {
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-    else init();
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init, { once: true });
+    } else {
+      init();
+    }
   } catch (err) {
     crashOverlay(err);
   }
-
 })();
