@@ -1,4 +1,7 @@
-<!-- index.html — News → Tweet Template Panel (tnp-v4.0.1) — X Clean Dark (10→50 cap) -->
+<!-- index.html — News → Tweet Template Panel (tnp-v4.0.1) — X Clean Dark (10→50 cap) — IMPROVED
+  ✅ Mantiene TODOS los IDs/clases que tu app.js v4.0.1 usa (no rompe nada)
+  ✅ Mejoras: SEO/PWA meta, a11y (skip link, roles), mejor modal (aria), hints UX, perf (preconnect)
+-->
 <!doctype html>
 <html lang="es">
 <head>
@@ -7,22 +10,53 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#000000" />
   <meta name="description" content="Panel PRO para extraer noticias (RSS/Atom/JSON), resolver link original, imágenes y generar plantilla lista para X." />
-  <title>News → Tweet Template Panel</title>
 
+  <!-- PWA / Icons (si existen en tu repo, perfecto; si no, no rompe nada) -->
   <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./assets/icons/favicon-32.png" sizes="32x32" />
+  <link rel="icon" href="./assets/icons/icon-192.png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon-180.png" sizes="180x180" />
+
+  <!-- Perf: preconnect a endpoints típicos (no obligatorio, ayuda un poco) -->
+  <link rel="preconnect" href="https://news.google.com" crossorigin />
+  <link rel="preconnect" href="https://api.allorigins.win" crossorigin />
+  <link rel="preconnect" href="https://r.jina.ai" crossorigin />
+  <link rel="preconnect" href="https://translate.googleapis.com" crossorigin />
+
+  <title>News → Tweet Template Panel</title>
   <link rel="stylesheet" href="./styles.css" />
 
   <!-- tiny a11y + nicer tap highlight -->
   <style>
     :focus-visible{ outline: 2px solid rgba(29,155,240,.55); outline-offset: 2px; border-radius: 12px; }
     *{ -webkit-tap-highlight-color: rgba(29,155,240,.18); }
+    .skipLink{
+      position:absolute; left:-9999px; top:auto; width:1px; height:1px; overflow:hidden;
+    }
+    .skipLink:focus{
+      left:12px; top:12px; width:auto; height:auto; padding:10px 12px;
+      background:#0b1220; color:#fff; border:1px solid rgba(255,255,255,.12);
+      border-radius:12px; z-index:99999;
+    }
+    noscript{
+      display:block; margin:12px; padding:12px;
+      background:rgba(255,107,107,.12); border:1px solid rgba(255,107,107,.35);
+      border-radius:12px; color:#ffd1d1;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
   </style>
 </head>
-<body>
 
-  <header class="topbar">
+<body>
+  <a class="skipLink" href="#main">Saltar al contenido</a>
+
+  <noscript>
+    Este panel necesita JavaScript para funcionar.
+  </noscript>
+
+  <header class="topbar" role="banner">
     <div class="topLeft">
-      <div class="brand" role="banner" aria-label="Panel">
+      <div class="brand" aria-label="Panel">
         <div class="dot" aria-hidden="true"></div>
         <div>
           <div class="brandTitle">News → Tweet Template Panel</div>
@@ -58,7 +92,7 @@
           <input id="fetchCap" class="input" inputmode="numeric" type="number" min="80" max="2000" step="20" value="240" aria-label="Tope total de items" />
         </label>
 
-        <input id="searchBox" class="input" placeholder="Buscar…" aria-label="Buscar noticias" />
+        <input id="searchBox" class="input" placeholder="Buscar…" aria-label="Buscar noticias" autocomplete="off" />
 
         <button id="btnRefresh" class="btn primary" type="button" aria-label="Refrescar">⟳ Refrescar</button>
         <button id="btnFeeds" class="btn" type="button" aria-label="Gestionar feeds">⚙ Feeds</button>
@@ -70,18 +104,18 @@
     </div>
   </header>
 
-  <main class="layout">
+  <main id="main" class="layout" role="main">
     <!-- LEFT: COMPOSER -->
     <section class="panel left" aria-label="Plantilla">
       <div class="panelHead">
         <h2>Plantilla</h2>
         <div class="row wrap" aria-label="Acciones de plantilla">
-          <button id="btnTrim" class="btn" type="button">✂ Ajustar</button>
-          <button id="btnGenTags" class="btn" type="button">🏷 Hashtags</button>
-          <button id="btnCopyUrl" class="btn" type="button">🔗 Copiar URL</button>
-          <button id="btnX" class="btn" type="button">𝕏 Abrir X</button>
-          <button id="btnCopy" class="btn primary" type="button">📋 Copiar</button>
-          <button id="btnResetTemplate" class="btn" type="button">↩ Reset</button>
+          <button id="btnTrim" class="btn" type="button" title="Intenta ajustar a 280">✂ Ajustar</button>
+          <button id="btnGenTags" class="btn" type="button" title="Genera hashtags desde el titular">🏷 Hashtags</button>
+          <button id="btnCopyUrl" class="btn" type="button" title="Copia SOURCE_URL">🔗 Copiar URL</button>
+          <button id="btnX" class="btn" type="button" title="Abre intent de X con el texto">𝕏 Abrir X</button>
+          <button id="btnCopy" class="btn primary" type="button" title="Copia el tweet final">📋 Copiar</button>
+          <button id="btnResetTemplate" class="btn" type="button" title="Restaura la plantilla por defecto">↩ Reset</button>
         </div>
       </div>
 
@@ -124,17 +158,17 @@
 
         <label class="mini">
           TEMPLATE
-          <textarea id="template" class="textarea" rows="8" spellcheck="false"></textarea>
+          <textarea id="template" class="textarea" rows="8" spellcheck="false" aria-label="Plantilla del tweet"></textarea>
         </label>
 
         <div class="hr" role="separator" aria-hidden="true"></div>
 
-        <div class="row between">
+        <div class="row between" aria-label="Resumen">
           <div class="mini">X-count: <b id="charCount">0</b>/280</div>
           <div class="mini muted">Tip: “Usar” carga titular+link y marca como usado.</div>
         </div>
 
-        <pre id="preview" class="preview" aria-label="Vista previa del tweet"></pre>
+        <pre id="preview" class="preview" aria-label="Vista previa del tweet" tabindex="0"></pre>
         <div id="warn" class="warn hidden" role="alert" aria-live="polite"></div>
       </div>
     </section>
@@ -145,24 +179,24 @@
         <h2>Noticias</h2>
 
         <div class="row wrap" aria-label="Filtros principales">
-          <label class="mini">
+          <label class="mini" title="Tiempo mínimo para marcar como LISTO (evita publicaciones demasiado tempranas)">
             Delay
             <input id="delayMin" class="input" type="number" min="0" max="120" step="1" value="10" style="width:90px;" />
           </label>
 
-          <label class="mini checkbox">
+          <label class="mini checkbox" title="Muestra solo items que ya cumplieron el delay">
             <input id="optOnlyReady" type="checkbox" />
             Solo LISTO
           </label>
 
-          <label class="mini checkbox">
+          <label class="mini checkbox" title="Traduce títulos a ES (solo visibles) si hace falta">
             <input id="optOnlySpanish" type="checkbox" checked />
             ES (auto)
           </label>
 
           <label class="mini">
             Orden
-            <select id="sortBy" class="select">
+            <select id="sortBy" class="select" aria-label="Orden de lista">
               <option value="recent" selected>Recientes</option>
               <option value="impact">Impacto</option>
               <option value="source">Fuente</option>
@@ -171,7 +205,7 @@
 
           <label class="mini">
             Cat
-            <select id="catFilter" class="select">
+            <select id="catFilter" class="select" aria-label="Filtro por categoría">
               <option value="all" selected>All</option>
               <option value="spain">España</option>
               <option value="world">Mundo</option>
@@ -188,28 +222,28 @@
         </div>
 
         <div class="row wrap" aria-label="Opciones avanzadas">
-          <label class="mini checkbox">
+          <label class="mini checkbox" title="Refresca automáticamente (rota feeds por lotes)">
             <input id="optAutoRefresh" type="checkbox" checked />
             Auto-refresh
           </label>
 
-          <label class="mini">
+          <label class="mini" title="Intervalo de auto-refresh">
             cada
             <input id="refreshSec" class="input" type="number" min="15" max="600" step="5" value="30" style="width:90px;" />
             s
           </label>
 
-          <label class="mini checkbox">
+          <label class="mini checkbox" title="Intenta resolver enlaces tipo Google News / redirects al enlace real">
             <input id="optResolveLinks" type="checkbox" checked />
             Resolver links
           </label>
 
-          <label class="mini checkbox">
+          <label class="mini checkbox" title="Muestra el titular original si ha sido traducido">
             <input id="optShowOriginal" type="checkbox" checked />
             Ver original
           </label>
 
-          <label class="mini checkbox">
+          <label class="mini checkbox" title="Oculta los marcados como usados">
             <input id="optHideUsed" type="checkbox" />
             Ocultar usados
           </label>
@@ -221,13 +255,13 @@
         </div>
       </div>
 
-      <div class="newsTop">
+      <div class="newsTop" aria-label="Consejos">
         <div class="mini muted">
           Consejo: con muchos feeds, sube Batch a 16–20 o sube el intervalo; el sistema rota por lotes para no colapsar.
         </div>
       </div>
 
-      <div id="newsList" class="newsList" aria-label="Lista de noticias"></div>
+      <div id="newsList" class="newsList" aria-label="Lista de noticias" role="feed"></div>
     </section>
   </main>
 
@@ -236,11 +270,11 @@
     <div class="modalCard" role="dialog" aria-modal="true" aria-label="Gestionar feeds">
       <div class="modalHead">
         <h3>Feeds</h3>
-        <button id="btnCloseModal" class="btn" type="button">Cerrar</button>
+        <button id="btnCloseModal" class="btn" type="button" aria-label="Cerrar modal">Cerrar</button>
       </div>
 
       <div class="modalBody">
-        <div class="grid2">
+        <div class="grid2" role="group" aria-label="Añadir feed">
           <label class="mini">
             Nombre
             <input id="newFeedName" class="input" placeholder="Mi feed" autocomplete="off" />
@@ -251,7 +285,7 @@
           </label>
         </div>
 
-        <div class="row wrap" style="margin-top:10px;">
+        <div class="row wrap" style="margin-top:10px;" aria-label="Acciones de feeds">
           <button id="btnAddFeed" class="btn primary" type="button">+ Añadir</button>
           <button id="btnExportFeeds" class="btn" type="button">Exportar</button>
           <button id="btnImportFeeds" class="btn" type="button">Importar</button>

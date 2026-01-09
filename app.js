@@ -1,12 +1,20 @@
-/* app.js — News → Tweet Template Panel (tnp-v4.0.1) — PRO FAST (10→50 cap)
+/* app.js — News → Tweet Template Panel (tnp-v4.0.1) — PRO FAST (10→50 cap) — UPGRADED
+   ✅ NO rompe tu HTML/IDs/clases (compatible con index.html que tienes)
    ✅ Rendimiento PRO:
-      - Lista visible por defecto: 10 (ampliable hasta 50)
-      - Tope fetch configurable: no baja infinito, no colapsa
-      - Rotación por lotes (batch feeds) en auto-refresh: evita 100+ fetch cada 30s
-      - Purga automática por ventana (1–72h) + recorte por cap
-      - “Visible-only” para: resolve / translate / OG (no bloquea UI)
-      - Render estable: menos reflow + update suave (no “pantalla en blanco”)
-   ✅ Mantiene tus IDs/UI + localStorage v4, migra v3→v4
+      - Visible por defecto: 10 (ampliable hasta 50)
+      - Tope fetch configurable (fetchCap) + memoria estable (keepCap)
+      - Auto-refresh por lotes (batch feeds) para no “martillear” 50+ feeds
+      - Purga automática por ventana (1–72h) + recorte por caps + expiración de cachés
+      - Visible-only para resolve / translate / OG (no bloquea UI)
+      - Render estable (firma + update de edades sin re-render masivo)
+      - Backoff exponencial por feed que falla
+   ✅ Calidad:
+      - 50+ feeds por defecto (TOP): mezcla direct RSS + Google News RSS por categorías
+      - Mejor limpieza de titulares (quita “ - Medio” cuando estorba)
+      - Mejor conteo de caracteres (aprox. X: URLs cuentan como 23)
+      - OG/Twitter image con fallbacks + caché
+      - Atajos teclado: Ctrl/Cmd+K buscar, Ctrl/Cmd+R refrescar, Esc cierra modal
+   ✅ Mantiene localStorage v4 y migra v3→v4
 */
 
 (() => {
@@ -44,14 +52,18 @@
   const OG_FETCH_TIMEOUT_MS = 12_000;
 
   const TR_CACHE_LIMIT = 1400;
-  const RESOLVE_CACHE_LIMIT = 1600;
-  const IMG_CACHE_LIMIT = 1200;
+  const RESOLVE_CACHE_LIMIT = 2000;
+  const IMG_CACHE_LIMIT = 1600;
 
   const FEED_FAIL_BACKOFF_BASE_MS = 60_000;
   const FEED_FAIL_BACKOFF_MAX_MS = 15 * 60_000;
 
   const MAX_SMART_HEADLINE_LEN = 130;
   const VERSION = "tnp-v4.0.1";
+
+  // Expiración de caches (para que no crezcan eternamente)
+  const CACHE_ENTRY_MAX_AGE_DAYS = 21; // traducciones/resolve/img (si no se usan)
+  const USED_MAX_AGE_DAYS = 30;        // opcional: recorta “usados” viejos
 
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
   const DEFAULT_TEMPLATE =
@@ -64,24 +76,117 @@ Fuente:
 
 {{HASHTAGS}}`;
 
-  /* ───────────────────────────── FEEDS ───────────────────────────── */
+  /* ───────────────────────────── FEEDS HELPERS ───────────────────────────── */
   const gn = (q, hl="es", gl="ES", ceid="ES:es") =>
     `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${encodeURIComponent(hl)}&gl=${encodeURIComponent(gl)}&ceid=${encodeURIComponent(ceid)}`;
+
+  const gnTopic = (topic, hl="es", gl="ES", ceid="ES:es") =>
+    `https://news.google.com/rss/topics/${encodeURIComponent(topic)}?hl=${encodeURIComponent(hl)}&gl=${encodeURIComponent(gl)}&ceid=${encodeURIComponent(ceid)}`;
 
   const gdeltDoc = (query, max=50) =>
     `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=${encodeURIComponent(String(max))}&sort=HybridRel`;
 
+  /* ───────────────────────────── DEFAULT FEEDS (50+ TOP) ─────────────────────────────
+     Nota: NO activamos los 50+ a la vez por rendimiento.
+     Por defecto: ~16–18 activos (buen “starter pack”), el resto quedan listos en el modal.
+  */
   const DEFAULT_FEEDS = [
-    { name: "DW Español (RSS)", url: "https://rss.dw.com/rdf/rss-es-all", enabled: true },
+    // ── España (direct RSS cuando es común y suele funcionar)
+    { name: "El País — España (RSS)", url: "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/espana/portada", enabled: true },
+    { name: "El País — Internacional (RSS)", url: "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/internacional/portada", enabled: true },
+    { name: "El Mundo — Portada (RSS)", url: "https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml", enabled: true },
+    { name: "La Vanguardia — Portada (RSS)", url: "https://www.lavanguardia.com/mvc/feed/rss/home", enabled: true },
+    { name: "20minutos — Portada (RSS)", url: "https://www.20minutos.es/rss/", enabled: false },
+
+    // ── Internacional (direct)
+    { name: "BBC — World (RSS)", url: "https://feeds.bbci.co.uk/news/world/rss.xml", enabled: true },
+    { name: "The Guardian — World (RSS)", url: "https://www.theguardian.com/world/rss", enabled: false },
+    { name: "Al Jazeera — All (RSS)", url: "https://www.aljazeera.com/xml/rss/all.xml", enabled: false },
     { name: "Euronews (MRSS)", url: "https://www.euronews.com/rss?format=mrss", enabled: true },
-    { name: "Google News — España (RSS)", url: gn("España OR Madrid OR Barcelona"), enabled: true },
-    { name: "Google News — Mundo (RSS)", url: gn("World OR International OR ONU OR UE"), enabled: true },
-    { name: "Reuters — World (via GN)", url: gn("site:reuters.com world"), enabled: false },
-    { name: "AP — World (via GN)", url: gn("site:apnews.com world"), enabled: false },
-    { name: "BBC World (RSS)", url: "https://feeds.bbci.co.uk/news/world/rss.xml", enabled: false },
-    { name: "The Guardian World (RSS)", url: "https://www.theguardian.com/world/rss", enabled: false },
-    { name: "Al Jazeera (RSS)", url: "https://www.aljazeera.com/xml/rss/all.xml", enabled: false },
-    { name: "GDELT — Breaking", url: gdeltDoc("breaking OR urgent OR developing", 50), enabled: false },
+    { name: "DW Español (RSS)", url: "https://rss.dw.com/rdf/rss-es-all", enabled: true },
+
+    // ── Tech (direct)
+    { name: "The Verge (RSS)", url: "https://www.theverge.com/rss/index.xml", enabled: false },
+    { name: "Ars Technica (RSS)", url: "http://feeds.arstechnica.com/arstechnica/index", enabled: false },
+    { name: "Wired (RSS)", url: "https://www.wired.com/feed/rss", enabled: false },
+    { name: "TechCrunch (RSS)", url: "https://techcrunch.com/feed/", enabled: false },
+    { name: "Hacker News (RSS)", url: "https://hnrss.org/frontpage", enabled: false },
+
+    // ── Google News (RSS) — España “segmentado”
+    { name: "Google News — España (España/Madrid/Barcelona)", url: gn("España OR Madrid OR Barcelona OR Valencia OR Sevilla"), enabled: true },
+    { name: "Google News — Política España", url: gn("site:elpais.com OR site:elmundo.es OR site:lavanguardia.com política España"), enabled: false },
+    { name: "Google News — Economía España (IBEX/IPC/Tipos)", url: gn("IBEX OR inflación OR tipos OR BCE OR PIB España"), enabled: true },
+    { name: "Google News — Sucesos España", url: gn("sucesos OR detenido OR policía OR tiroteo España"), enabled: false },
+    { name: "Google News — Salud España", url: gn("salud OR hospital OR vacuna España"), enabled: false },
+
+    // ── Google News — Mundo / geopolítica / guerra
+    { name: "Google News — Mundo (ONU/UE)", url: gn("World OR International OR ONU OR UE OR European Union"), enabled: true },
+    { name: "Google News — OTAN/Ucrania", url: gn("OTAN OR NATO OR Ucrania OR Ukraine OR Rusia OR Russia"), enabled: true },
+    { name: "Google News — Israel/Gaza/Oriente Medio", url: gn("Israel OR Gaza OR Hamas OR Oriente Medio OR Middle East"), enabled: false },
+    { name: "Google News — EEUU (Congreso/Casa Blanca)", url: gn("US OR United States OR White House OR Congress"), enabled: false },
+
+    // ── Google News — agencias/top domains (via GN)
+    { name: "Reuters — World (via GN)", url: gn("site:reuters.com world OR breaking"), enabled: false },
+    { name: "Associated Press — World (via GN)", url: gn("site:apnews.com world OR breaking"), enabled: false },
+    { name: "Bloomberg — Markets (via GN)", url: gn("site:bloomberg.com markets OR stocks OR rates"), enabled: false },
+    { name: "Financial Times — Markets (via GN)", url: gn("site:ft.com markets OR economy"), enabled: false },
+    { name: "CNBC — Markets (via GN)", url: gn("site:cnbc.com markets OR stocks OR rates"), enabled: false },
+
+    // ── Google News — economía global / energía / cripto
+    { name: "Google News — Energía (petróleo/gas)", url: gn("petróleo OR oil OR gas OR OPEC OR LNG"), enabled: false },
+    { name: "Google News — Bancos centrales (Fed/BCE)", url: gn("Federal Reserve OR Fed OR ECB OR Banco Central OR tipos de interés"), enabled: false },
+    { name: "Google News — Cripto", url: gn("Bitcoin OR BTC OR Ethereum OR ETH OR crypto regulation"), enabled: false },
+
+    // ── Google News — Tech / IA / ciber
+    { name: "Google News — IA (OpenAI/Google/Meta)", url: gn("OpenAI OR ChatGPT OR Gemini OR Meta AI OR AI regulation"), enabled: true },
+    { name: "Google News — Ciberseguridad", url: gn("hack OR ransomware OR ciberataque OR cybersecurity"), enabled: false },
+    { name: "Google News — Chips (NVIDIA/AMD/Intel)", url: gn("NVIDIA OR AMD OR Intel OR chips OR semiconductors"), enabled: false },
+
+    // ── Google News — deportes
+    { name: "Google News — Fútbol (LaLiga/Champions)", url: gn("LaLiga OR Champions OR Real Madrid OR Barcelona"), enabled: false },
+    { name: "Google News — NBA/NFL", url: gn("NBA OR NFL"), enabled: false },
+
+    // ── Google News — entretenimiento
+    { name: "Google News — Cine/Series", url: gn("Netflix OR cine OR series OR estreno OR taquilla"), enabled: false },
+    { name: "Google News — Música", url: gn("música OR concierto OR festival OR Grammy"), enabled: false },
+
+    // ── Google News — ciencia / clima
+    { name: "Google News — Ciencia", url: gn("NASA OR espacio OR ciencia OR investigación"), enabled: false },
+    { name: "Google News — Clima/meteorología", url: gn("ola de calor OR tormenta OR temporal OR inundaciones"), enabled: false },
+
+    // ── Más España (GN, por regiones)
+    { name: "Google News — Andalucía", url: gn("Andalucía OR Sevilla OR Málaga noticias"), enabled: false },
+    { name: "Google News — Cataluña", url: gn("Cataluña OR Barcelona política OR Generalitat"), enabled: false },
+    { name: "Google News — Comunidad Valenciana", url: gn("Valencia OR Alicante OR Castellón noticias"), enabled: false },
+    { name: "Google News — País Vasco", url: gn("País Vasco OR Bilbao OR Vitoria noticias"), enabled: false },
+    { name: "Google News — Galicia", url: gn("Galicia OR A Coruña OR Vigo noticias"), enabled: false },
+
+    // ── “Radar” general (GN)
+    { name: "Google News — Última Hora (ES)", url: gn("última hora OR urgente OR en directo"), enabled: true },
+    { name: "Google News — Última Hora (EN)", url: gn("breaking OR urgent OR developing"), enabled: false },
+
+    // ── GDELT (opcional)
+    { name: "GDELT — Breaking", url: gdeltDoc("breaking OR urgent OR developing", 60), enabled: false },
+    { name: "GDELT — Spain", url: gdeltDoc("Spain OR España OR Madrid OR Barcelona", 60), enabled: false },
+
+    // ── Extras “site:” por medios ES (via GN) (más “top” sin depender de RSS directo)
+    { name: "GN — El Confidencial (via GN)", url: gn("site:elconfidencial.com España OR política OR economía"), enabled: false },
+    { name: "GN — El Diario (via GN)", url: gn("site:eldiario.es España OR política OR economía"), enabled: false },
+    { name: "GN — ABC (via GN)", url: gn("site:abc.es España OR política OR sucesos"), enabled: false },
+    { name: "GN — OKDiario (via GN)", url: gn("site:okdiario.com España OR política"), enabled: false },
+    { name: "GN — Público (via GN)", url: gn("site:publico.es España OR política"), enabled: false },
+
+    // ── Más internacionales (via GN)
+    { name: "GN — CNN (via GN)", url: gn("site:cnn.com breaking OR world"), enabled: false },
+    { name: "GN — NYTimes (via GN)", url: gn("site:nytimes.com world OR breaking"), enabled: false },
+    { name: "GN — Washington Post (via GN)", url: gn("site:washingtonpost.com breaking OR world"), enabled: false },
+    { name: "GN — Politico (via GN)", url: gn("site:politico.com breaking OR europe OR ukraine"), enabled: false },
+    { name: "GN — Der Spiegel (via GN)", url: gn("site:spiegel.de ukraine OR russia OR nato"), enabled: false },
+
+    // ── Más tech (via GN)
+    { name: "GN — The Verge (via GN)", url: gn("site:theverge.com AI OR tech OR security"), enabled: false },
+    { name: "GN — ArsTechnica (via GN)", url: gn("site:arstechnica.com AI OR security OR apple"), enabled: false },
+    { name: "GN — Wired (via GN)", url: gn("site:wired.com AI OR security"), enabled: false },
   ];
 
   /* ───────────────────────────── STATE ───────────────────────────── */
@@ -90,7 +195,7 @@ Fuente:
     items: [],
     template: "",
     settings: {},
-    used: new Set(),
+    used: new Set(),     // ahora puede ser Set o Map (ver migración)
 
     refreshInFlight: false,
     refreshPending: false,
@@ -111,7 +216,7 @@ Fuente:
   const resInFlight = new Map();
   const imgInFlight = new Map();
 
-  const feedFail = new Map();    // url -> { fails, nextAt }
+  const feedFail = new Map();     // url -> { fails, nextAt }
   const feedTextHash = new Map(); // url -> hash (para saltar parse si igual dentro de sesión)
 
   let uiTickTimer = 0;
@@ -193,12 +298,25 @@ Fuente:
   function init() {
     grabEls();
     syncTopbarHeight();
+
+    // Migraciones / limpieza de caches (no bloquea UI)
+    runSoon(() => {
+      try {
+        expireCache(trCache, CACHE_ENTRY_MAX_AGE_DAYS);
+        expireCache(resolveCache, CACHE_ENTRY_MAX_AGE_DAYS);
+        expireCache(imgCache, CACHE_ENTRY_MAX_AGE_DAYS);
+        persistCaches();
+      } catch {}
+    });
+
     setupOgObserver();
 
     state.template = loadTemplate();
     state.feeds = loadFeeds();
     state.settings = loadSettings();
-    state.used = loadUsedSet();
+
+    // usados: soporta Set (antiguo) y Map con timestamp (nuevo)
+    state.used = loadUsedSetOrMap();
 
     // defaults UI
     el.template.value = state.template || DEFAULT_TEMPLATE;
@@ -228,6 +346,7 @@ Fuente:
     renderFeedsModal();
     updatePreview();
 
+    // boot refresh
     refreshAll({ reason: "boot", force: true });
     startRealtime();
 
@@ -264,10 +383,25 @@ Fuente:
     el.btnCloseModal.addEventListener("click", () => openModal(false));
     el.modal.addEventListener("click", (e) => { if (e.target === el.modal) openModal(false); });
 
+    // atajos teclado (no rompe nada)
+    document.addEventListener("keydown", (e) => {
+      const isMod = e.ctrlKey || e.metaKey;
+      if (e.key === "Escape") {
+        if (!el.modal.classList.contains("hidden")) openModal(false);
+      }
+      if (isMod && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        el.searchBox.focus();
+        el.searchBox.select?.();
+      }
+      if (isMod && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        refreshAll({ reason: "hotkey", force: true });
+      }
+    });
+
     el.timeFilter.addEventListener("change", () => {
-      // ventana = purga + render
       renderNewsList({ silent: true, hardPurge: true });
-      // en auto, no hace falta; pero si quieres refrescar:
       refreshAll({ reason: "window", force: false });
     });
 
@@ -278,7 +412,6 @@ Fuente:
 
     if (el.fetchCap) el.fetchCap.addEventListener("change", () => {
       saveSetting("fetchCap", clampNum(el.fetchCap.value, 80, 2000));
-      // recorta cache local para no crecer
       hardTrimAndPurge();
       renderNewsList({ silent: true });
     });
@@ -548,7 +681,7 @@ Fuente:
       const ms = Number(it.publishedMs || 0) || 0;
       if (ms && ms < minMs) return false;
 
-      if (hideUsed && state.used.has(it.id)) return false;
+      if (hideUsed && isUsed(it.id)) return false;
       if (cat && cat !== "all" && String(it.cat || "all") !== cat) return false;
 
       const shownTitle = String(it.titleEs || it.title || "");
@@ -571,7 +704,6 @@ Fuente:
     } else if (sortBy === "source") {
       filtered.sort((a, b) => String(a.feed).localeCompare(String(b.feed)) || (b.publishedMs - a.publishedMs));
     } else {
-      // recientes + boost TOP
       filtered.sort((a, b) => {
         const ai = calcImpact(a), bi = calcImpact(b);
         const aTop = ai >= 70 ? 1 : 0;
@@ -586,7 +718,6 @@ Fuente:
     // firma de render: evita re-render inútil (si no cambió nada y estamos en silent)
     const sig = `${showLimit}|${hours}|${search}|${cat}|${sortBy}|${onlyReady}|${hideUsed}|${limited.length}|${limited[0]?.id||""}|${limited[0]?.publishedMs||0}`;
     if (silent && sig === state.lastRenderSig) {
-      // solo actualiza edades
       updateDynamicLabels();
       return;
     }
@@ -624,6 +755,13 @@ Fuente:
       img.alt = "";
       const best = pickBestThumb(it, shownUrl || it.link);
       img.src = best || faviconUrl(shownUrl || it.link);
+
+      // fallback si imagen falla
+      img.addEventListener("error", () => {
+        const fallback = faviconUrl(shownUrl || it.link);
+        if (img.src !== fallback) img.src = fallback;
+      });
+
       thumbWrap.appendChild(img);
 
       thumbWrap.addEventListener("click", (e) => {
@@ -637,12 +775,15 @@ Fuente:
 
       const title = document.createElement("div");
       title.className = "newsTitle";
-      title.textContent = it.titleEs || it.title || "—";
+
+      // TITULAR mostrado (limpio)
+      const shownTitle = cleanHeadlineForDisplay(it.titleEs || it.title || "—");
+      title.textContent = shownTitle;
 
       if (origNeeded) {
         const orig = document.createElement("span");
         orig.className = "orig";
-        orig.textContent = it.title || "";
+        orig.textContent = cleanHeadlineForDisplay(it.title || "");
         title.appendChild(orig);
       }
 
@@ -679,7 +820,7 @@ Fuente:
       btnOpen.target = "_blank";
       btnOpen.rel = "noopener noreferrer";
 
-      const btnMark = linkBtn(state.used.has(it.id) ? "Desmarcar" : "Marcar", "#");
+      const btnMark = linkBtn(isUsed(it.id) ? "Desmarcar" : "Marcar", "#");
       btnMark.addEventListener("click", (e) => {
         e.preventDefault();
         toggleUsed(it.id);
@@ -718,7 +859,6 @@ Fuente:
     runSoon(() => maybeResolveVisible(visibleForResolve).catch(() => {}));
     runSoon(() => maybeTranslateVisible(visibleForTranslate).catch(() => {}));
 
-    // status compacto
     setStatus(`Listo · mostrando ${limited.length}/${filtered.length} · ventana ${hours}h`);
   }
 
@@ -748,7 +888,7 @@ Fuente:
     const shownUrl = canonicalizeUrl((resolveLinks ? (it.linkResolved || it.link) : it.link) || it.link) || "";
     const headline = cleanText((it.titleEs || it.title || "").trim());
 
-    el.headline.value = headline;
+    el.headline.value = cleanHeadlineForTweet(headline);
     el.sourceUrl.value = shownUrl;
 
     toggleUsed(it.id, true);
@@ -816,6 +956,9 @@ Fuente:
 
   /* ───────────────────────────── REFRESH ───────────────────────────── */
   async function refreshAll({ reason = "manual", force = false } = {}) {
+    // antispam: si hace 2s ya refrescaste y no es force, corta
+    if (!force && (Date.now() - lastRefreshAt) < 2000) return;
+
     if (state.refreshInFlight) {
       state.refreshPending = true;
       if (force && state.refreshAbort) {
@@ -845,7 +988,7 @@ Fuente:
 
       // Caps (no colapsar)
       const fetchCap = clampNum(state.settings.fetchCap ?? (el.fetchCap ? el.fetchCap.value : 240), 80, 2000);
-      const keepCap = Math.max(120, Math.min(2000, fetchCap * 2)); // memoria local estable
+      const keepCap = Math.max(160, Math.min(2500, fetchCap * 2)); // memoria local estable
 
       // Batch: auto refresh rota, force refresca todos
       const batch = clampNum(state.settings.batchFeeds ?? (el.batchFeeds ? el.batchFeeds.value : 12), 4, 50);
@@ -875,6 +1018,9 @@ Fuente:
         .slice(0, keepCap);
 
       state.items = fresh;
+
+      // recorta “usados” antiguos (si usamos Map)
+      trimUsedByAge(USED_MAX_AGE_DAYS);
 
       lastRefreshAt = Date.now();
       setStatus(`✅ OK · ${state.items.length} en memoria · ${new Date(lastRefreshAt).toLocaleTimeString()}`);
@@ -918,27 +1064,31 @@ Fuente:
     const url = String(feed?.url || "").trim();
     if (!url) return [];
 
-    // backoff tracking
     const ff0 = feedFail.get(url) || { fails: 0, nextAt: 0 };
     if (!force && ff0.nextAt && Date.now() < ff0.nextAt) return [];
 
-    const txt = await fetchTextWithFallbacks(url, 16_000, parentSignal);
-    if (!txt) throw new Error("empty feed " + url);
+    try {
+      const txt = await fetchTextWithFallbacks(url, 16_000, parentSignal);
+      if (!txt) throw new Error("empty feed " + url);
 
-    // hash rápido: si es idéntico, no parsees otra vez en esta sesión
-    const h = fastHash(txt);
-    if (!force && feedTextHash.get(url) === h) return [];
-    feedTextHash.set(url, h);
+      // hash rápido: si es idéntico, no parsees otra vez en esta sesión
+      const h = fastHash(txt);
+      if (!force && feedTextHash.get(url) === h) return [];
+      feedTextHash.set(url, h);
 
-    let items = [];
-    const t = String(txt || "").trim();
-    if (t.startsWith("{") || t.startsWith("[")) items = parseJsonFeed(t, name, fetchCap);
-    else items = parseFeed(t, name, fetchCap);
+      let items = [];
+      const t = String(txt || "").trim();
+      if (t.startsWith("{") || t.startsWith("[")) items = parseJsonFeed(t, name, fetchCap);
+      else items = parseFeed(t, name, fetchCap);
 
-    // ok => reset fail
-    feedFail.set(url, { fails: 0, nextAt: 0 });
-
-    return items || [];
+      // ok => reset fail
+      feedFail.set(url, { fails: 0, nextAt: 0 });
+      return items || [];
+    } catch (e) {
+      bumpFeedFail(url);
+      // no reventar la app
+      return [];
+    }
   }
 
   function bumpFeedFail(url) {
@@ -1047,7 +1197,6 @@ Fuente:
       impact: 0,
       image: canonicalizeUrl(image),
       ogImage: "",
-      used: false,
     };
   }
 
@@ -1176,6 +1325,7 @@ Fuente:
       if (!prev || publishedMs > Number(prev.publishedMs || 0)) map.set(link, fixed);
     }
 
+    // dedupe adicional por título (similaridad básica)
     const byTitle = new Map();
     for (const it of map.values()) {
       const tkey = normalizeTitleKey(it.title);
@@ -1209,16 +1359,19 @@ Fuente:
     const title = String((it.titleEs || it.title || "")).toLowerCase();
     const feed = String(it.feed || "").toLowerCase();
 
-    if (/reuters|apnews|associated press|bbc|financial times|ft\.com/.test(feed)) score += 18;
-    if (/elpais|el país|elmundo|la vanguardia|abc|expansión|eleconomista/.test(feed)) score += 10;
+    // fuente
+    if (/reuters|apnews|associated press|bbc|ft\.com|financial times|bloomberg/.test(feed)) score += 18;
+    if (/elpais|el país|elmundo|la vanguardia|eldiario|elconfidencial/.test(feed)) score += 10;
 
+    // keywords “hot”
     const hot = [
       "última hora","breaking","urgent","en directo","atentado","misil","ataque","explosión",
-      "otan","nato","ucrania","rusia","israel","gaza","trump","biden","sánchez","putin",
-      "dimite","detenido","juicio","sanciones","crisis","apagón","hackeo"
+      "otan","nato","ucrania","ukraine","rusia","russia","israel","gaza","sanciones",
+      "dimite","detenido","juicio","crisis","apagón","hackeo","ciberataque"
     ];
     for (const k of hot) if (title.includes(k)) score += 8;
 
+    // entidades “macro”
     if (/presidente|gobierno|elecciones|parlamento|congreso|ue|unión europea|onu/.test(title)) score += 6;
     if (/inflación|pib|tipos|banco central|bolsa|petróleo|gas|recesión|deuda/.test(title)) score += 6;
 
@@ -1241,7 +1394,7 @@ Fuente:
     const sp = /(españa|madrid|barcelona|valencia|sevilla|andaluc|catalu|galicia|bilbao|zaragoza)/i;
     if (sp.test(t) || /españa/.test(f)) return "spain";
 
-    if (/(otan|nato|ucrania|rusia|gaza|israel|misil|ataque|defensa|ejército)/i.test(t)) return "war";
+    if (/(otan|nato|ucrania|ukraine|rusia|russia|gaza|israel|misil|ataque|defensa|ejército)/i.test(t)) return "war";
     if (/(elecciones|presidente|gobierno|parlamento|congreso|senado|partido|ministro)/i.test(t)) return "politics";
     if (/(bolsa|ibex|dow|nasdaq|inflación|pib|banco|tipos|petróleo|gas|mercados)/i.test(t)) return "economy";
     if (/(ia|ai|openai|microsoft|google|meta|apple|android|iphone|chip|nvidia|ciber|hack)/i.test(t)) return "tech";
@@ -1372,11 +1525,13 @@ Fuente:
     const p = (async () => {
       let out = "";
 
+      // 1) url param
       out = extractUrlParam(url);
       out = canonicalizeUrl(out);
       out = cleanTracking(out);
       if (out) return out;
 
+      // 2) html canonical / refresh / json-ld
       const html = await fetchTextWithFallbacks(url, 11_000).catch(() => "");
       if (html) {
         out = pickCanonical(html) || pickMetaRefresh(html) || pickJsonLdUrl(html) || extractUrlFromHtml(html);
@@ -1385,6 +1540,7 @@ Fuente:
         if (out) return out;
       }
 
+      // 3) follow redirect
       out = await tryFollowRedirect(url).catch(() => "");
       out = canonicalizeUrl(out);
       out = cleanTracking(out);
@@ -1575,11 +1731,48 @@ Fuente:
       const feeds = Array.isArray(arr)
         ? arr.map(normalizeFeed).filter(f => f.url)
         : DEFAULT_FEEDS.map(f => ({ ...f }));
-      try { localStorage.setItem(LS_FEEDS, JSON.stringify(feeds)); } catch {}
-      return feeds;
+
+      // si el usuario tenía pocos feeds guardados, “injerta” defaults TOP nuevos sin duplicar URLs
+      const merged = mergeFeedsKeepUser(feeds, DEFAULT_FEEDS);
+
+      try { localStorage.setItem(LS_FEEDS, JSON.stringify(merged)); } catch {}
+      return merged;
     } catch {
       return DEFAULT_FEEDS.map(f => ({ ...f }));
     }
+  }
+
+  function mergeFeedsKeepUser(userFeeds, defaults) {
+    const seen = new Set((userFeeds || []).map(f => String(f.url || "").trim()).filter(Boolean));
+    const out = (userFeeds || []).map(normalizeFeed).filter(f => f.url);
+
+    for (const d of (defaults || [])) {
+      const u = String(d.url || "").trim();
+      if (!u || seen.has(u)) continue;
+      out.push({ ...normalizeFeed(d) });
+      seen.add(u);
+    }
+
+    // garantía: al menos 50 feeds
+    if (out.length < 50) {
+      const extra = [
+        { name: "GN — Europa (UE)", url: gn("Europa OR Unión Europea OR Brussels"), enabled: false },
+        { name: "GN — UK", url: gn("UK OR United Kingdom OR London"), enabled: false },
+        { name: "GN — Francia", url: gn("France OR París OR Macron"), enabled: false },
+        { name: "GN — Alemania", url: gn("Germany OR Berlin"), enabled: false },
+        { name: "GN — Italia", url: gn("Italy OR Roma OR Meloni"), enabled: false },
+        { name: "GN — Portugal", url: gn("Portugal OR Lisboa"), enabled: false },
+      ];
+      for (const e of extra) {
+        const u = String(e.url || "").trim();
+        if (!u || seen.has(u)) continue;
+        out.push({ ...normalizeFeed(e) });
+        seen.add(u);
+        if (out.length >= 50) break;
+      }
+    }
+
+    return out;
   }
 
   function saveFeeds(feeds) {
@@ -1618,7 +1811,7 @@ Fuente:
       hideUsed: false,
       catFilter: "all",
 
-      // NUEVO PRO
+      // PRO
       showLimit: 10,
       fetchCap: 240,
       batchFeeds: 12,
@@ -1635,30 +1828,87 @@ Fuente:
     try { localStorage.setItem(LS_SETTINGS, JSON.stringify(state.settings)); } catch {}
   }
 
-  function loadUsedSet() {
+  function loadUsedSetOrMap() {
+    // v3/v4 pueden ser array de ids (Set)
+    // nuevo: Map id -> timestamp
     try {
       const raw = localStorage.getItem(LS_USED) || localStorage.getItem(LS_USED_V3);
-      if (!raw) return new Set();
-      const arr = JSON.parse(raw);
-      const s = new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
-      try { localStorage.setItem(LS_USED, JSON.stringify(Array.from(s))); } catch {}
-      return s;
+      if (!raw) return new Map();
+
+      const parsed = JSON.parse(raw);
+
+      // Map-like persisted as object {id:ts}
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const m = new Map();
+        for (const [k, v] of Object.entries(parsed)) {
+          const ts = Number(v) || Date.now();
+          m.set(k, ts);
+        }
+        // guarda en v4
+        try { localStorage.setItem(LS_USED, JSON.stringify(Object.fromEntries(m))); } catch {}
+        return m;
+      }
+
+      // array -> Map
+      if (Array.isArray(parsed)) {
+        const m = new Map();
+        for (const id of parsed.filter(Boolean)) m.set(String(id), Date.now());
+        try { localStorage.setItem(LS_USED, JSON.stringify(Object.fromEntries(m))); } catch {}
+        return m;
+      }
+
+      return new Map();
     } catch {
-      return new Set();
+      return new Map();
     }
   }
 
-  function saveUsedSet(setObj) {
-    try { localStorage.setItem(LS_USED, JSON.stringify(Array.from(setObj || []))); } catch {}
+  function saveUsedMap(mapObj) {
+    try {
+      const obj = Object.fromEntries(mapObj || new Map());
+      localStorage.setItem(LS_USED, JSON.stringify(obj));
+    } catch {}
+  }
+
+  function isUsed(id) {
+    if (!id) return false;
+    // soporta Set antiguo si alguien lo mete
+    if (state.used instanceof Set) return state.used.has(id);
+    return state.used instanceof Map ? state.used.has(id) : false;
   }
 
   function toggleUsed(id, forceOn) {
     if (!id) return;
+
+    // migra si era Set
+    if (state.used instanceof Set) {
+      const m = new Map();
+      for (const x of state.used) m.set(x, Date.now());
+      state.used = m;
+    }
+    if (!(state.used instanceof Map)) state.used = new Map();
+
     const has = state.used.has(id);
     const want = (typeof forceOn === "boolean") ? forceOn : (!has);
-    if (want) state.used.add(id);
+
+    if (want) state.used.set(id, Date.now());
     else state.used.delete(id);
-    saveUsedSet(state.used);
+
+    saveUsedMap(state.used);
+  }
+
+  function trimUsedByAge(days) {
+    if (!(state.used instanceof Map)) return;
+    const maxAge = days * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let changed = false;
+    for (const [id, ts] of state.used.entries()) {
+      if ((now - Number(ts || 0)) > maxAge) {
+        state.used.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) saveUsedMap(state.used);
   }
 
   function loadJsonPreferNew(keyNew, keyOld, fallback) {
@@ -1698,11 +1948,31 @@ Fuente:
     for (let i=0; i<kill; i++) delete cacheObj[keys[i]];
   }
 
+  function expireCache(cacheObj, days) {
+    const maxAge = days * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let removed = 0;
+    for (const k of Object.keys(cacheObj || {})) {
+      const t = Number(cacheObj?.[k]?.t || 0);
+      if (t && (now - t) > maxAge) {
+        delete cacheObj[k];
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  function persistCaches() {
+    try { localStorage.setItem(LS_TR_CACHE, JSON.stringify(trCache)); } catch {}
+    try { localStorage.setItem(LS_RESOLVE_CACHE, JSON.stringify(resolveCache)); } catch {}
+    try { localStorage.setItem(LS_IMG_CACHE, JSON.stringify(imgCache)); } catch {}
+  }
+
   function hardTrimAndPurge() {
     const hours = clampNum(el.timeFilter.value, 1, 72);
     const minMs = Date.now() - hours * 60 * 60 * 1000;
     const fetchCap = clampNum(state.settings.fetchCap ?? 240, 80, 2000);
-    const keepCap = Math.max(120, Math.min(2000, fetchCap * 2));
+    const keepCap = Math.max(160, Math.min(2500, fetchCap * 2));
 
     state.items = (state.items || [])
       .filter(it => Number(it?.publishedMs || 0) >= minMs)
@@ -1733,7 +2003,7 @@ Fuente:
     return stripToPayload(viaJina2);
   }
 
-  function bumpFeedFailMaybe(url, err) {
+  function bumpFeedFailMaybe(url) {
     // solo si es un feed real (no translate/og)
     try {
       const u = new URL(url);
@@ -1741,7 +2011,6 @@ Fuente:
       if (h.includes("translate.googleapis.com")) return;
       if (h.includes("allorigins.win")) return;
       if (h.includes("r.jina.ai")) return;
-      // marca backoff
       bumpFeedFail(url);
     } catch {}
   }
@@ -1798,6 +2067,24 @@ Fuente:
       .trim();
   }
 
+  function cleanHeadlineForDisplay(s) {
+    // quita “ - Medio” cuando es típico y molesta (sin cargarte titulares legítimos)
+    const t = cleanText(s);
+    // si ya es corto, no toques
+    if (t.length < 55) return t;
+    // patrones comunes: "Titular - El País" / "Titular | Reuters"
+    return t
+      .replace(/\s+[-|–]\s+(El País|EL PAÍS|El Mundo|La Vanguardia|Reuters|Associated Press|AP|BBC|CNN|Euronews|DW)\s*$/i, "")
+      .trim();
+  }
+
+  function cleanHeadlineForTweet(s) {
+    // más agresivo para tweet: quita sufijos de medio si existen
+    return cleanHeadlineForDisplay(s)
+      .replace(/\s+\([^)]+\)\s*$/i, "") // (Vídeo), (Directo), etc (si sobra)
+      .trim();
+  }
+
   function safeDecode(s) {
     try { return decodeURIComponent(String(s || "")); } catch { return String(s || ""); }
   }
@@ -1848,11 +2135,10 @@ Fuente:
   function looksSpanish(t) {
     const s = String(t || "").toLowerCase();
     if (!s) return false;
-    // heurística rápida
-    const hits =
-      (s.match(/[áéíóúñ]/g) || []).length +
-      (s.match(/\b(el|la|los|las|de|del|y|en|para|con|por|una|un)\b/g) || []).length;
-    return hits >= 2;
+
+    const diacritics = (s.match(/[áéíóúñ]/g) || []).length;
+    const common = (s.match(/\b(el|la|los|las|de|del|y|en|para|con|por|una|un|hoy|ayer|mañana)\b/g) || []).length;
+    return (diacritics + common) >= 2;
   }
 
   function hashId(s) {
@@ -1860,7 +2146,6 @@ Fuente:
   }
 
   function fastHash(str) {
-    // djb2-ish (rápido)
     let h = 5381;
     for (let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
     return (h >>> 0).toString(16);
@@ -1921,8 +2206,25 @@ Fuente:
   }
 
   function twCharCount(text) {
-    // Aproximación práctica (X usa t.co); aquí contamos caracteres “humanos”.
-    return String(text || "").length;
+    // Aproximación útil para X:
+    // - URLs cuentan como 23 (t.co) aprox.
+    // - resto caracteres normales
+    const s = String(text || "");
+    if (!s) return 0;
+
+    const urlRe = /https?:\/\/[^\s]+/gi;
+    let count = 0;
+    let last = 0;
+    let m;
+    while ((m = urlRe.exec(s))) {
+      const start = m.index;
+      const end = start + m[0].length;
+      count += (start - last); // texto normal antes
+      count += 23;             // URL
+      last = end;
+    }
+    count += (s.length - last);
+    return count;
   }
 
   function smartTrimHeadline(h, maxLen) {
@@ -1941,9 +2243,16 @@ Fuente:
       .trim();
     if (!s) return "";
 
-    const stop = new Set(["de","del","la","las","el","los","y","o","en","por","para","con","un","una","unos","unas","a","al","que","se","su","sus","es"]);
+    const stop = new Set(["de","del","la","las","el","los","y","o","en","por","para","con","un","una","unos","unas","a","al","que","se","su","sus","es","hoy","ayer","mañana"]);
     const words = s.split(" ").filter(w => w.length >= 4 && !stop.has(w));
-    const top = words.slice(0, 4).map(w => "#" + w.replace(/ñ/g,"n"));
+
+    // prioriza palabras “más fuertes”
+    const boosted = words
+      .map(w => ({ w, score: (/[áéíóúñ]/.test(w) ? 2 : 0) + (w.length >= 7 ? 2 : 0) + 1 }))
+      .sort((a,b) => b.score - a.score)
+      .map(x => x.w);
+
+    const top = boosted.slice(0, 4).map(w => "#" + w.replace(/ñ/g,"n"));
     return top.join(" ");
   }
 
@@ -1968,7 +2277,6 @@ Fuente:
       try {
         await navigator.serviceWorker.register("./sw.js", { scope: "./" });
       } catch (e) {
-        // no rompe
         console.warn("SW register failed:", e);
       }
     });
