@@ -5,6 +5,7 @@
    ✅ Imágenes: RSS (media/enclosure) + OG best-effort REAL (HTML vía proxies)
    ✅ Anti-CORS: directo → AllOrigins → CodeTabs → ThingProxy
    ✅ NUEVO: Vista previa estilo X (tweet + card) + conteo tipo X (URLs=23)
+   ✅ FIX CRÍTICO: errores de sintaxis que rompían TODO (spread headers / ...keys)
 */
 
 (() => {
@@ -132,7 +133,6 @@ Fuente:
 
   function estimateXChars(text){
     const s = String(text || "");
-    // X cuenta URLs como ~23 chars (t.co)
     const urlRe = /(https?:\/\/[^\s]+)/gi;
     let out = "";
     let last = 0;
@@ -332,6 +332,9 @@ Fuente:
     s.optShowOriginal = (s.optShowOriginal !== false);
     s.optHideUsed = (s.optHideUsed !== false);
     s.optAutoRefresh = (s.optAutoRefresh !== false);
+
+    s.optIncludeLive = (s.optIncludeLive !== false);
+    s.optIncludeSource = (s.optIncludeSource !== false);
 
     s.catFilter = s.catFilter || "all";
     return s;
@@ -566,7 +569,6 @@ Fuente:
   }
 
   async function fetchHtmlSmart(url, signal){
-    // igual que fetchTextSmart pero dejando claro que queremos HTML
     try { return await fetchText(url, signal, { "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }); } catch {}
 
     const enc = encodeURIComponent(url);
@@ -604,14 +606,12 @@ Fuente:
   }
 
   function pickImageFromItem(item){
-    // RSS media:content / media:thumbnail
     const mc = item.querySelector("media\\:content, content[url]");
     if (mc && mc.getAttribute("url")) return mc.getAttribute("url");
 
     const mt = item.querySelector("media\\:thumbnail");
     if (mt && mt.getAttribute("url")) return mt.getAttribute("url");
 
-    // enclosure
     const enc = item.querySelector("enclosure[url]");
     if (enc){
       const type = (enc.getAttribute("type") || "").toLowerCase();
@@ -619,7 +619,6 @@ Fuente:
       if (url && (!type || type.includes("image"))) return url;
     }
 
-    // atom link rel=enclosure
     const al = item.querySelector("link[rel='enclosure'][href]");
     if (al) return al.getAttribute("href");
 
@@ -713,21 +712,19 @@ Fuente:
     return [];
   }
 
-  /* ───────────────────────────── OG IMAGE BEST-EFFORT (REAL HTML via proxies) ───────────────────────────── */
+  /* ───────────────────────────── OG IMAGE BEST-EFFORT ───────────────────────────── */
   function extractOgImage(html, pageUrl){
     const getMeta = (re) => {
       const m = html.match(re);
       return (m && m[1]) ? m[1].trim() : "";
     };
 
-    // og:image / twitter:image
     let img =
       getMeta(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i) ||
       getMeta(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i) ||
       getMeta(/name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i) ||
       getMeta(/content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i);
 
-    // fallback: <link rel="image_src" href="...">
     if (!img){
       img = getMeta(/rel=["']image_src["'][^>]*href=["']([^"']+)["']/i) ||
             getMeta(/href=["']([^"']+)["'][^>]*rel=["']image_src["']/i);
@@ -735,7 +732,6 @@ Fuente:
 
     if (!img) return "";
 
-    // limpia comillas/html entities simples
     img = img.replace(/&amp;/g, "&");
     img = absolutizeUrl(img, pageUrl);
     return cleanUrl(img);
@@ -757,7 +753,7 @@ Fuente:
     }
   }
 
-  /* ───────────────────────────── LINK RESOLVE (suave) ───────────────────────────── */
+  /* ───────────────────────────── LINK RESOLVE ───────────────────────────── */
   function shouldResolve(url){
     const d = domainOf(url);
     return /news\.google\.com|feedproxy\.google\.com/.test(d);
@@ -767,7 +763,6 @@ Fuente:
     const k = url;
     if (state.resolveCache.has(k)) return state.resolveCache.get(k);
 
-    // seguir redirects (a veces CORS bloquea, pero en algunos casos funciona)
     try{
       const { signal: s2, cancel } = withTimeout(9000, signal);
       try{
@@ -781,7 +776,6 @@ Fuente:
       }
     } catch {}
 
-    // fallback: no resuelve
     state.resolveCache.set(k, url);
     return url;
   }
@@ -799,7 +793,6 @@ Fuente:
     const dom = it.domain || "";
     if (/(reuters\.com|bbc\.co\.uk|elpais\.com|elmundo\.es|rtve\.es|theguardian\.com)/.test(dom)) s += 2;
 
-    // frescura
     const ageMin = minutesAgo(it.dateMs);
     if (ageMin <= 10) s += 3;
     else if (ageMin <= 30) s += 2;
@@ -1007,12 +1000,20 @@ Fuente:
       ? DEFAULT_LIVE_LINE.replace("{{LIVE_URL}}", liveUrl)
       : "";
 
-    const out = tpl
+    let out = tpl
       .replaceAll("{{HEADLINE}}", headline)
       .replaceAll("{{LIVE_URL}}", liveUrl)
       .replaceAll("{{LIVE_LINE}}", liveLine)
       .replaceAll("{{SOURCE_URL}}", sourceUrl)
       .replaceAll("{{HASHTAGS}}", tags);
+
+    // si el toggle de fuente está OFF, limpiamos el bloque “Fuente:” de la plantilla estándar
+    if (els.optIncludeSource && !els.optIncludeSource.checked){
+      out = out
+        .replace(/\n?Fuente:\s*\n\s*https?:\/\/[^\s]+/i, "")
+        .replace(/\n?Fuente:\s*\n\s*\{\{SOURCE_URL\}\}/i, "")
+        .replace(/\n{3,}/g, "\n\n");
+    }
 
     return out.trim();
   }
@@ -1032,7 +1033,6 @@ Fuente:
     const title = (els.headline?.value || "").trim() || "Noticia";
     if (els.xMockCardTitle) els.xMockCardTitle.textContent = title;
 
-    // imagen: item.img (RSS/OG ya) -> card
     const imgUrl = it?.img || "";
     if (els.xMockCardImg){
       els.xMockCardImg.innerHTML = "";
@@ -1045,7 +1045,6 @@ Fuente:
         img.alt = "";
         els.xMockCardImg.appendChild(img);
       }else{
-        // placeholder
         const ph = document.createElement("div");
         ph.className = "xMock__ph";
         ph.textContent = "sin imagen";
@@ -1066,7 +1065,6 @@ Fuente:
       els.warn.textContent = (len > 280) ? `⚠️ Se pasa de 280 (sobran ${len - 280})` : "";
     }
 
-    // X Mock text
     if (els.xMockText) els.xMockText.textContent = t;
     renderXMockCard(getSelectedItem());
   }
@@ -1122,7 +1120,6 @@ Fuente:
     const parts = top10.map(x => `• ${x.title}`);
     els.tnpTickerInner.textContent = parts.join("   ");
 
-    // reinicia animación para que “se note” el cambio
     els.tnpTickerInner.style.animation = "none";
     // eslint-disable-next-line no-unused-expressions
     els.tnpTickerInner.offsetHeight;
@@ -1217,95 +1214,104 @@ Fuente:
 
     setStatus(force ? "Refrescando (force)…" : "Refrescando…");
 
-    const cap = clamp(Number(els.fetchCap?.value || settings.fetchCap || 240), 80, 2000);
-    const batchSize = clamp(Number(els.batchFeeds?.value || settings.batchFeeds || 12), 4, 50);
+    try{
+      const cap = clamp(Number(els.fetchCap?.value || settings.fetchCap || 240), 80, 2000);
+      const batchSize = clamp(Number(els.batchFeeds?.value || settings.batchFeeds || 12), 4, 50);
 
-    const allItems = [];
-    const enabledFeeds = feeds.slice();
+      const allItems = [];
+      const enabledFeeds = feeds.slice();
 
-    let ok = 0, fail = 0;
+      let ok = 0, fail = 0;
 
-    for (let i=0;i<enabledFeeds.length;i += batchSize){
-      if (signal.aborted) break;
+      for (let i=0;i<enabledFeeds.length;i += batchSize){
+        if (signal.aborted) break;
 
-      const chunk = enabledFeeds.slice(i, i + batchSize);
+        const chunk = enabledFeeds.slice(i, i + batchSize);
 
-      await Promise.allSettled(chunk.map(async (f) => {
-        if (signal.aborted) return;
+        await Promise.allSettled(chunk.map(async (f) => {
+          if (signal.aborted) return;
 
-        if (shouldSkipFeed(f.url, force)){
-          fail++;
-          return;
-        }
-
-        try{
-          const xml = await fetchTextSmart(f.url, signal);
-          const items = parseFeed(xml, f);
-
-          for (const it of items){
-            const sc = scoreImpact(it, true);
-            it.top = sc >= 8;
-            allItems.push(it);
-            if (allItems.length >= cap * 2) break;
+          if (shouldSkipFeed(f.url, force)){
+            fail++;
+            return;
           }
-          ok++;
-        }catch{
-          fail++;
-          bumpBackoff(f.url);
-        }
-      }));
 
-      setStatus(`Refrescando… (${Math.min(i + batchSize, enabledFeeds.length)}/${enabledFeeds.length}) · OK:${ok} FAIL:${fail}`);
-      await sleep(60);
-    }
+          try{
+            const xml = await fetchTextSmart(f.url, signal);
+            const items = parseFeed(xml, f);
 
-    state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
+            for (const it of items){
+              const sc = scoreImpact(it, true);
+              it.top = sc >= 8;
+              allItems.push(it);
+              if (allItems.length >= cap * 2) break;
+            }
+            ok++;
+          }catch{
+            fail++;
+            bumpBackoff(f.url);
+          }
+        }));
 
-    // dedup por link
-    const seen = new Set();
-    const dedup = [];
-    for (const it of allItems){
-      const k = it.link;
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      dedup.push(it);
-    }
+        setStatus(`Refrescando… (${Math.min(i + batchSize, enabledFeeds.length)}/${enabledFeeds.length}) · OK:${ok} FAIL:${fail}`);
+        await sleep(60);
+      }
 
-    const now = nowMs();
-    const clean = dedup.filter(it => (now - it.dateMs) >= 0);
+      state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
 
-    clean.sort((a,b) => b.dateMs - a.dateMs);
-    state.items = clean.slice(0, cap);
+      // dedup por link
+      const seen = new Set();
+      const dedup = [];
+      for (const it of allItems){
+        const k = it.link;
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        dedup.push(it);
+      }
 
-    // resolve links
-    if (els.optResolveLinks?.checked){
-      const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 60);
-      await mapLimit(need, 6, async (it) => {
-        it.resolvedUrl = await resolveUrl(it.link, signal);
+      const now = nowMs();
+      const clean = dedup.filter(it => (now - it.dateMs) >= 0);
+
+      clean.sort((a,b) => b.dateMs - a.dateMs);
+      state.items = clean.slice(0, cap);
+
+      // resolve links (limitado)
+      if (els.optResolveLinks?.checked){
+        const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 60);
+        await mapLimit(need, 6, async (it) => {
+          it.resolvedUrl = await resolveUrl(it.link, signal);
+        });
+      }
+
+      // OG images (solo si no hay RSS img)
+      const needImg = state.items
+        .filter(it => !it.img && (it.resolvedUrl || it.link))
+        .slice(0, 60);
+
+      await mapLimit(needImg, 6, async (it) => {
+        const u = it.resolvedUrl || it.link;
+        const og = await fetchOgImage(u, signal);
+        if (og && og.img) it.img = og.img;
       });
+
+      for (const it of state.items){
+        it.ready = !!(it.title && (it.resolvedUrl || it.link));
+      }
+
+      saveCaches();
+      setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
+      applyFilters();
+      updatePreview();
+    } catch (e){
+      if (String(e?.name || e).includes("Abort") || signal.aborted){
+        setStatus("Refresh cancelado.");
+      } else {
+        console.error(e);
+        setStatus("⚠️ Error refrescando (mira consola).");
+      }
+    } finally {
+      state.refreshInFlight = false;
     }
-
-    // OG images para los que no tienen (más agresivo, pero limitado)
-    const needImg = state.items
-      .filter(it => !it.img && (it.resolvedUrl || it.link))
-      .slice(0, 60);
-
-    await mapLimit(needImg, 6, async (it) => {
-      const u = it.resolvedUrl || it.link;
-      const og = await fetchOgImage(u, signal);
-      if (og && og.img) it.img = og.img;
-    });
-
-    for (const it of state.items){
-      it.ready = !!(it.title && (it.resolvedUrl || it.link));
-    }
-
-    saveCaches();
-    setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
-    state.refreshInFlight = false;
-
-    applyFilters();
-    updatePreview();
   }
 
   function startAuto(){
@@ -1332,6 +1338,15 @@ Fuente:
     setStatus("Buscando update…");
     try{
       if (swReg) await swReg.update();
+
+      // si hay un SW esperando, lo aplicamos
+      if (swReg && swReg.waiting){
+        swReg.waiting.postMessage({ type:"SKIP_WAITING" });
+        setStatus("Aplicando update…");
+        setTimeout(() => location.reload(), 400);
+        return;
+      }
+
       setStatus("Update check OK");
     }catch{
       setStatus("Update check falló");
@@ -1354,6 +1369,13 @@ Fuente:
       if ("caches" in window){
         const keys = await caches.keys();
         await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    }catch{}
+
+    try{
+      if ("serviceWorker" in navigator){
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.unregister();
       }
     }catch{}
 
@@ -1380,6 +1402,9 @@ Fuente:
     if (els.optHideUsed) els.optHideUsed.checked = !!settings.optHideUsed;
     if (els.optAutoRefresh) els.optAutoRefresh.checked = !!settings.optAutoRefresh;
 
+    if (els.optIncludeLive) els.optIncludeLive.checked = !!settings.optIncludeLive;
+    if (els.optIncludeSource) els.optIncludeSource.checked = !!settings.optIncludeSource;
+
     if (els.catFilter) els.catFilter.value = settings.catFilter || "all";
 
     const saveSettingFrom = () => {
@@ -1398,6 +1423,9 @@ Fuente:
       settings.optShowOriginal = !!els.optShowOriginal?.checked;
       settings.optHideUsed = !!els.optHideUsed?.checked;
       settings.optAutoRefresh = !!els.optAutoRefresh?.checked;
+
+      settings.optIncludeLive = !!els.optIncludeLive?.checked;
+      settings.optIncludeSource = !!els.optIncludeSource?.checked;
 
       settings.catFilter = els.catFilter?.value || "all";
 
@@ -1548,6 +1576,11 @@ Fuente:
       console.error("Faltan elementos UI (revisa IDs en index.html)");
       return;
     }
+
+    // mini “crash guard” visible
+    window.addEventListener("error", () => {
+      try { setStatus("❌ Error JS (mira consola)"); } catch {}
+    });
 
     loadUsed();
     loadCaches();
