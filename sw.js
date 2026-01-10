@@ -1,9 +1,7 @@
 /* sw.js — TNP Service Worker — Stable Cache + PURGE + SKIP_WAITING */
-
-const SW_VERSION = "tnp-sw-v4.0.1";
+const SW_VERSION = "tnp-sw-v4.1.0";
 const CACHE_STATIC = `tnp-static-${SW_VERSION}`;
 
-// Ajusta aquí si tu repo tiene rutas distintas
 const PRECACHE_URLS = [
   "./",
   "./index.html",
@@ -68,14 +66,14 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Solo cacheamos same-origin estáticos (evita cachear APIs externas opacas)
+  // Solo cacheamos same-origin estáticos
   if (url.origin !== self.location.origin) return;
 
+  // Stale-while-revalidate
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_STATIC);
     const cached = await cache.match(req);
 
-    // Stale-while-revalidate
     const fetchPromise = fetch(req).then((res) => {
       if (res && res.ok) cache.put(req, res.clone());
       return res;
