@@ -1,11 +1,8 @@
-/* sw.js — TNP Service Worker v4.1.1
-   Cache estático + SW update
-*/
-
+/* sw.js — TNP Service Worker v4.1.1 — Stable Cache + PURGE + SKIP_WAITING */
 const SW_VERSION = "tnp-sw-v4.1.1";
-const CACHE = `tnp-cache-${SW_VERSION}`;
+const CACHE_STATIC = `tnp-static-${SW_VERSION}`;
 
-const ASSETS = [
+const PRECACHE_URLS = [
   "./",
   "./index.html",
   "./styles.css",
@@ -18,8 +15,8 @@ const ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
-    const cache = await caches.open(CACHE);
-    await cache.addAll(ASSETS);
+    const cache = await caches.open(CACHE_STATIC);
+    await cache.addAll(PRECACHE_URLS);
     self.skipWaiting();
   })());
 });
@@ -27,38 +24,64 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.map(k => (k !== CACHE ? caches.delete(k) : Promise.resolve())));
-    self.clients.claim();
+    await Promise.all(keys.map((k) => {
+      if (k.startsWith("tnp-static-") && k !== CACHE_STATIC) return caches.delete(k);
+      return Promise.resolve();
+    }));
+    await self.clients.claim();
   })());
 });
 
 self.addEventListener("message", (event) => {
   const data = event.data || {};
-  if (data.type === "SKIP_WAITING") self.skipWaiting();
+  if (data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+    return;
+  }
+  if (data.type === "PURGE_CACHES") {
+    event.waitUntil((async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    })());
+    return;
+  }
 });
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
+  if (req.method !== "GET") return;
+
   const url = new URL(req.url);
 
-  // Solo cachea same-origin (tu app). RSS/proxies = network.
+  // Navegación: fallback a index
+  if (req.mode === "navigate") {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_STATIC);
+      const cached = await cache.match("./index.html");
+      try {
+        const fresh = await fetch(req);
+        if (fresh && fresh.ok) cache.put("./index.html", fresh.clone());
+        return fresh;
+      } catch {
+        return cached || new Response("Offline", { status: 503 });
+      }
+    })());
+    return;
+  }
+
+  // Solo cacheamos same-origin estáticos
   if (url.origin !== self.location.origin) return;
 
+  // Stale-while-revalidate
   event.respondWith((async () => {
-    const cache = await caches.open(CACHE);
+    const cache = await caches.open(CACHE_STATIC);
     const cached = await cache.match(req);
-    if (cached) {
-      // stale-while-revalidate
-      event.waitUntil((async () => {
-        try{
-          const fresh = await fetch(req);
-          if (fresh && fresh.ok) await cache.put(req, fresh.clone());
-        } catch {}
-      })());
-      return cached;
-    }
-    const fresh = await fetch(req);
-    if (fresh && fresh.ok) await cache.put(req, fresh.clone());
-    return fresh;
+
+    const fetchPromise = fetch(req).then((res) => {
+      if (res && res.ok) cache.put(req, res.clone());
+      return res;
+    }).catch(() => cached);
+
+    return cached || fetchPromise;
   })());
 });
