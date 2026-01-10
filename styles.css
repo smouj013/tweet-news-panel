@@ -1,6 +1,11 @@
-/* styles.css — TNP v4.1.0 — NEWSROOM PRO (Dark) */
-/* FIX CLAVE: alphas SIEMPRE 0.xx (nada de 03/12 sin el 0.) */
+/* styles.css — TNP v4.1.0 — NEWSROOM PRO (Dark)
+   FIXES:
+   - Arreglado "border দেখা-color" -> border-color (corrupción que rompía estilos)
+   - Ajustes de escala/espaciado: line-height base, smoothing, min-width:0 en layouts
+   - Backdrop fallback con @supports
+*/
 
+/* ───────────────────────────── TOKENS ───────────────────────────── */
 :root{
   --bg0:#070A12;
   --bg1:#0A1020;
@@ -28,6 +33,7 @@
   --r2: 14px;
   --pill: 999px;
 
+  /* valores por defecto (el JS los puede sobrescribir) */
   --topbarH: 70px;
   --tickerH: 46px;
 
@@ -35,11 +41,18 @@
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Noto Sans", Arial, "Apple Color Emoji","Segoe UI Emoji";
 }
 
+/* ───────────────────────────── BASE ───────────────────────────── */
 *{ box-sizing:border-box; }
+
 html, body{ height:100%; }
+
 body{
   margin:0;
   font-family: var(--sans);
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
   color: var(--text);
   background:
     radial-gradient(900px 600px at 18% -10%, rgba(29,155,240,0.18), transparent 60%),
@@ -63,10 +76,15 @@ a:hover{ opacity:0.9; }
 }
 
 .skipLink{
-  position:absolute; left:-9999px; top:auto; width:1px; height:1px; overflow:hidden;
+  position:absolute;
+  left:-9999px; top:auto;
+  width:1px; height:1px;
+  overflow:hidden;
 }
 .skipLink:focus{
-  left:12px; top:12px; width:auto; height:auto; padding:10px 12px;
+  left:12px; top:12px;
+  width:auto; height:auto;
+  padding:10px 12px;
   background: rgba(0,0,0,0.75);
   color:#fff;
   border:1px solid rgba(255,255,255,0.14);
@@ -84,21 +102,28 @@ a:hover{ opacity:0.9; }
 }
 *::-webkit-scrollbar-track{ background: rgba(0,0,0,0.25); }
 
-/* ───────────────── Topbar ───────────────── */
+/* ───────────────────────────── TOPBAR ───────────────────────────── */
 .topbar{
   position: sticky;
   top:0;
   z-index: 50;
+
   display:flex;
   align-items:center;
   justify-content: space-between;
   gap:16px;
-  padding: 12px 14px;
 
+  padding: 12px 14px;
   border-bottom: 1px solid var(--stroke);
+
   background: rgba(5,8,14,0.74);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+}
+
+@supports ((backdrop-filter: blur(14px)) or (-webkit-backdrop-filter: blur(14px))){
+  .topbar{
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
 }
 
 .topbar__left{
@@ -113,6 +138,7 @@ a:hover{ opacity:0.9; }
   align-items:center;
   gap: 10px;
   flex: 0 0 auto;
+  min-width: 0;
 }
 
 .topbar__controls{
@@ -125,25 +151,43 @@ a:hover{ opacity:0.9; }
 
 .grow{ flex: 1 1 240px; min-width: 180px; }
 
+/* Brand pill */
 .brand{
   display:flex;
   align-items:center;
   gap: 10px;
+
   padding: 6px 10px;
   border-radius: var(--pill);
+
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(255,255,255,0.04);
+
   box-shadow: var(--shadow2);
 }
+
 .brand__logo{
   width: 34px; height: 34px;
   display:grid; place-items:center;
   border-radius: 12px;
+
   background: linear-gradient(180deg, rgba(29,155,240,0.22), rgba(29,155,240,0.06));
   border: 1px solid rgba(29,155,240,0.24);
 }
-.brand__title{ font-weight: 900; letter-spacing: .2px; line-height:1.05; }
-.brand__sub{ color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+.brand__txt{ min-width:0; }
+.brand__title{
+  font-weight: 900;
+  letter-spacing: .2px;
+  line-height:1.05;
+  white-space: nowrap;
+}
+.brand__sub{
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+  white-space: nowrap;
+}
 
 .status{
   max-width: 44vw;
@@ -158,15 +202,21 @@ a:hover{ opacity:0.9; }
   text-overflow: ellipsis;
 }
 
-/* ───────────────── Ticker ───────────────── */
+/* ───────────────────────────── TICKER ───────────────────────────── */
 .ticker{
   position: sticky;
   top: var(--topbarH);
   z-index: 49;
+
   border-bottom: 1px solid rgba(255,255,255,0.10);
   background: rgba(0,0,0,0.38);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+}
+
+@supports ((backdrop-filter: blur(14px)) or (-webkit-backdrop-filter: blur(14px))){
+  .ticker{
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
 }
 
 .ticker__rail{
@@ -175,6 +225,7 @@ a:hover{ opacity:0.9; }
   gap: 12px;
   padding: 10px 14px;
   min-height: var(--tickerH);
+  min-width: 0;
 }
 
 .ticker__label{
@@ -183,6 +234,7 @@ a:hover{ opacity:0.9; }
   letter-spacing: .6px;
   font-size: 12px;
   padding: 6px 10px;
+
   border-radius: var(--pill);
   border: 1px solid rgba(255,255,255,0.12);
   background: rgba(29,155,240,0.14);
@@ -193,6 +245,7 @@ a:hover{ opacity:0.9; }
   flex: 1 1 auto;
   min-width: 0;
   overflow:hidden;
+
   border-radius: var(--pill);
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(255,255,255,0.04);
@@ -215,10 +268,12 @@ a:hover{ opacity:0.9; }
   flex: 0 0 auto;
   font-size: 12px;
   color: rgba(231,233,234,0.82);
+
   padding: 6px 10px;
   border-radius: var(--pill);
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(255,255,255,0.04);
+
   opacity: 0;
   transform: translateY(-2px);
   transition: opacity .2s ease, transform .2s ease;
@@ -228,7 +283,7 @@ a:hover{ opacity:0.9; }
   transform: translateY(0);
 }
 
-/* ───────────────── Layout ───────────────── */
+/* ───────────────────────────── LAYOUT ───────────────────────────── */
 .wrap{
   max-width: 1480px;
   margin: 0 auto;
@@ -240,6 +295,7 @@ a:hover{ opacity:0.9; }
   grid-template-columns: minmax(420px, 0.95fr) minmax(520px, 1.05fr);
   gap: 14px;
   align-items:start;
+  min-width: 0;
 }
 
 @media (max-width: 1100px){
@@ -248,13 +304,14 @@ a:hover{ opacity:0.9; }
   .ticker__inner{ animation-duration: 32s; }
 }
 
-/* ───────────────── Panels ───────────────── */
+/* ───────────────────────────── PANELS ───────────────────────────── */
 .panel{
   border-radius: var(--r);
   border: 1px solid var(--stroke);
   background: rgba(255,255,255,0.04);
   box-shadow: var(--shadow);
   overflow:hidden;
+  min-width: 0;
 }
 
 .panel__head{
@@ -273,13 +330,8 @@ a:hover{ opacity:0.9; }
   color: var(--muted);
 }
 
-.panel__body{
-  padding: 14px;
-}
-
-.panel__body--flush{
-  padding: 0;
-}
+.panel__body{ padding: 14px; }
+.panel__body--flush{ padding: 0; }
 
 .panel__miniTitle{
   font-weight: 800;
@@ -294,9 +346,16 @@ a:hover{ opacity:0.9; }
   top: calc(var(--topbarH) + var(--tickerH) + 16px);
 }
 
-/* ───────────────── Inputs ───────────────── */
-.field{ display:flex; flex-direction: column; gap: 6px; }
+/* ───────────────────────────── INPUTS ───────────────────────────── */
+.field{
+  display:flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 .field--inline{ gap: 6px; }
+
 .field__label{
   font-size: 12px;
   color: rgba(231,233,234,0.82);
@@ -312,9 +371,11 @@ a:hover{ opacity:0.9; }
   outline: none;
   transition: border-color .15s ease, background .15s ease;
 }
+
 .input:hover{ border-color: rgba(255,255,255,0.22); }
+
 .input:focus{
-  border দেখা-color: rgba(29,155,240,0.55);
+  border-color: rgba(29,155,240,0.55); /* FIX ✅ */
   background: rgba(0,0,0,0.38);
 }
 
@@ -323,23 +384,28 @@ a:hover{ opacity:0.9; }
   border-radius: 11px;
   font-size: 13px;
 }
+
 .input--area{
   resize: vertical;
   min-height: 120px;
 }
+
 .mono{ font-family: var(--mono); }
 
-/* ───────────────── Buttons ───────────────── */
+/* ───────────────────────────── BUTTONS ───────────────────────────── */
 .btn{
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(255,255,255,0.05);
   color: rgba(231,233,234,0.92);
+
   border-radius: 12px;
   padding: 10px 12px;
   cursor:pointer;
   transition: transform .05s ease, background .15s ease, border-color .15s ease;
   user-select:none;
+  white-space: nowrap;
 }
+
 .btn:hover{
   background: rgba(255,255,255,0.08);
   border-color: rgba(255,255,255,0.20);
@@ -364,12 +430,10 @@ a:hover{ opacity:0.9; }
 }
 .btn--danger:hover{ background: rgba(255,92,122,0.22); }
 
-.btn--ghost{
-  background: transparent;
-}
+.btn--ghost{ background: transparent; }
 
-/* ───────────────── Chips ───────────────── */
-.row{ display:flex; gap: 10px; align-items:center; }
+/* ───────────────────────────── ROWS / CHIPS ───────────────────────────── */
+.row{ display:flex; gap: 10px; align-items:center; min-width: 0; }
 .row--wrap{ flex-wrap: wrap; }
 .row--between{ justify-content: space-between; }
 .row--3{ display:grid; grid-template-columns: 1fr 2fr auto; gap: 10px; }
@@ -392,17 +456,19 @@ a:hover{ opacity:0.9; }
 }
 .chip--tight{ padding: 7px 10px; font-size: 12px; }
 
-/* ───────────────── Composer extras ───────────────── */
+/* ───────────────────────────── COMPOSER EXTRAS ───────────────────────────── */
 .grid2{
   display:grid;
   grid-template-columns: 1.2fr 0.8fr;
   gap: 10px;
+  min-width: 0;
 }
 .grid3{
   display:grid;
   grid-template-columns: repeat(3, minmax(0,1fr));
   gap: 10px;
   align-items:end;
+  min-width: 0;
 }
 @media (max-width: 700px){
   .grid2{ grid-template-columns: 1fr; }
@@ -426,11 +492,13 @@ a:hover{ opacity:0.9; }
   border-radius: 14px;
   padding: 10px;
 }
+
 .previewTitle{
   font-size: 12px;
   color: rgba(231,233,234,0.76);
   margin-bottom: 6px;
 }
+
 .preview{
   margin:0;
   white-space: pre-wrap;
@@ -440,7 +508,7 @@ a:hover{ opacity:0.9; }
   color: rgba(231,233,234,0.90);
 }
 
-/* ───────────────── News list ───────────────── */
+/* ───────────────────────────── NEWS LIST ───────────────────────────── */
 .newsList{
   display:flex;
   flex-direction: column;
@@ -450,8 +518,10 @@ a:hover{ opacity:0.9; }
   display:flex;
   gap: 12px;
   padding: 12px 14px;
+
   border-bottom: 1px solid rgba(255,255,255,0.10);
   background: rgba(255,255,255,0.00);
+
   cursor:pointer;
   transition: background .15s ease;
 }
@@ -463,14 +533,17 @@ a:hover{ opacity:0.9; }
   height: 62px;
   border-radius: 12px;
   flex: 0 0 auto;
+
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(0,0,0,0.30);
   overflow:hidden;
+
   display:grid;
   place-items:center;
   color: rgba(231,233,234,0.55);
   font-size: 12px;
 }
+
 .thumb img{
   width: 100%;
   height: 100%;
@@ -479,12 +552,15 @@ a:hover{ opacity:0.9; }
 }
 
 .newsMain{ min-width: 0; flex: 1 1 auto; }
+
 .newsTop{
   display:flex;
   align-items:center;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
+
 .newsMeta{
   display:flex;
   gap: 8px;
@@ -492,7 +568,9 @@ a:hover{ opacity:0.9; }
   flex-wrap: wrap;
   color: rgba(231,233,234,0.72);
   font-size: 12px;
+  min-width: 0;
 }
+
 .badge{
   padding: 4px 8px;
   border-radius: var(--pill);
@@ -508,6 +586,7 @@ a:hover{ opacity:0.9; }
   letter-spacing: .1px;
   line-height: 1.2;
 }
+
 .newsLink{
   margin-top: 6px;
   font-size: 12px;
@@ -517,7 +596,7 @@ a:hover{ opacity:0.9; }
   white-space: nowrap;
 }
 
-/* ───────────────── Modal ───────────────── */
+/* ───────────────────────────── MODAL ───────────────────────────── */
 .modal{
   position: fixed;
   inset: 0;
@@ -549,7 +628,12 @@ a:hover{ opacity:0.9; }
   padding: 14px;
   border-bottom: 1px solid rgba(255,255,255,0.10);
   background: rgba(8,12,20,0.92);
-  backdrop-filter: blur(12px);
+}
+
+@supports ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))){
+  .modal__head{
+    backdrop-filter: blur(12px);
+  }
 }
 
 .modal__title{ font-weight: 900; }
@@ -561,15 +645,23 @@ a:hover{ opacity:0.9; }
   border-radius: 14px;
   overflow:hidden;
 }
+
 .feedRow{
   display:flex;
   align-items:center;
   gap: 10px;
   padding: 10px 12px;
   border-bottom: 1px solid rgba(255,255,255,0.10);
+  min-width: 0;
 }
+
 .feedRow:last-child{ border-bottom: none; }
-.feedRow .name{ font-weight: 800; min-width: 160px; }
+
+.feedRow .name{
+  font-weight: 800;
+  min-width: 160px;
+}
+
 .feedRow .url{
   flex: 1 1 auto;
   color: rgba(231,233,234,0.72);
@@ -578,9 +670,10 @@ a:hover{ opacity:0.9; }
   overflow:hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
-/* Reduced motion */
+/* ───────────────────────────── REDUCED MOTION ───────────────────────────── */
 @media (prefers-reduced-motion: reduce){
   .ticker__inner{ animation: none; }
   .btn{ transition: none; }
