@@ -1,23 +1,23 @@
 /* app.js — TNP v4.1.1 — DIRECT RSS + HARDENED (NO Google por defecto)
    ✅ Compat 100% con tu index.html (IDs + modal + ticker + X mock + botones)
-   ✅ FIX CRÍTICO: localStorage con "null" / JSON corrupto => nunca rompe (adiós liveUrl null)
-   ✅ FIX: “no refresca / no actualiza” => self-heal al detectar build nuevo (limpia caches tnp-* + reload guard)
-   ✅ FIX: refresh manual ABORTA el refresh anterior (no se queda colgado)
-   ✅ Anti-cache: fetch no-store + headers no-cache + cache-bust en PROXIES
-   ✅ RSS/Atom: extracción de imágenes mejorada (media/enclosure + <img>)
-   ✅ OG best-effort (HTML vía proxies) + caché local
+   ✅ HOTFIX CORS REAL (2026-01):
+      - Evita PREFLIGHT (OPTIONS) eliminando headers no-simples (Cache-Control/Pragma/Expires) en fetch cross-origin
+      - Esto arregla: "Redirect is not allowed for a preflight request" (codetabs / proxies)
+   ✅ Refresh manual ABORTA el anterior
+   ✅ Anti-cache: cache-bust por query en proxies + cache:"no-store"
+   ✅ RSS/Atom: mejor extracción de imágenes (media/enclosure + <img> en description/content)
+   ✅ OG best-effort REAL (HTML vía proxies) + caché local
    ✅ Backoff por feed + batch configurable
    ✅ Vista previa estilo X + conteo tipo X (URLs=23)
+   ✅ Proxy propio opcional:
+      - ?proxy=https://TUWORKER.workers.dev/?url=
+      - Guarda en localStorage y se usa primero (más estable que proxies públicos)
 */
 
 (() => {
   "use strict";
 
   const APP_VERSION = "tnp-v4.1.1";
-
-  // OJO: no es “versión”, es build-id para auto-heal de caches aunque no cambies APP_VERSION
-  // Puedes cambiar este string cuando publiques cambios, sin tocar el resto.
-  const BUILD_ID = "2026-01-10a";
 
   /* ───────────────────────────── STORAGE ───────────────────────────── */
   const LS_FEEDS    = "tnp_feeds_v4";
@@ -27,8 +27,7 @@
 
   const LS_RESOLVE_CACHE = "tnp_resolve_cache_v4";
   const LS_OG_CACHE      = "tnp_og_cache_v4";
-
-  const LS_BUILD_ID = "tnp_build_id_v4";
+  const LS_PROXY_BASE    = "tnp_proxy_base_v4";
 
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
   const DEFAULT_TEMPLATE =
@@ -50,17 +49,8 @@ Fuente:
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
-  function safeParseJSON(raw) {
-    if (raw == null) return undefined; // null/undefined
-    try { return JSON.parse(raw); } catch { return undefined; }
-  }
-
-  function asObject(v, fallback = {}) {
-    return (v && typeof v === "object" && !Array.isArray(v)) ? v : fallback;
-  }
-
-  function asArray(v, fallback = []) {
-    return Array.isArray(v) ? v : fallback;
+  function safeJsonParse(s, fallback){
+    try { return JSON.parse(s); } catch { return fallback; }
   }
 
   function normSpace(s){
@@ -156,7 +146,7 @@ Fuente:
     let m;
     while ((m = urlRe.exec(s)) !== null){
       out += s.slice(last, m.index);
-      out += "x".repeat(23); // reglas tipo X
+      out += "x".repeat(23);
       last = m.index + m[0].length;
     }
     out += s.slice(last);
@@ -179,9 +169,8 @@ Fuente:
     if (bd) bd.hidden = true;
   }
 
-  /* ───────────────────────────── DEFAULT FEEDS (DIRECT + packs OFF) ───────────────────────────── */
+  /* ───────────────────────────── DEFAULT FEEDS ───────────────────────────── */
   const DIRECT_FEEDS = [
-    // ── España (ON)
     { name:"RTVE — Portada (RSS)", url:"https://www.rtve.es/api/noticias.rss", enabled:true, cat:"spain" },
     { name:"El País — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", enabled:true, cat:"spain" },
     { name:"El Mundo — Portada (RSS)", url:"https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml", enabled:true, cat:"spain" },
@@ -191,26 +180,21 @@ Fuente:
     { name:"El Confidencial — España (RSS)", url:"https://rss.elconfidencial.com/espana/", enabled:true, cat:"spain" },
     { name:"Europa Press — Portada (RSS)", url:"https://www.europapress.es/rss/rss.aspx?ch=69", enabled:true, cat:"spain" },
 
-    // ── Mundo (ON)
     { name:"BBC — World (RSS)", url:"https://feeds.bbci.co.uk/news/world/rss.xml", enabled:true, cat:"world" },
     { name:"The Guardian — World (RSS)", url:"https://www.theguardian.com/world/rss", enabled:true, cat:"world" },
     { name:"Al Jazeera — All (RSS)", url:"https://www.aljazeera.com/xml/rss/all.xml", enabled:true, cat:"world" },
     { name:"DW Español — Portada (RSS)", url:"https://rss.dw.com/rdf/rss-es-all", enabled:true, cat:"world" },
     { name:"Euronews — Español (MRSS)", url:"https://www.euronews.com/rss?format=mrss", enabled:true, cat:"world" },
 
-    // ── Economía (ON)
     { name:"Expansión — Portada (RSS)", url:"https://e00-expansion.uecdn.es/rss/portada.xml", enabled:true, cat:"economy" },
     { name:"Cinco Días — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/cincodias.com/portada", enabled:true, cat:"economy" },
     { name:"El Blog Salmón (RSS)", url:"https://feeds.weblogssl.com/elblogsalmon", enabled:true, cat:"economy" },
 
-    // ── Tech (ON)
     { name:"Xataka (RSS)", url:"https://feeds.weblogssl.com/xataka2", enabled:true, cat:"tech" },
     { name:"Genbeta (RSS)", url:"https://feeds.weblogssl.com/genbeta", enabled:true, cat:"tech" },
 
-    // ── Sucesos (ON)
     { name:"El Confidencial — Sucesos (RSS)", url:"https://rss.elconfidencial.com/espana/sucesos/", enabled:true, cat:"crime" },
 
-    // ── OFF (más / opcional)
     { name:"ElDiario.es — Portada (RSS) [OFF]", url:"https://www.eldiario.es/rss/", enabled:false, cat:"spain" },
     { name:"Público — Portada (RSS) [OFF]", url:"https://www.publico.es/rss", enabled:false, cat:"spain" },
     { name:"OKDIARIO — Portada (RSS) [OFF]", url:"https://okdiario.com/feed", enabled:false, cat:"spain" },
@@ -224,7 +208,6 @@ Fuente:
     { name:"The Guardian — Technology (RSS) [OFF]", url:"https://www.theguardian.com/uk/technology/rss", enabled:false, cat:"tech" },
     { name:"The Guardian — Sport (RSS) [OFF]", url:"https://www.theguardian.com/uk/sport/rss", enabled:false, cat:"sports" },
 
-    // Fallback (Google News, OFF)
     { name:"Google News — España (Top) [OFF]", url:"https://news.google.com/rss?hl=es&gl=ES&ceid=ES:es", enabled:false, cat:"spain" },
     { name:"Google News — World (Top) [OFF]", url:"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", enabled:false, cat:"world" },
   ];
@@ -357,7 +340,6 @@ Fuente:
     tnpTickerInner: $("tnpTickerInner"),
     tnpTrendsPop: $("tnpTrendsPop"),
 
-    // X Mock
     xMockText: $("xMockText"),
     xMockCard: $("xMockCard"),
     xMockCardImg: $("xMockCardImg"),
@@ -383,9 +365,7 @@ Fuente:
 
   /* ───────────────────────────── SETTINGS ───────────────────────────── */
   function loadSettings(){
-    const raw = safeParseJSON(localStorage.getItem(LS_SETTINGS));
-    const s = asObject(raw, {}); // <-- FIX: si raw es null, array, string... => {}
-
+    const s = safeJsonParse(localStorage.getItem(LS_SETTINGS), {});
     s.liveUrl = s.liveUrl || "https://twitch.tv/globaleyetv";
 
     s.delayMin = (typeof s.delayMin === "number") ? s.delayMin : 0;
@@ -397,7 +377,7 @@ Fuente:
     s.refreshSec = (typeof s.refreshSec === "number") ? s.refreshSec : 60;
 
     s.optOnlyReady = (s.optOnlyReady === true);
-    s.optOnlySpanish = (s.optOnlySpanish !== false); // prioridad ES ON
+    s.optOnlySpanish = (s.optOnlySpanish !== false);
     s.optResolveLinks = (s.optResolveLinks !== false);
     s.optShowOriginal = (s.optShowOriginal !== false);
     s.optHideUsed = (s.optHideUsed !== false);
@@ -410,7 +390,7 @@ Fuente:
     return s;
   }
   function saveSettings(s){
-    localStorage.setItem(LS_SETTINGS, JSON.stringify(asObject(s, {})));
+    localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
   }
   const settings = loadSettings();
 
@@ -419,7 +399,49 @@ Fuente:
     return (t && t.trim()) ? t : DEFAULT_TEMPLATE;
   }
   function saveTemplate(t){
-    localStorage.setItem(LS_TEMPLATE, String(t || DEFAULT_TEMPLATE));
+    localStorage.setItem(LS_TEMPLATE, t);
+  }
+
+  /* ───────────────────────────── PROXY (OPCIONAL) ───────────────────────────── */
+  function getUserProxyBase(){
+    try{
+      const u = new URL(location.href);
+      const qp = u.searchParams.get("proxy");
+      if (qp && qp.trim()){
+        localStorage.setItem(LS_PROXY_BASE, qp.trim());
+        return qp.trim();
+      }
+    }catch{}
+    return (localStorage.getItem(LS_PROXY_BASE) || "").trim();
+  }
+  const USER_PROXY_BASE = getUserProxyBase();
+
+  function applyUserProxy(targetUrl){
+    const base = (USER_PROXY_BASE || "").trim();
+    if (!base) return "";
+    const enc = encodeURIComponent(targetUrl);
+    // Soporta:
+    // 1) base con {{URL}} placeholder
+    // 2) base que ya termina en "url=" (worker típico)
+    // 3) base "https://x.workers.dev/" -> se añade ?url=
+    if (base.includes("{{URL}}")){
+      return base.replaceAll("{{URL}}", enc);
+    }
+    if (/url=$/i.test(base)){
+      return base + enc;
+    }
+    try{
+      const u = new URL(base);
+      if (u.searchParams.has("url")){
+        u.searchParams.set("url", targetUrl);
+        return u.toString();
+      }
+      u.searchParams.set("url", targetUrl);
+      return u.toString();
+    }catch{
+      const sep = base.includes("?") ? (base.endsWith("?") || base.endsWith("&") ? "" : "&") : "?";
+      return base + sep + "url=" + enc;
+    }
   }
 
   /* ───────────────────────────── STATE ───────────────────────────── */
@@ -440,38 +462,35 @@ Fuente:
     resolveCache: new Map(),
     ogCache: new Map(),
 
-    // backoff: feedUrl -> { delayMs, untilMs }
     backoff: new Map(),
 
-    // ui
     lastTickerSig: "",
     lastFetchReport: { ok:0, fail:0, total:0 },
 
-    // SW
     swReg: null,
   };
 
   function loadUsed(){
-    const raw = safeParseJSON(localStorage.getItem(LS_USED));
-    const arr = asArray(raw, []);
-    state.used = new Set(arr.filter(x => typeof x === "string").slice(0, 5000));
+    const arr = safeJsonParse(localStorage.getItem(LS_USED), []);
+    state.used = new Set(Array.isArray(arr) ? arr : []);
   }
   function saveUsed(){
     localStorage.setItem(LS_USED, JSON.stringify(Array.from(state.used).slice(0, 5000)));
   }
 
   function loadCaches(){
-    const rcRaw = safeParseJSON(localStorage.getItem(LS_RESOLVE_CACHE));
-    const rc = asObject(rcRaw, {});
-    for (const [k,v] of Object.entries(rc)){
-      if (typeof v === "string") state.resolveCache.set(k, v);
+    const rc = safeJsonParse(localStorage.getItem(LS_RESOLVE_CACHE), {});
+    if (rc && typeof rc === "object"){
+      for (const [k,v] of Object.entries(rc)){
+        if (typeof v === "string") state.resolveCache.set(k, v);
+      }
     }
-
-    const ogRaw = safeParseJSON(localStorage.getItem(LS_OG_CACHE));
-    const og = asObject(ogRaw, {});
-    for (const [k,v] of Object.entries(og)){
-      if (v && typeof v === "object") state.ogCache.set(k, v);
-      if (v === null) state.ogCache.set(k, null);
+    const og = safeJsonParse(localStorage.getItem(LS_OG_CACHE), {});
+    if (og && typeof og === "object"){
+      for (const [k,v] of Object.entries(og)){
+        if (v && typeof v === "object") state.ogCache.set(k, v);
+        if (v === null) state.ogCache.set(k, null);
+      }
     }
   }
 
@@ -504,8 +523,7 @@ Fuente:
   }
 
   function loadFeeds(){
-    const raw = safeParseJSON(localStorage.getItem(LS_FEEDS));
-    const saved = asArray(raw, null);
+    const saved = safeJsonParse(localStorage.getItem(LS_FEEDS), null);
 
     if (Array.isArray(saved)){
       const cleaned = saved.map(normalizeFeed).filter(Boolean);
@@ -595,7 +613,7 @@ Fuente:
     }catch{}
   }
 
-  /* ───────────────────────────── FETCH (ANTI-CORS + ANTI-CACHE) ───────────────────────────── */
+  /* ───────────────────────────── FETCH (HOTFIX: NO PREFLIGHT) ───────────────────────────── */
   function withTimeout(ms, signal){
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort("timeout"), ms);
@@ -607,38 +625,41 @@ Fuente:
 
     return {
       signal: ctrl.signal,
-      cancel: () => { clearTimeout(t); try{ ctrl.abort("cancel"); }catch{} }
+      cancel: () => { clearTimeout(t); ctrl.abort("cancel"); }
     };
   }
 
-  function noCacheHeaders(extra){
-    return {
-      "Cache-Control": "no-cache, no-store, must-revalidate",
-      "Pragma": "no-cache",
-      "Expires": "0",
-      ...(extra || {})
-    };
-  }
-
-  function bustProxy(url){
+  function bustUrl(url){
+    // Anti-cache por query, NO headers (para no preflight)
     try{
       const u = new URL(url);
-      u.searchParams.set("__tnp", `${APP_VERSION}_${BUILD_ID}_${nowMs().toString(36)}`);
+      u.searchParams.set("__tnp", `${APP_VERSION}_${nowMs().toString(36)}`);
       return u.toString();
     }catch{
       const sep = url.includes("?") ? "&" : "?";
-      return url + sep + "__tnp=" + encodeURIComponent(`${APP_VERSION}_${BUILD_ID}_${nowMs().toString(36)}`);
+      return url + sep + "__tnp=" + encodeURIComponent(`${APP_VERSION}_${nowMs().toString(36)}`);
     }
   }
 
-  async function fetchText(url, signal, extraHeaders){
+  function looksLikeXmlOrFeed(txt){
+    const s = String(txt || "").trim().slice(0, 200).toLowerCase();
+    if (!s) return false;
+    if (s.startsWith("<?xml")) return true;
+    if (s.includes("<rss") || s.includes("<feed") || s.includes("<channel")) return true;
+    return false;
+  }
+
+  async function fetchText(url, signal){
+    // IMPORTANTE: NO metemos headers no-simples -> evita OPTIONS preflight
     const { signal: s2, cancel } = withTimeout(15000, signal);
     try{
-      const headers = {
-        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, text/html;q=0.8, */*;q=0.7",
-        ...noCacheHeaders(extraHeaders),
-      };
-      const r = await fetch(url, { signal: s2, cache:"no-store", headers, redirect:"follow" });
+      const r = await fetch(url, {
+        signal: s2,
+        cache: "no-store",
+        redirect: "follow",
+        credentials: "omit",
+        // mode por defecto: "cors" (si el server no da CORS, fallará y saltamos a proxies)
+      });
       if (!r.ok) throw new Error("HTTP " + r.status);
       return await r.text();
     } finally {
@@ -646,27 +667,79 @@ Fuente:
     }
   }
 
+  function proxyCandidates(target){
+    const enc = encodeURIComponent(target);
+    const out = [];
+
+    // 0) proxy del usuario (si existe)
+    const u = applyUserProxy(target);
+    if (u) out.push(bustUrl(u));
+
+    // 1) allorigins raw
+    out.push(bustUrl(`https://api.allorigins.win/raw?url=${enc}`));
+
+    // 2) codetabs (sin preflight ahora)
+    out.push(bustUrl(`https://api.codetabs.com/v1/proxy?quest=${enc}`));
+
+    // 3) thingproxy
+    out.push(bustUrl(`https://thingproxy.freeboard.io/fetch/${target}`));
+
+    return out;
+  }
+
   async function fetchTextSmart(url, signal){
-    try { return await fetchText(url, signal); } catch {}
+    // 1) directo (sin headers extra)
+    try{
+      const t = await fetchText(url, signal);
+      // si nos devuelven HTML/otra cosa, no lo damos por bueno
+      if (looksLikeXmlOrFeed(t) || t.includes("<item") || t.includes("<entry")) return t;
+      // si parece HTML, lo tratamos como fallo para forzar proxy
+      throw new Error("not_xml");
+    }catch{}
 
-    const enc = encodeURIComponent(url);
+    // 2) proxies
+    const candidates = proxyCandidates(url);
+    let lastErr = null;
 
-    try { return await fetchText(bustProxy(`https://api.allorigins.win/raw?url=${enc}`), signal); } catch {}
-    try { return await fetchText(bustProxy(`https://api.codetabs.com/v1/proxy?quest=${enc}`), signal); } catch {}
-    try { return await fetchText(bustProxy(`https://thingproxy.freeboard.io/fetch/${url}`), signal); } catch {}
+    for (const p of candidates){
+      try{
+        const t = await fetchText(p, signal);
+        if (!t) throw new Error("empty");
+        if (!looksLikeXmlOrFeed(t) && !t.includes("<item") && !t.includes("<entry")){
+          // muchos proxies devuelven páginas HTML de error
+          throw new Error("not_xml");
+        }
+        return t;
+      }catch(e){
+        lastErr = e;
+      }
+    }
 
-    throw new Error("fetch_failed");
+    throw lastErr || new Error("fetch_failed");
   }
 
   async function fetchHtmlSmart(url, signal){
-    try { return await fetchText(url, signal, { "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }); } catch {}
+    // para OG: intentamos directo y luego por proxies (mismo enfoque)
+    try{
+      const t = await fetchText(url, signal);
+      if (t && /<html|<meta|<title/i.test(t)) return t;
+      throw new Error("not_html");
+    }catch{}
 
-    const enc = encodeURIComponent(url);
-    try { return await fetchText(bustProxy(`https://api.allorigins.win/raw?url=${enc}`), signal, { "Accept": "text/html,*/*;q=0.8" }); } catch {}
-    try { return await fetchText(bustProxy(`https://api.codetabs.com/v1/proxy?quest=${enc}`), signal, { "Accept": "text/html,*/*;q=0.8" }); } catch {}
-    try { return await fetchText(bustProxy(`https://thingproxy.freeboard.io/fetch/${url}`), signal, { "Accept": "text/html,*/*;q=0.8" }); } catch {}
+    const candidates = proxyCandidates(url);
+    let lastErr = null;
 
-    throw new Error("html_fetch_failed");
+    for (const p of candidates){
+      try{
+        const t = await fetchText(p, signal);
+        if (t && /<html|<meta|<title/i.test(t)) return t;
+        throw new Error("not_html");
+      }catch(e){
+        lastErr = e;
+      }
+    }
+
+    throw lastErr || new Error("html_fetch_failed");
   }
 
   async function mapLimit(arr, limit, fn){
@@ -865,7 +938,7 @@ Fuente:
     try{
       const { signal: s2, cancel } = withTimeout(9000, signal);
       try{
-        const r = await fetch(url, { signal: s2, redirect:"follow", cache:"no-store", headers: noCacheHeaders() });
+        const r = await fetch(url, { signal: s2, redirect:"follow", cache:"no-store", credentials:"omit" });
         const finalUrl = r.url || url;
         const clean = cleanUrl(finalUrl);
         state.resolveCache.set(k, clean);
@@ -963,9 +1036,17 @@ Fuente:
       const empty = document.createElement("div");
       empty.style.padding = "14px";
       empty.style.color = "rgba(231,233,234,0.65)";
+
+      const rep = state.lastFetchReport;
+      const hint =
+        (rep && rep.total && rep.ok === 0 && rep.fail > 0)
+          ? " (CORS/Proxies: si estás en GitHub Pages, usa proxy propio ?proxy=... para que no quede a 0)"
+          : "";
+
       empty.textContent = state.refreshInFlight
         ? "Cargando noticias…"
-        : "Sin noticias en este filtro. Prueba a subir la ventana (60min/3h) o bajar Delay.";
+        : ("Sin noticias en este filtro." + hint);
+
       els.newsList.appendChild(empty);
       return;
     }
@@ -1294,7 +1375,7 @@ Fuente:
   function bumpBackoff(feedUrl){
     const cur = state.backoff.get(feedUrl);
     const prevDelay = cur?.delayMs || 0;
-    const nextDelay = prevDelay ? Math.min(prevDelay * 2, 10 * 60 * 1000) : 30 * 1000; // 30s -> ... -> 10m
+    const nextDelay = prevDelay ? Math.min(prevDelay * 2, 10 * 60 * 1000) : 30 * 1000;
     state.backoff.set(feedUrl, { delayMs: nextDelay, untilMs: nowMs() + nextDelay });
   }
 
@@ -1419,7 +1500,13 @@ Fuente:
       }
 
       saveCaches();
-      setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
+
+      if (ok === 0 && fail > 0){
+        setStatus(`⚠️ 0 feeds OK · ${fail} FAIL · Esto es CORS/proxies. Solución estable: proxy propio (?proxy=...).`);
+      }else{
+        setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
+      }
+
       applyFilters();
       updatePreview();
     } catch (e){
@@ -1448,7 +1535,7 @@ Fuente:
     }, sec * 1000);
   }
 
-  /* ───────────────────────────── SW MAINTENANCE + SELF-HEAL ───────────────────────────── */
+  /* ───────────────────────────── SW UPDATE + RESET ───────────────────────────── */
   async function attachSwMaintenance(){
     if (!("serviceWorker" in navigator)) return;
 
@@ -1458,7 +1545,6 @@ Fuente:
       state.swReg = null;
     }
 
-    // Backup: si no hay registro (por lo que sea), intenta registrar suave
     if (!state.swReg){
       try{
         state.swReg = await navigator.serviceWorker.register("./sw.js", { updateViaCache:"none" });
@@ -1467,7 +1553,6 @@ Fuente:
       }
     }
 
-    // Guard anti-bucle reload
     if (!window.__TNP_SW_GUARD__){
       window.__TNP_SW_GUARD__ = { reloading:false };
       navigator.serviceWorker.addEventListener("controllerchange", () => {
@@ -1477,7 +1562,6 @@ Fuente:
       });
     }
 
-    // Mantenimiento: update periódico
     setInterval(async () => {
       try{
         if (state.swReg) await state.swReg.update();
@@ -1486,42 +1570,6 @@ Fuente:
         }
       }catch{}
     }, 60 * 1000);
-  }
-
-  async function requestClearTnpCaches(){
-    // 1) pide al SW limpiar caches propios
-    try{
-      if (navigator.serviceWorker?.controller){
-        navigator.serviceWorker.controller.postMessage({ type:"CLEAR_CACHES" });
-      }
-    }catch{}
-
-    // 2) además: intentamos borrar caches tnp-* desde la página (por si SW no escucha)
-    try{
-      if ("caches" in window){
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => (String(k).startsWith("tnp-") ? caches.delete(k) : Promise.resolve(false))));
-      }
-    }catch{}
-  }
-
-  async function selfHealIfBuildChanged(){
-    // Si cambia BUILD_ID, forzamos limpieza de caches para evitar servir shell viejo.
-    const prev = localStorage.getItem(LS_BUILD_ID);
-    const cur = `${APP_VERSION}:${BUILD_ID}`;
-    if (prev === cur) return;
-
-    localStorage.setItem(LS_BUILD_ID, cur);
-    setStatus("Aplicando actualización… (limpiando caché)");
-    await requestClearTnpCaches();
-
-    // reload 1 vez
-    try{
-      if (!window.__TNP_SELF_HEAL__){
-        window.__TNP_SELF_HEAL__ = true;
-        setTimeout(() => location.reload(), 250);
-      }
-    }catch{}
   }
 
   async function forceUpdateNow(){
@@ -1552,7 +1600,7 @@ Fuente:
       localStorage.removeItem(LS_USED);
       localStorage.removeItem(LS_RESOLVE_CACHE);
       localStorage.removeItem(LS_OG_CACHE);
-      localStorage.removeItem(LS_BUILD_ID);
+      localStorage.removeItem(LS_PROXY_BASE);
     }catch{}
 
     try{
@@ -1671,13 +1719,12 @@ Fuente:
     els.btnImportFeeds?.addEventListener("click", () => {
       if (!els.feedsJson) return;
       const raw = els.feedsJson.value;
-      const parsed = safeParseJSON(raw);
-      const arr = asArray(parsed, null);
-      if (!Array.isArray(arr)) {
+      const parsed = safeJsonParse(raw, null);
+      if (!Array.isArray(parsed)) {
         setStatus("Import: JSON inválido (debe ser array).");
         return;
       }
-      const cleaned = arr.map(normalizeFeed).filter(Boolean);
+      const cleaned = parsed.map(normalizeFeed).filter(Boolean);
       if (!cleaned.length){
         setStatus("Import: no hay feeds válidos.");
         return;
@@ -1768,7 +1815,8 @@ Fuente:
       }
     });
 
-    setStatus(`TNP listo (${APP_VERSION})`);
+    const proxyHint = USER_PROXY_BASE ? " · proxy: ON" : " · proxy: OFF";
+    setStatus(`TNP listo (${APP_VERSION})${proxyHint}`);
   }
 
   /* ───────────────────────────── INIT ───────────────────────────── */
@@ -1801,7 +1849,6 @@ Fuente:
     updatePreview();
 
     await attachSwMaintenance();
-    await selfHealIfBuildChanged();
 
     applyFilters();
     startAuto();
