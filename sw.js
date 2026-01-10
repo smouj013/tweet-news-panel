@@ -1,16 +1,20 @@
-/* sw.js — News → Tweet Template Panel (tnp-v4.1.1) — PWA Service Worker (AUTO-UPDATE REAL)
-   ✅ Auto-update “de verdad” aunque NO subas versión del app.js:
-      - Navegación (HTML): Network-first (si falla: cache)
-      - CSS/JS/manifest (shell): Stale-while-revalidate (sirve cache + actualiza en segundo plano)
-      - RSS/feeds/proxies/APIs: Network-first (si falla: cache)
-      - Imágenes/favicons: Stale-while-revalidate
+/* sw.js — News → Tweet Template Panel (tnp-v4.1.1) — PWA Service Worker (AUTO-UPDATE REAL, HARDENED)
+   ✅ Objetivo real: que SI cambias app.js/styles/index SIN tocar versión, el usuario recargue y vea lo nuevo (online).
+   ✅ NAV/HTML: Network-first (cache fallback)
+   ✅ Shell CRÍTICO (index.html, app.js, styles.css, manifest): Network-first (cache fallback) + fetch cache:"reload"
+      -> evita quedarte “pegado” con un app.js viejo servido desde cache del SW.
+   ✅ Shell NO crítico (otros .css/.js/.json): Stale-while-revalidate
+   ✅ RSS/feeds/proxies/APIs: Network-first (cache fallback)
+   ✅ Imágenes/favicons: Stale-while-revalidate
    ✅ Limpieza automática de caches antiguos
-   ✅ skipWaiting() + clients.claim() => el SW nuevo toma control al instante
-   ✅ Soporta message: {type:"SKIP_WAITING"} (opcional)
+   ✅ skipWaiting + clients.claim
+   ✅ message: SKIP_WAITING / CLEAR_CACHES
+   ✅ Anti-explosión de cache: normaliza cache-key quitando ?__tnp= (cache-bust de app.js)
 */
 
 "use strict";
 
+/* ───────────────────────────── CONFIG ───────────────────────────── */
 const SW_VERSION = "tnp-v4.1.1";
 const CACHE_PREFIX = "tnp";
 
@@ -26,11 +30,7 @@ const CACHE_KEEP_PREFIXES = [
   `${CACHE_PREFIX}-img-`,
 ];
 
-/**
- * Nota:
- * - Si algún asset no existe en tu repo, NO rompe: usamos Promise.allSettled.
- * - Rutas relativas "./" funcionan en GitHub Pages.
- */
+// OJO: si algo no existe, no rompe (allSettled)
 const SHELL_ASSETS = [
   "./",
   "./index.html",
@@ -38,7 +38,6 @@ const SHELL_ASSETS = [
   "./app.js",
   "./manifest.webmanifest",
 
-  // Icons (si están, se cachean; si no, se ignoran sin romper)
   "./assets/icons/favicon-32.png",
   "./assets/icons/apple-touch-icon-152.png",
   "./assets/icons/apple-touch-icon-167.png",
@@ -49,8 +48,13 @@ const SHELL_ASSETS = [
   "./assets/icons/icon-512-maskable.png",
 ];
 
+/* ───────────────────────────── URL HELPERS ───────────────────────────── */
 function isSameOrigin(reqUrl) {
   try { return new URL(reqUrl).origin === self.location.origin; } catch { return false; }
+}
+
+function pathOf(reqUrl) {
+  try { return new URL(reqUrl).pathname.toLowerCase(); } catch { return ""; }
 }
 
 function isHtml(req) {
@@ -58,13 +62,25 @@ function isHtml(req) {
   return acc.includes("text/html");
 }
 
-function pathOf(reqUrl) {
-  try { return new URL(reqUrl).pathname.toLowerCase(); } catch { return ""; }
+function isCriticalShellAsset(reqUrl) {
+  const p = pathOf(reqUrl);
+  // IMPORTANT: aquí priorizamos “siempre fresco cuando online”
+  // (resuelve el típico “me quedé con app.js viejo”)
+  return (
+    p.endsWith("/") ||
+    p.endsWith("/index.html") ||
+    p.endsWith("/app.js") ||
+    p.endsWith("/styles.css") ||
+    p.endsWith("/manifest.webmanifest")
+  );
 }
 
 function isShellAsset(reqUrl) {
   const p = pathOf(reqUrl);
-  // Shell “crítico” que quieres que se actualice solo (SWR)
+
+  // Evita tocar el propio sw.js en fetch handler (la update del SW la gestiona el browser)
+  if (p.endsWith("/sw.js")) return false;
+
   return (
     p.endsWith("/") ||
     p.endsWith("/index.html") ||
@@ -78,11 +94,13 @@ function isShellAsset(reqUrl) {
 
 function isFontAsset(reqUrl) {
   const p = pathOf(reqUrl);
-  return (p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf"));
+  return (p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf") || p.endsWith(".otf"));
 }
 
 function isFeedLike(reqUrl) {
-  const u = new URL(reqUrl);
+  let u;
+  try { u = new URL(reqUrl); } catch { return false; }
+
   const p = u.pathname.toLowerCase();
   const h = u.hostname.toLowerCase();
   const qs = u.search.toLowerCase();
@@ -103,7 +121,9 @@ function isFeedLike(reqUrl) {
 }
 
 function isImageLike(reqUrl) {
-  const u = new URL(reqUrl);
+  let u;
+  try { u = new URL(reqUrl); } catch { return false; }
+
   const p = u.pathname.toLowerCase();
   const h = u.hostname.toLowerCase();
 
@@ -113,110 +133,160 @@ function isImageLike(reqUrl) {
   return (
     p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") ||
     p.endsWith(".webp") || p.endsWith(".gif") || p.endsWith(".svg") ||
-    p.endsWith(".ico")
+    p.endsWith(".ico") || p.endsWith(".avif")
   );
 }
 
+/* ───────────────────────────── CACHE KEY NORMALIZATION ───────────────────────────── */
+function normalizeCacheKeyRequest(req) {
+  // Para evitar que ?__tnp= (cache-bust) te cree 5000 entradas
+  // (tu app.js mete __tnp para forzar fresh en proxies)
+  try {
+    const url = new URL(req.url);
+
+    if (url.searchParams.has("__tnp")) {
+      url.searchParams.delete("__tnp");
+      // si queda sin params, limpia el "?"
+      if ([...url.searchParams.keys()].length === 0) url.search = "";
+    }
+
+    // también normaliza algunas basuras comunes (por si acaso)
+    if (url.searchParams.has("_")) url.searchParams.delete("_");
+    if (url.searchParams.has("cb")) url.searchParams.delete("cb");
+    if ([...url.searchParams.keys()].length === 0) url.search = "";
+
+    // No copiamos headers: el cache key depende de URL + método principalmente.
+    // Preservamos method GET.
+    return new Request(url.toString(), {
+      method: "GET",
+      // para cross-origin, omit evita problemas raros; same-origin mantiene credenciales si hiciera falta
+      credentials: isSameOrigin(url.toString()) ? "same-origin" : "omit",
+      redirect: "follow",
+    });
+  } catch {
+    return req;
+  }
+}
+
+/* ───────────────────────────── TIMEOUT ───────────────────────────── */
 function withTimeout(timeoutMs) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort("timeout"), timeoutMs);
   return { ctrl, cancel: () => clearTimeout(t) };
 }
 
-async function putIfCacheable(cache, req, res) {
-  try{
-    // OJO: opaque (status 0) no tiene res.ok, pero puede servir como fallback.
-    // Lo guardamos igual si existe response.
-    if (res) await cache.put(req, res.clone());
-  }catch{
-    // ignore (quota / opaque restrictions)
+/* ───────────────────────────── CACHE PUT SAFE ───────────────────────────── */
+async function putIfCacheable(cache, cacheKeyReq, res) {
+  try {
+    if (!res) return;
+    // Guardamos ok y también opaque (sirve para algunos proxies/imagenes)
+    if (res.ok || res.type === "opaque") {
+      await cache.put(cacheKeyReq, res.clone());
+    }
+  } catch {
+    // ignore quota / opaque restrictions / etc.
   }
 }
 
-async function networkFirst(req, cacheName, timeoutMs = 9000) {
+/* ───────────────────────────── STRATEGIES ───────────────────────────── */
+async function networkFirst(req, cacheName, timeoutMs = 9000, fetchCacheMode = "no-store") {
   const cache = await caches.open(cacheName);
+  const cacheKeyReq = normalizeCacheKeyRequest(req);
+
   const { ctrl, cancel } = withTimeout(timeoutMs);
 
   try {
-    const res = await fetch(req, { signal: ctrl.signal, cache: "no-store" });
+    const res = await fetch(req, { signal: ctrl.signal, cache: fetchCacheMode });
     if (res) {
-      // cachea ok y también opaque (mejor que nada)
-      if (res.ok || res.type === "opaque") await putIfCacheable(cache, req, res);
+      if (res.ok || res.type === "opaque") await putIfCacheable(cache, cacheKeyReq, res);
       if (res.ok) return res;
     }
-    const cached = await cache.match(req);
+    const cached = await cache.match(cacheKeyReq);
     return cached || res || new Response("", { status: 504, statusText: "Offline" });
   } catch {
-    const cached = await cache.match(req);
+    const cached = await cache.match(cacheKeyReq);
     return cached || new Response("", { status: 504, statusText: "Offline" });
   } finally {
     cancel();
   }
 }
 
-async function staleWhileRevalidate(req, cacheName, timeoutMs = 12000) {
+async function staleWhileRevalidate(req, cacheName, timeoutMs = 12000, fetchCacheMode = "no-store") {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(req);
+  const cacheKeyReq = normalizeCacheKeyRequest(req);
+
+  const cached = await cache.match(cacheKeyReq);
 
   const { ctrl, cancel } = withTimeout(timeoutMs);
-  const refresh = fetch(req, { signal: ctrl.signal, cache: "no-store" }).then(async (res) => {
-    if (res && (res.ok || res.type === "opaque")) await putIfCacheable(cache, req, res);
-    return res;
-  }).catch(() => null).finally(cancel);
+  const refresh = fetch(req, { signal: ctrl.signal, cache: fetchCacheMode })
+    .then(async (res) => {
+      if (res && (res.ok || res.type === "opaque")) await putIfCacheable(cache, cacheKeyReq, res);
+      return res;
+    })
+    .catch(() => null)
+    .finally(cancel);
 
   return cached || (await refresh) || new Response("", { status: 504, statusText: "Offline" });
 }
 
-async function cacheFirst(req, cacheName, timeoutMs = 12000) {
+async function cacheFirst(req, cacheName, timeoutMs = 12000, fetchCacheMode = "no-store") {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(req);
+  const cacheKeyReq = normalizeCacheKeyRequest(req);
+
+  const cached = await cache.match(cacheKeyReq);
   if (cached) return cached;
 
   const { ctrl, cancel } = withTimeout(timeoutMs);
   try {
-    const res = await fetch(req, { signal: ctrl.signal, cache: "no-store" });
-    if (res && (res.ok || res.type === "opaque")) await putIfCacheable(cache, req, res);
-    return res;
+    const res = await fetch(req, { signal: ctrl.signal, cache: fetchCacheMode });
+    if (res && (res.ok || res.type === "opaque")) await putIfCacheable(cache, cacheKeyReq, res);
+    return res || new Response("", { status: 504, statusText: "Offline" });
+  } catch {
+    return new Response("", { status: 504, statusText: "Offline" });
   } finally {
     cancel();
   }
 }
 
+/* ───────────────────────────── PRECACHE ───────────────────────────── */
 async function precacheShell() {
   const cache = await caches.open(CACHE_SHELL);
 
-  // "cache: reload" intenta forzar traer la versión nueva del server en install
+  // "cache: reload" fuerza a ir a red (cuando se instala el SW)
   const requests = SHELL_ASSETS.map((u) => {
     try { return new Request(u, { cache: "reload" }); }
     catch { return u; }
   });
 
-  await Promise.allSettled(requests.map((r) => cache.add(r)));
+  await Promise.allSettled(
+    requests.map((r) => cache.add(r))
+  );
 }
 
+/* ───────────────────────────── LIFECYCLE ───────────────────────────── */
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     await precacheShell();
-    // Update instantáneo
     self.skipWaiting();
   })());
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
-    // Limpia caches antiguos
+    // Limpia caches antiguos (solo los nuestros)
     const keys = await caches.keys();
     const keepExact = new Set([CACHE_SHELL, CACHE_RUNTIME, CACHE_FEEDS, CACHE_IMAGES]);
 
     await Promise.allSettled(keys.map(async (k) => {
       const isOurs = CACHE_KEEP_PREFIXES.some((pref) => k.startsWith(pref));
-      if (isOurs && !keepExact.has(k)) await caches.delete(k);
+      if (isOurs && !keepExact.has(k)) {
+        await caches.delete(k);
+      }
     }));
 
-    // Toma control inmediato
     await self.clients.claim();
 
-    // Opcional: avisa a clientes (no rompe si app.js no escucha)
+    // Aviso opcional
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const c of clients) {
       try { c.postMessage({ type: "SW_ACTIVATED", version: SW_VERSION }); } catch {}
@@ -228,6 +298,7 @@ self.addEventListener("message", (event) => {
   const msg = event.data || {};
   if (msg && msg.type === "SKIP_WAITING") {
     self.skipWaiting();
+    return;
   }
   if (msg && msg.type === "CLEAR_CACHES") {
     event.waitUntil((async () => {
@@ -240,6 +311,7 @@ self.addEventListener("message", (event) => {
   }
 });
 
+/* ───────────────────────────── FETCH ROUTER ───────────────────────────── */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
@@ -247,44 +319,56 @@ self.addEventListener("fetch", (event) => {
   const url = req.url;
   const same = isSameOrigin(url);
 
-  // NAVIGATION: HTML (network-first, fallback cache)
+  // NAVIGATION / HTML
   if (req.mode === "navigate" || (same && isHtml(req))) {
     event.respondWith((async () => {
-      const fresh = await networkFirst(req, CACHE_RUNTIME, 9000);
+      // HTML: online -> fresh (reload) | offline -> cache
+      const fresh = await networkFirst(req, CACHE_RUNTIME, 9000, "reload");
       if (fresh && fresh.ok) return fresh;
 
-      const cache = await caches.open(CACHE_SHELL);
-      return (await cache.match("./index.html")) ||
-             (await cache.match("./")) ||
-             new Response("Offline", { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
+      const shell = await caches.open(CACHE_SHELL);
+
+      // Fallback robusto
+      return (
+        (await shell.match(normalizeCacheKeyRequest(new Request("./index.html")))) ||
+        (await shell.match(normalizeCacheKeyRequest(new Request("./")))) ||
+        new Response("Offline", { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } })
+      );
     })());
     return;
   }
 
-  // SAME-ORIGIN: Shell assets (SWR => se “actualiza solo” sin romper offline)
+  // SAME-ORIGIN: Shell CRÍTICO (SIEMPRE intento red primero)
+  if (same && isCriticalShellAsset(url)) {
+    // cache:"reload" = “quiero lo nuevo cuando online”
+    event.respondWith(networkFirst(req, CACHE_SHELL, 12000, "reload"));
+    return;
+  }
+
+  // SAME-ORIGIN: otros shell assets (SWR)
   if (same && isShellAsset(url)) {
-    event.respondWith(staleWhileRevalidate(req, CACHE_SHELL, 12000));
+    event.respondWith(staleWhileRevalidate(req, CACHE_SHELL, 12000, "no-store"));
     return;
   }
 
-  // FONTS (cache-first)
+  // FONTS
   if (same && isFontAsset(url)) {
-    event.respondWith(cacheFirst(req, CACHE_SHELL, 12000));
+    event.respondWith(cacheFirst(req, CACHE_SHELL, 12000, "no-store"));
     return;
   }
 
-  // FEEDS / APIs / PROXIES (network-first)
+  // FEEDS / APIs / PROXIES
   if (isFeedLike(url)) {
-    event.respondWith(networkFirst(req, CACHE_FEEDS, 14000));
+    event.respondWith(networkFirst(req, CACHE_FEEDS, 14000, "no-store"));
     return;
   }
 
-  // IMAGES / FAVICONS (SWR)
+  // IMAGES / FAVICONS
   if (isImageLike(url)) {
-    event.respondWith(staleWhileRevalidate(req, CACHE_IMAGES, 14000));
+    event.respondWith(staleWhileRevalidate(req, CACHE_IMAGES, 14000, "no-store"));
     return;
   }
 
-  // REST (SWR)
-  event.respondWith(staleWhileRevalidate(req, CACHE_RUNTIME, 12000));
+  // RESTO
+  event.respondWith(staleWhileRevalidate(req, CACHE_RUNTIME, 12000, "no-store"));
 });
