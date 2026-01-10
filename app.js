@@ -2,8 +2,9 @@
    ✅ FIX: defaults RSS se guardan si faltan / están vacíos
    ✅ FIX: modal se puede cerrar SIEMPRE (soporta .hidden y [hidden])
    ✅ 100+ RSS directos + rendimiento (batch/backoff/abort)
-   ✅ Imágenes: RSS (media/enclosure) + OG best-effort (jina)
+   ✅ Imágenes: RSS (media/enclosure) + OG best-effort REAL (HTML vía proxies)
    ✅ Anti-CORS: directo → AllOrigins → CodeTabs → ThingProxy
+   ✅ NUEVO: Vista previa estilo X (tweet + card) + conteo tipo X (URLs=23)
 */
 
 (() => {
@@ -94,10 +95,8 @@ Fuente:
   function cleanUrl(u){
     try{
       const url = new URL(u);
-      // limpia basura común
       const kill = ["utm_source","utm_medium","utm_campaign","utm_term","utm_content","fbclid","gclid","mc_cid","mc_eid"];
       kill.forEach(k => url.searchParams.delete(k));
-      // si queda vacío:
       if ([...url.searchParams.keys()].length === 0) url.search = "";
       return url.toString();
     }catch{
@@ -105,12 +104,15 @@ Fuente:
     }
   }
 
+  function absolutizeUrl(u, base){
+    try { return new URL(u, base).toString(); } catch { return u; }
+  }
+
   async function copyText(text){
     try{
       await navigator.clipboard.writeText(text);
       return true;
     }catch{
-      // fallback
       const ta = document.createElement("textarea");
       ta.value = text;
       ta.style.position = "fixed";
@@ -128,6 +130,33 @@ Fuente:
     }
   }
 
+  function estimateXChars(text){
+    const s = String(text || "");
+    // X cuenta URLs como ~23 chars (t.co)
+    const urlRe = /(https?:\/\/[^\s]+)/gi;
+    let out = "";
+    let last = 0;
+    let m;
+    while ((m = urlRe.exec(s)) !== null){
+      out += s.slice(last, m.index);
+      out += "x".repeat(23);
+      last = m.index + m[0].length;
+    }
+    out += s.slice(last);
+    return out.length;
+  }
+
+  function likelySpanish(title, feedName, cat){
+    const t = String(title || "");
+    if (cat === "spain") return true;
+    if (/español|españa/i.test(feedName || "")) return true;
+    if (/[áéíóúñü¿¡]/i.test(t)) return true;
+    const low = t.toLowerCase();
+    const hasEs = /\b(el|la|los|las|un|una|de|del|y|en|para|por|que|con|según|hoy)\b/.test(low);
+    const hasEn = /\b(the|and|to|from|in|breaking|world|news)\b/.test(low);
+    return hasEs && !hasEn;
+  }
+
   /* ───────────────────────────── DEFAULT FEEDS (100+ direct RSS) ───────────────────────────── */
   const DEFAULT_FEEDS = [
     // ── España (ON)
@@ -137,7 +166,7 @@ Fuente:
     { name:"La Vanguardia — Portada (RSS)", url:"https://www.lavanguardia.com/mvc/feed/rss/home.xml", enabled:true, cat:"spain" },
     { name:"ABC — Portada (RSS)", url:"https://www.abc.es/rss/feeds/abcPortada.xml", enabled:true, cat:"spain" },
     { name:"20minutos — Portada (RSS)", url:"https://www.20minutos.es/rss/", enabled:true, cat:"spain" },
-    { name:"El Confidencial — Portada (RSS)", url:"https://rss.elconfidencial.com/espana/", enabled:true, cat:"spain" },
+    { name:"El Confidencial — España (RSS)", url:"https://rss.elconfidencial.com/espana/", enabled:true, cat:"spain" },
     { name:"Europa Press — Portada (RSS)", url:"https://www.europapress.es/rss/rss.aspx?ch=69", enabled:true, cat:"spain" },
 
     // ── Mundo (ON)
@@ -156,7 +185,7 @@ Fuente:
     { name:"Xataka (RSS)", url:"https://feeds.weblogssl.com/xataka2", enabled:true, cat:"tech" },
     { name:"Genbeta (RSS)", url:"https://feeds.weblogssl.com/genbeta", enabled:true, cat:"tech" },
 
-    // ── Sucesos / Seguridad (ON)
+    // ── Sucesos (ON)
     { name:"El Confidencial — Sucesos (RSS)", url:"https://rss.elconfidencial.com/espana/sucesos/", enabled:true, cat:"crime" },
 
     // ── OFF (más España)
@@ -181,7 +210,7 @@ Fuente:
     // ── OFF (deportes / ent)
     { name:"ESPN — Top (RSS) [OFF]", url:"https://www.espn.com/espn/rss/news", enabled:false, cat:"sports" },
     { name:"Marca — Portada (RSS) [OFF]", url:"https://e00-marca.uecdn.es/rss/portada.xml", enabled:false, cat:"sports" },
-    { name:"AS — Portada (RSS) [OFF]", url:"https://as.com/rss/tags/ultimas_noticias.xml", enabled:false, cat:"sports" },
+    { name:"AS — Últimas (RSS) [OFF]", url:"https://as.com/rss/tags/ultimas_noticias.xml", enabled:false, cat:"sports" },
     { name:"VidaExtra (RSS) [OFF]", url:"https://feeds.weblogssl.com/vidaextra", enabled:false, cat:"ent" },
 
     // ── (muchos más directos, OFF por rendimiento)
@@ -261,6 +290,13 @@ Fuente:
     tnpTickerInner: $("tnpTickerInner"),
     tnpTrendsPop: $("tnpTrendsPop"),
 
+    // X Mock
+    xMockText: $("xMockText"),
+    xMockCard: $("xMockCard"),
+    xMockCardImg: $("xMockCardImg"),
+    xMockCardTitle: $("xMockCardTitle"),
+    xMockCardUrl: $("xMockCardUrl"),
+
     modal: $("modal"),
     btnCloseModal: $("btnCloseModal"),
     newFeedName: $("newFeedName"),
@@ -275,7 +311,6 @@ Fuente:
   };
 
   function uiOk(){
-    // mínimo para funcionar
     return !!(els.newsList && els.btnRefresh && els.btnFeeds && els.status);
   }
 
@@ -292,7 +327,7 @@ Fuente:
     s.refreshSec = (typeof s.refreshSec === "number") ? s.refreshSec : 60;
 
     s.optOnlyReady = (s.optOnlyReady === true);
-    s.optOnlySpanish = (s.optOnlySpanish !== false);
+    s.optOnlySpanish = (s.optOnlySpanish !== false); // prioridad ES ON
     s.optResolveLinks = (s.optResolveLinks !== false);
     s.optShowOriginal = (s.optShowOriginal !== false);
     s.optHideUsed = (s.optHideUsed !== false);
@@ -329,13 +364,13 @@ Fuente:
     resolveCache: new Map(),
     ogCache: new Map(),
 
-    // per-feed backoff in-memory
+    // backoff: feedUrl -> { delayMs, untilMs }
     backoff: new Map(),
 
     // ui
-    tickerTimer: null,
     trendsTimer: null,
     lastTickerSig: "",
+    lastFetchReport: { ok:0, fail:0, total:0 },
   };
 
   function loadUsed(){
@@ -357,6 +392,7 @@ Fuente:
     if (og && typeof og === "object"){
       for (const [k,v] of Object.entries(og)){
         if (v && typeof v === "object") state.ogCache.set(k, v);
+        if (v === null) state.ogCache.set(k, null);
       }
     }
   }
@@ -397,12 +433,10 @@ Fuente:
         localStorage.setItem(LS_FEEDS, JSON.stringify(cleaned));
         return cleaned;
       }
-      // si estaba vacío/corrupto → defaults
       const defaults = DEFAULT_FEEDS.map(normalizeFeed).filter(Boolean);
       localStorage.setItem(LS_FEEDS, JSON.stringify(defaults));
       return defaults;
     }
-    // no hay nada → defaults + guardado
     const defaults = DEFAULT_FEEDS.map(normalizeFeed).filter(Boolean);
     localStorage.setItem(LS_FEEDS, JSON.stringify(defaults));
     return defaults;
@@ -498,10 +532,14 @@ Fuente:
     };
   }
 
-  async function fetchText(url, signal){
-    const { signal: s2, cancel } = withTimeout(14000, signal);
+  async function fetchText(url, signal, extraHeaders){
+    const { signal: s2, cancel } = withTimeout(15000, signal);
     try{
-      const r = await fetch(url, { signal: s2, cache:"no-store" });
+      const headers = {
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, text/html;q=0.8, */*;q=0.7",
+        ...(extraHeaders || {})
+      };
+      const r = await fetch(url, { signal: s2, cache:"no-store", headers });
       if (!r.ok) throw new Error("HTTP " + r.status);
       return await r.text();
     } finally {
@@ -525,6 +563,35 @@ Fuente:
     try { return await fetchText(`https://thingproxy.freeboard.io/fetch/${url}`, signal); } catch {}
 
     throw new Error("fetch_failed");
+  }
+
+  async function fetchHtmlSmart(url, signal){
+    // igual que fetchTextSmart pero dejando claro que queremos HTML
+    try { return await fetchText(url, signal, { "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }); } catch {}
+
+    const enc = encodeURIComponent(url);
+    try { return await fetchText(`https://api.allorigins.win/raw?url=${enc}`, signal); } catch {}
+    try { return await fetchText(`https://api.codetabs.com/v1/proxy?quest=${enc}`, signal); } catch {}
+    try { return await fetchText(`https://thingproxy.freeboard.io/fetch/${url}`, signal); } catch {}
+
+    throw new Error("html_fetch_failed");
+  }
+
+  async function mapLimit(arr, limit, fn){
+    const a = Array.isArray(arr) ? arr : [];
+    const out = new Array(a.length);
+    let idx = 0;
+
+    const workers = new Array(Math.max(1, limit)).fill(0).map(async () => {
+      while (idx < a.length){
+        const i = idx++;
+        try { out[i] = await fn(a[i], i); }
+        catch { out[i] = undefined; }
+      }
+    });
+
+    await Promise.all(workers);
+    return out;
   }
 
   /* ───────────────────────────── PARSE RSS/ATOM ───────────────────────────── */
@@ -575,10 +642,12 @@ Fuente:
       const dateMs = pub ? Date.parse(pub) : NaN;
       const ts = Number.isFinite(dateMs) ? dateMs : nowMs();
 
-      const img = pickImageFromItem(it);
+      const imgRaw = pickImageFromItem(it);
 
       const url = cleanUrl(link || guid);
       if (!url) continue;
+
+      const img = imgRaw ? cleanUrl(absolutizeUrl(imgRaw, url)) : "";
 
       items.push({
         id: makeId(feed.name, url, ts, title),
@@ -588,7 +657,7 @@ Fuente:
         link: url,
         dateMs: ts,
         domain: domainOf(url),
-        img: img ? cleanUrl(img) : "",
+        img,
         resolvedUrl: "",
         ready: false,
         top: false,
@@ -612,10 +681,12 @@ Fuente:
       const dateMs = pub ? Date.parse(pub) : NaN;
       const ts = Number.isFinite(dateMs) ? dateMs : nowMs();
 
-      const img = pickImageFromItem(e);
+      const imgRaw = pickImageFromItem(e);
       const url = cleanUrl(link);
 
       if (!url) continue;
+
+      const img = imgRaw ? cleanUrl(absolutizeUrl(imgRaw, url)) : "";
 
       items.push({
         id: makeId(feed.name, url, ts, title),
@@ -625,7 +696,7 @@ Fuente:
         link: url,
         dateMs: ts,
         domain: domainOf(url),
-        img: img ? cleanUrl(img) : "",
+        img,
         resolvedUrl: "",
         ready: false,
         top: false,
@@ -638,32 +709,52 @@ Fuente:
     const doc = parseXml(xmlText);
     if (doc.querySelector("rss")) return parseRss(doc, feed);
     if (doc.querySelector("feed")) return parseAtom(doc, feed);
-    // intento RSS por si acaso
     if (doc.querySelector("channel item")) return parseRss(doc, feed);
     return [];
   }
 
-  /* ───────────────────────────── OG IMAGE BEST-EFFORT ───────────────────────────── */
-  async function fetchOg(url, signal){
+  /* ───────────────────────────── OG IMAGE BEST-EFFORT (REAL HTML via proxies) ───────────────────────────── */
+  function extractOgImage(html, pageUrl){
+    const getMeta = (re) => {
+      const m = html.match(re);
+      return (m && m[1]) ? m[1].trim() : "";
+    };
+
+    // og:image / twitter:image
+    let img =
+      getMeta(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i) ||
+      getMeta(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i) ||
+      getMeta(/name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i) ||
+      getMeta(/content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i);
+
+    // fallback: <link rel="image_src" href="...">
+    if (!img){
+      img = getMeta(/rel=["']image_src["'][^>]*href=["']([^"']+)["']/i) ||
+            getMeta(/href=["']([^"']+)["'][^>]*rel=["']image_src["']/i);
+    }
+
+    if (!img) return "";
+
+    // limpia comillas/html entities simples
+    img = img.replace(/&amp;/g, "&");
+    img = absolutizeUrl(img, pageUrl);
+    return cleanUrl(img);
+  }
+
+  async function fetchOgImage(url, signal){
     const k = url;
     if (state.ogCache.has(k)) return state.ogCache.get(k);
 
-    // r.jina.ai bypass (devuelve html como texto)
-    const jinaUrl = "https://r.jina.ai/http://" + url.replace(/^https?:\/\//i, "");
-    let html = "";
     try{
-      html = await fetchText(jinaUrl, signal);
+      const html = await fetchHtmlSmart(url, signal);
+      const img = extractOgImage(html, url);
+      const out = img ? { img } : null;
+      state.ogCache.set(k, out);
+      return out;
     }catch{
       state.ogCache.set(k, null);
       return null;
     }
-
-    const m1 = html.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i);
-    const m2 = html.match(/name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i);
-    const img = (m1 && m1[1]) ? m1[1] : (m2 && m2[1]) ? m2[1] : "";
-    const out = img ? { img: cleanUrl(img) } : null;
-    state.ogCache.set(k, out);
-    return out;
   }
 
   /* ───────────────────────────── LINK RESOLVE (suave) ───────────────────────────── */
@@ -676,12 +767,11 @@ Fuente:
     const k = url;
     if (state.resolveCache.has(k)) return state.resolveCache.get(k);
 
-    // método simple: seguir redirects con fetch (a veces CORS bloquea)
+    // seguir redirects (a veces CORS bloquea, pero en algunos casos funciona)
     try{
       const { signal: s2, cancel } = withTimeout(9000, signal);
       try{
         const r = await fetch(url, { signal: s2, redirect:"follow", cache:"no-store" });
-        // aunque no lea el body, si siguió redirect suele traer final
         const finalUrl = r.url || url;
         const clean = cleanUrl(finalUrl);
         state.resolveCache.set(k, clean);
@@ -697,7 +787,7 @@ Fuente:
   }
 
   /* ───────────────────────────── SCORING ───────────────────────────── */
-  function scoreImpact(it){
+  function scoreImpact(it, preferEs){
     const t = (it.title || "").toLowerCase();
     let s = 0;
 
@@ -714,6 +804,8 @@ Fuente:
     if (ageMin <= 10) s += 3;
     else if (ageMin <= 30) s += 2;
     else if (ageMin <= 60) s += 1;
+
+    if (preferEs && likelySpanish(it.title, it.feedName, it.cat)) s += 2;
 
     return s;
   }
@@ -733,6 +825,7 @@ Fuente:
     const onlyReady = !!(els.optOnlyReady?.checked);
     const hideUsed = !!(els.optHideUsed?.checked);
     const cat = (els.catFilter?.value || "all");
+    const preferEs = !!(els.optOnlySpanish?.checked);
 
     const now = nowMs();
 
@@ -756,7 +849,7 @@ Fuente:
 
     const sortBy = (els.sortBy?.value || settings.sortBy || "impact");
     if (sortBy === "impact"){
-      out.sort((a,b) => scoreImpact(b) - scoreImpact(a) || (b.dateMs - a.dateMs));
+      out.sort((a,b) => scoreImpact(b, preferEs) - scoreImpact(a, preferEs) || (b.dateMs - a.dateMs));
     }else{
       out.sort((a,b) => b.dateMs - a.dateMs);
     }
@@ -778,7 +871,9 @@ Fuente:
       const empty = document.createElement("div");
       empty.style.padding = "14px";
       empty.style.color = "rgba(231,233,234,0.65)";
-      empty.textContent = "Sin noticias en este filtro. Prueba a subir la ventana (60min/3h) o bajar Delay.";
+      empty.textContent = state.refreshInFlight
+        ? "Cargando noticias…"
+        : "Sin noticias en este filtro. Prueba a subir la ventana (60min/3h) o bajar Delay.";
       els.newsList.appendChild(empty);
       return;
     }
@@ -922,15 +1017,58 @@ Fuente:
     return out.trim();
   }
 
+  function renderXMockCard(it){
+    if (!els.xMockCard) return;
+
+    const url = (els.sourceUrl?.value || "").trim();
+    if (!url){
+      els.xMockCard.hidden = true;
+      return;
+    }
+
+    els.xMockCard.href = url;
+    if (els.xMockCardUrl) els.xMockCardUrl.textContent = domainOf(url) || url;
+
+    const title = (els.headline?.value || "").trim() || "Noticia";
+    if (els.xMockCardTitle) els.xMockCardTitle.textContent = title;
+
+    // imagen: item.img (RSS/OG ya) -> card
+    const imgUrl = it?.img || "";
+    if (els.xMockCardImg){
+      els.xMockCardImg.innerHTML = "";
+      if (imgUrl){
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.referrerPolicy = "no-referrer";
+        img.src = imgUrl;
+        img.alt = "";
+        els.xMockCardImg.appendChild(img);
+      }else{
+        // placeholder
+        const ph = document.createElement("div");
+        ph.className = "xMock__ph";
+        ph.textContent = "sin imagen";
+        els.xMockCardImg.appendChild(ph);
+      }
+    }
+
+    els.xMockCard.hidden = false;
+  }
+
   function updatePreview(){
     const t = buildTweet();
     if (els.preview) els.preview.textContent = t;
 
-    const len = t.length;
-    if (els.charCount) els.charCount.textContent = `${len} chars`;
+    const len = estimateXChars(t);
+    if (els.charCount) els.charCount.textContent = `${len} / 280`;
     if (els.warn){
       els.warn.textContent = (len > 280) ? `⚠️ Se pasa de 280 (sobran ${len - 280})` : "";
     }
+
+    // X Mock text
+    if (els.xMockText) els.xMockText.textContent = t;
+    renderXMockCard(getSelectedItem());
   }
 
   function smartTrim(text, maxLen){
@@ -939,6 +1077,11 @@ Fuente:
     const cut = s.slice(0, maxLen - 1);
     const lastSpace = cut.lastIndexOf(" ");
     return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut) + "…";
+  }
+
+  function getSelectedItem(){
+    if (!state.selectedId) return null;
+    return state.items.find(x => x.id === state.selectedId) || state.filtered.find(x => x.id === state.selectedId) || null;
   }
 
   function selectItem(id){
@@ -978,6 +1121,12 @@ Fuente:
 
     const parts = top10.map(x => `• ${x.title}`);
     els.tnpTickerInner.textContent = parts.join("   ");
+
+    // reinicia animación para que “se note” el cambio
+    els.tnpTickerInner.style.animation = "none";
+    // eslint-disable-next-line no-unused-expressions
+    els.tnpTickerInner.offsetHeight;
+    els.tnpTickerInner.style.animation = "";
   }
 
   function buildTrendCandidates(){
@@ -995,8 +1144,10 @@ Fuente:
       map.set(low, (map.get(low) || 0) + 1);
     }
 
-    const sorted = [...map.entries()].sort((a,b) => b[1]-a[1]).slice(0, 8).map(x => "#" + x[0]);
-    return sorted;
+    return [...map.entries()]
+      .sort((a,b) => b[1]-a[1])
+      .slice(0, 8)
+      .map(x => "#" + x[0]);
   }
 
   function updateTrendsPop(){
@@ -1022,20 +1173,26 @@ Fuente:
     }, 4200);
   }
 
-  /* ───────────────────────────── REFRESH LOOP ───────────────────────────── */
-  function backoffMsFor(feedUrl){
-    const v = state.backoff.get(feedUrl) || 0;
-    return v;
+  /* ───────────────────────────── BACKOFF ───────────────────────────── */
+  function shouldSkipFeed(feedUrl, force){
+    if (force) return false;
+    const info = state.backoff.get(feedUrl);
+    if (!info) return false;
+    return nowMs() < (info.untilMs || 0);
   }
+
   function bumpBackoff(feedUrl){
-    const cur = state.backoff.get(feedUrl) || 0;
-    const next = cur ? Math.min(cur * 2, 10 * 60 * 1000) : 30 * 1000; // 30s -> 60 -> 120... max 10m
-    state.backoff.set(feedUrl, next);
+    const cur = state.backoff.get(feedUrl);
+    const prevDelay = cur?.delayMs || 0;
+    const nextDelay = prevDelay ? Math.min(prevDelay * 2, 10 * 60 * 1000) : 30 * 1000; // 30s->60->120... max 10m
+    state.backoff.set(feedUrl, { delayMs: nextDelay, untilMs: nowMs() + nextDelay });
   }
+
   function resetBackoff(){
     state.backoff.clear();
   }
 
+  /* ───────────────────────────── REFRESH LOOP ───────────────────────────── */
   async function refreshAll({ force=false } = {}){
     if (state.refreshInFlight) return;
 
@@ -1050,8 +1207,13 @@ Fuente:
     state.refreshInFlight = true;
     state.refreshAbort?.abort("new_refresh");
     state.refreshAbort = new AbortController();
-
     const signal = state.refreshAbort.signal;
+
+    state.items = [];
+    state.filtered = [];
+    renderNewsList([]);
+    updateTicker();
+    updateTrendsPop();
 
     setStatus(force ? "Refrescando (force)…" : "Refrescando…");
 
@@ -1059,11 +1221,10 @@ Fuente:
     const batchSize = clamp(Number(els.batchFeeds?.value || settings.batchFeeds || 12), 4, 50);
 
     const allItems = [];
-    const now = nowMs();
-
     const enabledFeeds = feeds.slice();
 
-    // batch por lotes
+    let ok = 0, fail = 0;
+
     for (let i=0;i<enabledFeeds.length;i += batchSize){
       if (signal.aborted) break;
 
@@ -1072,10 +1233,9 @@ Fuente:
       await Promise.allSettled(chunk.map(async (f) => {
         if (signal.aborted) return;
 
-        const bo = backoffMsFor(f.url);
-        if (!force && bo){
-          // si el último fallo fue reciente, esperamos suavemente según el backoff (simple)
-          // (sin guardar timestamps persistentes para no complicar)
+        if (shouldSkipFeed(f.url, force)){
+          fail++;
+          return;
         }
 
         try{
@@ -1083,21 +1243,23 @@ Fuente:
           const items = parseFeed(xml, f);
 
           for (const it of items){
-            // marca TOP por impacto
-            const sc = scoreImpact(it);
+            const sc = scoreImpact(it, true);
             it.top = sc >= 8;
             allItems.push(it);
             if (allItems.length >= cap * 2) break;
           }
+          ok++;
         }catch{
+          fail++;
           bumpBackoff(f.url);
         }
       }));
 
-      setStatus(`Refrescando… (${Math.min(i + batchSize, enabledFeeds.length)}/${enabledFeeds.length})`);
-      // micro-pausa para no saturar
+      setStatus(`Refrescando… (${Math.min(i + batchSize, enabledFeeds.length)}/${enabledFeeds.length}) · OK:${ok} FAIL:${fail}`);
       await sleep(60);
     }
+
+    state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
 
     // dedup por link
     const seen = new Set();
@@ -1109,39 +1271,37 @@ Fuente:
       dedup.push(it);
     }
 
-    // filtra cosas demasiado futuras/raras
+    const now = nowMs();
     const clean = dedup.filter(it => (now - it.dateMs) >= 0);
 
-    // cap final
     clean.sort((a,b) => b.dateMs - a.dateMs);
     state.items = clean.slice(0, cap);
 
-    // resolve links (solo si procede)
+    // resolve links
     if (els.optResolveLinks?.checked){
-      const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 40);
-      await Promise.allSettled(need.map(async it => {
-        try{
-          it.resolvedUrl = await resolveUrl(it.link, signal);
-        }catch{}
-      }));
+      const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 60);
+      await mapLimit(need, 6, async (it) => {
+        it.resolvedUrl = await resolveUrl(it.link, signal);
+      });
     }
 
-    // OG images si faltan (top visible)
-    const needImg = state.items.filter(it => !it.img && it.link).slice(0, 30);
-    await Promise.allSettled(needImg.map(async it => {
-      try{
-        const og = await fetchOg(it.resolvedUrl || it.link, signal);
-        if (og && og.img) it.img = og.img;
-      }catch{}
-    }));
+    // OG images para los que no tienen (más agresivo, pero limitado)
+    const needImg = state.items
+      .filter(it => !it.img && (it.resolvedUrl || it.link))
+      .slice(0, 60);
 
-    // marca ready
+    await mapLimit(needImg, 6, async (it) => {
+      const u = it.resolvedUrl || it.link;
+      const og = await fetchOgImage(u, signal);
+      if (og && og.img) it.img = og.img;
+    });
+
     for (const it of state.items){
       it.ready = !!(it.title && (it.resolvedUrl || it.link));
     }
 
     saveCaches();
-    setStatus(`OK · ${state.items.length} noticias`);
+    setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
     state.refreshInFlight = false;
 
     applyFilters();
@@ -1202,7 +1362,6 @@ Fuente:
 
   /* ───────────────────────────── UI BIND ───────────────────────────── */
   function bindUI(){
-    // inicializa UI desde settings
     if (els.liveUrl) els.liveUrl.value = settings.liveUrl;
     if (els.template) els.template.value = loadTemplate();
 
@@ -1243,12 +1402,13 @@ Fuente:
       settings.catFilter = els.catFilter?.value || "all";
 
       saveSettings(settings);
+      if (els.template) saveTemplate(els.template.value || DEFAULT_TEMPLATE);
+
       updatePreview();
       applyFilters();
       startAuto();
     };
 
-    // buttons
     els.btnRefresh?.addEventListener("click", (e) => {
       const force = e.shiftKey;
       refreshAll({ force }).catch(()=>{});
@@ -1257,11 +1417,10 @@ Fuente:
     els.btnFeeds?.addEventListener("click", openModal);
     els.btnCloseModal?.addEventListener("click", closeModal);
 
-    // click fuera del panel cierra
     els.modal?.addEventListener("click", (e) => {
       if (e.target === els.modal) closeModal();
     });
-    // ESC cierra
+
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") closeModal();
     });
@@ -1317,7 +1476,6 @@ Fuente:
       saveFeeds();
       closeModal();
       setStatus("Feeds guardados.");
-      // refresca con lo nuevo
       refreshAll({ force:true }).catch(()=>{});
     });
 
@@ -1365,7 +1523,6 @@ Fuente:
     els.btnCheckUpdate?.addEventListener("click", forceUpdateNow);
     els.btnHardReset?.addEventListener("click", hardResetEverything);
 
-    // inputs -> save
     const bind = (el) => {
       if (!el) return;
       el.addEventListener("change", saveSettingFrom);
@@ -1396,7 +1553,6 @@ Fuente:
     loadCaches();
 
     state.feeds = loadFeeds();
-    // IMPORTANT: asegura que defaults quedan persistidos
     saveFeeds();
 
     bindUI();
@@ -1407,7 +1563,6 @@ Fuente:
     applyFilters();
     startAuto();
 
-    // primer refresh
     refreshAll({ force:true }).catch(()=>{});
   }
 

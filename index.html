@@ -16,7 +16,6 @@
   <link rel="preconnect" href="https://api.allorigins.win" crossorigin />
   <link rel="preconnect" href="https://api.codetabs.com" crossorigin />
   <link rel="preconnect" href="https://thingproxy.freeboard.io" crossorigin />
-  <link rel="preconnect" href="https://r.jina.ai" crossorigin />
 
   <link rel="preload" href="./styles.css" as="style" />
   <link rel="stylesheet" href="./styles.css" />
@@ -133,10 +132,31 @@
 
           <div class="previewWrap">
             <div class="previewTitle">
-              Preview
+              Preview (texto)
               <span class="mini muted" id="charCount"></span>
             </div>
             <pre id="preview" class="preview"></pre>
+
+            <!-- ✅ NUEVO: Vista previa estilo X -->
+            <div class="xMock">
+              <div class="xMock__avatar" aria-hidden="true"></div>
+              <div class="xMock__body">
+                <div class="xMock__nameRow">
+                  <div class="xMock__name">GlobalEyeTV</div>
+                  <div class="xMock__handle">@globaleyetv</div>
+                </div>
+
+                <div id="xMockText" class="xMock__text"></div>
+
+                <a id="xMockCard" class="xMock__card" href="#" target="_blank" rel="noopener noreferrer" hidden>
+                  <div id="xMockCardImg" class="xMock__cardImg"></div>
+                  <div class="xMock__cardMeta">
+                    <div id="xMockCardTitle" class="xMock__cardTitle"></div>
+                    <div id="xMockCardUrl" class="xMock__cardUrl"></div>
+                  </div>
+                </a>
+              </div>
+            </div>
           </div>
 
           <hr class="hr" />
