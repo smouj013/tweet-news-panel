@@ -1,9 +1,6 @@
 <!-- index.html — News → Tweet Template Panel (tnp-v4.0.1+) — X Clean Dark — PRO + REALTIME TICKERS
   ✅ Mantiene 100% compat con tus IDs/clases actuales (NO rompe nada)
-  ✅ Añade contenedores para:
-     - Newsticker en tiempo real (noticias más relevantes)
-     - Trend ticker / popticker (hashtags / tendencias virales de X)
-  ✅ Si tu app.js nuevo no usa estos IDs, NO afecta en nada.
+  ✅ FIX: alphas en rgba() (evita “todo blanco”)
 -->
 <!doctype html>
 <html lang="es">
@@ -39,362 +36,206 @@
 
   <title>News → Tweet Template Panel</title>
 
-  <!-- A11y + mobile tap highlight (no depende del CSS principal) -->
+  <!-- FIX CRÍTICO: rgba alpha debe ser 0..1 (0.12, 0.55, etc), si no -> todo opaco/blanco -->
   <style>
-    :focus-visible{ outline: 2px solid rgba(29,155,240,55); outline-offset: 2px; border-radius: 12px; }
-    *{ -webkit-tap-highlight-color: rgba(29,155,240,18); }
+    html, body { background:#05060a; color:#e7e9ea; }
+
+    :focus-visible{
+      outline: 2px solid rgba(29,155,240,0.55);
+      outline-offset: 2px;
+      border-radius: 12px;
+    }
+    *{ -webkit-tap-highlight-color: rgba(29,155,240,0.18); }
+
     .skipLink{
       position:absolute; left:-9999px; top:auto; width:1px; height:1px; overflow:hidden;
     }
     .skipLink:focus{
       left:12px; top:12px; width:auto; height:auto; padding:10px 12px;
-      background:#0b1220; color:#fff; border:1px solid rgba(255,255,255,12);
+      background:#0b1220; color:#fff; border:1px solid rgba(255,255,255,0.12);
       border-radius:12px; z-index:99999;
     }
     noscript{
       display:block; margin:12px; padding:12px;
-      background:rgba(255,107,107,12); border:1px solid rgba(255,107,107,35);
-      border-radius:12px; color:#ffd1d1;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background:rgba(255,107,107,0.12);
+      border:1px solid rgba(255,107,107,0.35);
+      border-radius:14px;
+      color:#ffe6ec;
     }
 
-    /* ───────────────── REALTIME TICKERS (solo HTML/CSS) ─────────────────
-       - app.js puede escribir dentro de #newsTickerTrack y #trendTickerTrack
-       - popticker opcional (#popTicker, #trendPopTicker)
-       - No requiere cambios en styles.css (esto lo complementa)
-    */
-    :root{
-      --tickerH: 44px;
-    }
-    .tickerBar{
-      position: sticky;
-      top: var(--topbarH);
-      z-index: 25;
-      height: var(--tickerH);
-      border-bottom: 1px solid var(--border);
-      background: rgba(0,0,0,92);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      display:flex;
-      align-items:center;
-      gap: 10px;
-      padding: 8px 12px;
-      overflow:hidden;
-    }
-    .tickerRow{
-      display:flex;
-      align-items:center;
-      gap: 10px;
-      min-width: 0;
-      flex: 1 1 0;
-    }
-    .tickerLabel{
-      flex: 0 0 auto;
-      font-size: 11px;
-      font-weight: 900;
-      letter-spacing: .2px;
-      padding: 5px 10px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,12);
-      background: rgba(255,255,255,04);
-      color: rgba(231,233,234,88);
-      white-space: nowrap;
-      user-select: none;
-    }
-    .tickerLabel.news{
-      border-color: rgba(245,158,11,28);
-      background: rgba(245,158,11,10);
-    }
-    .tickerLabel.trends{
-      border-color: rgba(29,155,240,28);
-      background: rgba(29,155,240,10);
-    }
-
-    .tickerViewport{
-      position: relative;
-      flex: 1 1 auto;
-      min-width: 0;
-      overflow:hidden;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,10);
-      background: rgba(255,255,255,03);
-      height: 30px;
-      display:flex;
-      align-items:center;
-    }
-    .tickerTrack{
-      display:inline-block;
-      white-space: nowrap;
-      padding-left: 12px;
-      padding-right: 12px;
-      color: rgba(231,233,234,88);
-      font-size: 12px;
-      font-weight: 700;
-      will-change: transform;
-      animation: tnp_marquee 24s linear infinite;
-    }
-    .tickerTrack[data-speed="slow"]{ animation-duration: 34s; }
-    .tickerTrack[data-speed="fast"]{ animation-duration: 18s; }
-
-    /* Si el track es corto, app.js puede poner data-nomove="1" */
-    .tickerTrack[data-nomove="1"]{ animation: none !important; }
-
-    @keyframes tnp_marquee{
-      0%{ transform: translateX(0); }
-      100%{ transform: translateX(-55%); }
-    }
-
-    /* Pop ticker (toast flotante) */
-    .popTicker{
-      position: fixed;
-      left: 12px;
-      right: 12px;
-      bottom: 12px;
-      z-index: 80;
-      border-radius: 16px;
-      border: 1px solid rgba(255,255,255,12);
-      background: rgba(0,0,0,86);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      padding: 10px 12px;
-      color: rgba(231,233,234,92);
-      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial;
-      box-shadow: 0 10px 35px rgba(0,0,0,45);
-      display:flex;
-      gap: 10px;
-      align-items:flex-start;
-    }
-    .popTicker.hidden{ display:none !important; }
-    .popDot{
-      width: 10px; height: 10px;
-      border-radius: 999px;
-      background: #1D9BF0;
-      box-shadow: 0 0 0 4px rgba(29,155,240,10);
-      margin-top: 4px;
-      flex: 0 0 auto;
-    }
-    .popBody{ min-width:0; }
-    .popTitle{
-      font-weight: 900;
-      letter-spacing: .12px;
-      margin: 0 0 2px 0;
-      font-size: 12px;
-      color: rgba(231,233,234,88);
-    }
-    .popText{
-      margin:0;
-      font-size: 13px;
-      font-weight: 750;
-      color: rgba(231,233,234,94);
-      word-break: break-word;
-    }
-
-    /* Ajuste del layout para no quedar “debajo” del ticker */
-    @media (min-width: 981px){
-      .layout{ height: calc(100vh - var(--topbarH) - var(--tickerH)); }
-    }
-    @media (max-width: 980px){
-      .tickerBar{ position: static; height: auto; padding: 10px 12px; }
-      .tickerViewport{ height: 32px; }
-      .layout{ height: auto; }
-    }
-    @media (prefers-reduced-motion: reduce){
-      .tickerTrack{ animation: none !important; }
-    }
+    /* Si tu styles.css aún tiene alphas “12/03/55”, esto ayuda a que NO se blanquee. */
+    .modal{ background: rgba(0,0,0,0.72) !important; }
   </style>
 </head>
 
 <body>
-  <a class="skipLink" href="#main">Saltar al contenido</a>
+  <a class="skipLink" href="#main">Saltar a contenido</a>
+  <noscript>Necesitas JavaScript para usar este panel.</noscript>
 
-  <noscript>
-    Este panel necesita JavaScript para funcionar.
-  </noscript>
-
-  <header class="topbar" role="banner">
-    <div class="topLeft">
-      <div class="brand" aria-label="Panel">
-        <div class="dot" aria-hidden="true"></div>
-        <div>
-          <div class="brandTitle">News → Tweet Template Panel</div>
-          <div class="brandSub">RSS/Atom/JSON · Link original · Imágenes · X-count · PWA</div>
-        </div>
-      </div>
-
-      <div class="topControls" aria-label="Controles superiores">
-        <label class="mini">
-          Ventana
-          <select id="timeFilter" class="select" aria-label="Ventana de tiempo">
-            <option value="1">1h</option>
-            <option value="3">3h</option>
-            <option value="6">6h</option>
-            <option value="12">12h</option>
-            <option value="24" selected>24h</option>
-            <option value="72">72h</option>
-          </select>
-        </label>
-
-        <label class="mini">
-          Mostrar
-          <select id="showLimit" class="select" aria-label="Límite visual de noticias">
-            <option value="10" selected>10</option>
-            <option value="20">20</option>
-            <option value="30">30</option>
-            <option value="50">50</option>
-          </select>
-        </label>
-
-        <label class="mini" title="Tope total en memoria (fetch cap). Evita colapsos si tienes muchos feeds.">
-          Tope
-          <input id="fetchCap" class="input" inputmode="numeric" type="number" min="80" max="2000" step="20" value="240" aria-label="Tope total de items" />
-        </label>
-
-        <input id="searchBox" class="input" placeholder="Buscar…" aria-label="Buscar noticias" autocomplete="off" />
-
-        <button id="btnRefresh" class="btn primary" type="button" aria-label="Refrescar">⟳ Refrescar</button>
-        <button id="btnFeeds" class="btn" type="button" aria-label="Gestionar feeds" aria-controls="modal" aria-haspopup="dialog">⚙ Feeds</button>
+  <!-- TOPBAR -->
+  <header class="topbar" id="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <div class="brandText">
+        <div class="brandTitle">News → Tweet Template</div>
+        <div class="brandSub muted">RSS/Atom/JSON • links reales • imágenes • plantilla X</div>
       </div>
     </div>
 
-    <div class="topRight" aria-label="Estado">
-      <div id="status" class="status" role="status" aria-live="polite">Listo</div>
+    <div class="topControls" aria-label="Controles superiores">
+      <label class="mini">
+        Tiempo
+        <select id="timeFilter" class="select" aria-label="Filtro de tiempo">
+          <option value="15" selected>15m</option>
+          <option value="30">30m</option>
+          <option value="60">1h</option>
+          <option value="180">3h</option>
+          <option value="360">6h</option>
+          <option value="720">12h</option>
+          <option value="1440">24h</option>
+        </select>
+      </label>
+
+      <label class="mini" title="Cuántas noticias mostrar en lista">
+        Mostrar
+        <input id="showLimit" class="input" type="number" min="10" max="50" step="1" value="10" style="width:90px;" />
+      </label>
+
+      <label class="mini" title="Tope total en memoria (rendimiento)">
+        Cap
+        <input id="fetchCap" class="input" type="number" min="80" max="2000" step="20" value="240" style="width:100px;" />
+      </label>
+
+      <label class="mini" style="min-width:240px; flex:1;">
+        Buscar
+        <input id="searchBox" class="input" placeholder="Buscar titular/fuente…" autocomplete="off" />
+      </label>
+
+      <div class="row">
+        <button id="btnRefresh" class="btn primary" type="button" title="Refrescar (rota feeds por lotes)">Refresh</button>
+        <button id="btnForceRefresh" class="btn" type="button" title="Force refresh (intenta todo, más caro)">Force</button>
+        <button id="btnFeeds" class="btn" type="button" title="Gestionar feeds">Feeds</button>
+      </div>
     </div>
+
+    <div id="status" class="status" aria-live="polite"></div>
   </header>
 
-  <!-- REALTIME TICKERS (noticias + tendencias) -->
-  <div id="tickerBar" class="tickerBar" role="region" aria-label="Tickers en tiempo real">
-    <div class="tickerRow" aria-label="Ticker de noticias relevantes">
-      <div class="tickerLabel news">📰 RELEVANTE</div>
-      <div class="tickerViewport">
-        <!-- app.js nuevo: rellena esto en tiempo real -->
-        <div id="newsTickerTrack" class="tickerTrack" data-speed="slow">Cargando titulares…</div>
-
-        <!-- Aliases por compat (por si tu app.js usa otros IDs) -->
-        <div id="newsTicker" class="tickerTrack hidden" aria-hidden="true"></div>
-        <div id="tickerNews" class="tickerTrack hidden" aria-hidden="true"></div>
-        <div id="rtNewsTicker" class="tickerTrack hidden" aria-hidden="true"></div>
-      </div>
-    </div>
-
-    <div class="tickerRow" aria-label="Ticker de tendencias virales">
-      <div class="tickerLabel trends">🔥 TENDENCIAS</div>
-      <div class="tickerViewport">
-        <!-- app.js nuevo: rellena esto en tiempo real -->
-        <div id="trendTickerTrack" class="tickerTrack" data-speed="fast">Cargando tendencias…</div>
-
-        <!-- Aliases por compat -->
-        <div id="trendTicker" class="tickerTrack hidden" aria-hidden="true"></div>
-        <div id="tickerTrends" class="tickerTrack hidden" aria-hidden="true"></div>
-        <div id="rtTrendsTicker" class="tickerTrack hidden" aria-hidden="true"></div>
-      </div>
+  <!-- TICKERS (si app.js los usa) -->
+  <div id="newsTickerBar" class="tickerBar hidden" aria-hidden="true">
+    <div class="tickerLabel news">NEWS</div>
+    <div class="tickerViewport" aria-hidden="true">
+      <div id="newsTickerTrack" class="tickerTrack"></div>
     </div>
   </div>
 
-  <!-- Pop tickers (toast flotante). app.js puede mostrar/ocultar quitando/poniendo .hidden -->
-  <div id="popTicker" class="popTicker hidden" role="status" aria-live="polite" aria-label="Popticker de última hora">
-    <div class="popDot" aria-hidden="true"></div>
-    <div class="popBody">
-      <div class="popTitle">ÚLTIMA HORA</div>
-      <p id="popTickerText" class="popText">—</p>
+  <div id="trendTickerBar" class="tickerBar hidden" aria-hidden="true">
+    <div class="tickerLabel trend">TREND</div>
+    <div class="tickerViewport" aria-hidden="true">
+      <div id="trendTickerTrack" class="tickerTrack"></div>
     </div>
   </div>
 
-  <div id="trendPopTicker" class="popTicker hidden" role="status" aria-live="polite" aria-label="Popticker de tendencia">
-    <div class="popDot" aria-hidden="true"></div>
-    <div class="popBody">
-      <div class="popTitle">TENDENCIA</div>
-      <p id="trendPopTickerText" class="popText">—</p>
-    </div>
+  <div id="popTicker" class="popTicker hidden" aria-hidden="true">
+    <div class="popDot"></div>
+    <div id="popTickerText" class="popText"></div>
   </div>
 
-  <main id="main" class="layout" role="main">
-    <!-- LEFT: COMPOSER -->
-    <section class="panel left" aria-label="Plantilla">
+  <div id="trendPopTicker" class="popTicker trend hidden" aria-hidden="true">
+    <div class="popDot"></div>
+    <div id="trendPopTickerText" class="popText"></div>
+  </div>
+
+  <!-- MAIN -->
+  <main id="main" class="main" tabindex="-1">
+    <!-- LEFT PANEL -->
+    <section class="panel left" aria-label="Plantilla y preview">
       <div class="panelHead">
-        <h2>Plantilla</h2>
-        <div class="row wrap" aria-label="Acciones de plantilla">
-          <button id="btnTrim" class="btn" type="button" title="Intenta ajustar a 280">✂ Ajustar</button>
-          <button id="btnGenTags" class="btn" type="button" title="Genera hashtags desde el titular">🏷 Hashtags</button>
-          <button id="btnCopyUrl" class="btn" type="button" title="Copia SOURCE_URL">🔗 Copiar URL</button>
-          <button id="btnX" class="btn" type="button" title="Abre intent de X con el texto">𝕏 Abrir X</button>
-          <button id="btnCopy" class="btn primary" type="button" title="Copia el tweet final">📋 Copiar</button>
-          <button id="btnResetTemplate" class="btn" type="button" title="Restaura la plantilla por defecto">↩ Reset</button>
+        <h2>Tweet</h2>
+        <div class="row">
+          <span class="mini muted">Chars</span>
+          <span id="charCount" class="badge">0</span>
         </div>
       </div>
 
       <div class="panelBody">
-        <div class="grid2" role="group" aria-label="Opciones de plantilla">
+        <div class="grid2" role="group" aria-label="Inputs base">
           <label class="mini">
-            LIVE_URL
+            En vivo (URL)
             <input id="liveUrl" class="input" placeholder="https://twitch.com/globaleyetv" autocomplete="off" />
           </label>
-
           <label class="mini">
-            HASHTAGS
-            <input id="hashtags" class="input" placeholder="#ENVIVO #Breaking #Noticias" autocomplete="off" />
+            Hashtags
+            <input id="hashtags" class="input" placeholder="#ENVIVO #ÚLTIMAHORA" autocomplete="off" />
           </label>
+        </div>
 
-          <label class="mini checkbox" title="Añade/quita el bloque 🔴#ENVIVO del preview">
+        <div class="grid2" role="group" aria-label="Titular y fuente">
+          <label class="mini">
+            Titular
+            <input id="headline" class="input" placeholder="🚨 ÚLTIMA HORA: …" autocomplete="off" />
+          </label>
+          <label class="mini">
+            Fuente (URL)
+            <input id="sourceUrl" class="input" placeholder="https://…" autocomplete="off" />
+          </label>
+        </div>
+
+        <div class="row wrap" aria-label="Opciones de plantilla">
+          <label class="mini checkbox">
             <input id="optIncludeLive" type="checkbox" checked />
-            Incluir LIVE_URL
+            Incluir 🔴#ENVIVO
           </label>
 
-          <label class="mini checkbox" title="Añade/quita el bloque Fuente del preview">
+          <label class="mini checkbox">
             <input id="optIncludeSource" type="checkbox" checked />
             Incluir Fuente
           </label>
         </div>
 
-        <div class="hr" role="separator" aria-hidden="true"></div>
-
-        <label class="mini">
-          HEADLINE
-          <input id="headline" class="input" placeholder="Titular…" autocomplete="off" />
+        <label class="mini" style="display:block;">
+          Plantilla
+          <textarea id="template" class="textarea" rows="7" spellcheck="false"></textarea>
         </label>
 
-        <label class="mini" style="margin-top:10px;">
-          SOURCE_URL
-          <input id="sourceUrl" class="input" placeholder="https://…" autocomplete="off" />
+        <div id="warn" class="warn hidden" role="alert"></div>
+
+        <label class="mini" style="display:block;">
+          Preview
+          <pre id="preview" class="preview"></pre>
         </label>
 
-        <div class="hr" role="separator" aria-hidden="true"></div>
-
-        <label class="mini">
-          TEMPLATE
-          <textarea id="template" class="textarea" rows="8" spellcheck="false" aria-label="Plantilla del tweet"></textarea>
-        </label>
-
-        <div class="hr" role="separator" aria-hidden="true"></div>
-
-        <div class="row between" aria-label="Resumen">
-          <div class="mini">X-count: <b id="charCount">0</b>/280</div>
-          <div class="mini muted">Tip: “Usar” carga titular+link y marca como usado.</div>
+        <div class="row wrap" aria-label="Acciones tweet">
+          <button id="btnTrim" class="btn" type="button">Ajustar</button>
+          <button id="btnGenTags" class="btn" type="button">Tags</button>
+          <button id="btnCopyUrl" class="btn" type="button">Copiar link</button>
+          <button id="btnX" class="btn primary" type="button">Abrir X</button>
+          <button id="btnCopy" class="btn" type="button">Copiar</button>
+          <button id="btnResetTemplate" class="btn danger" type="button">Reset</button>
         </div>
-
-        <pre id="preview" class="preview" aria-label="Vista previa del tweet" tabindex="0"></pre>
-        <div id="warn" class="warn hidden" role="alert" aria-live="polite"></div>
       </div>
     </section>
 
-    <!-- RIGHT: NEWS -->
+    <!-- RIGHT PANEL -->
     <section class="panel right" aria-label="Noticias">
       <div class="panelHead">
         <h2>Noticias</h2>
 
-        <div class="row wrap" aria-label="Filtros principales">
-          <label class="mini" title="Tiempo mínimo para marcar como LISTO (evita publicaciones demasiado tempranas)">
+        <div class="row wrap" aria-label="Filtros">
+          <label class="mini" title="Ignora noticias demasiado recientes (minutos) para que dé tiempo a resolver/OG/traducción">
             Delay
             <input id="delayMin" class="input" type="number" min="0" max="120" step="1" value="10" style="width:90px;" />
+            min
           </label>
 
-          <label class="mini checkbox" title="Muestra solo items que ya cumplieron el delay">
+          <label class="mini checkbox" title="Solo muestra items marcados como LISTO">
             <input id="optOnlyReady" type="checkbox" />
             Solo LISTO
           </label>
 
-          <label class="mini checkbox" title="Traduce títulos a ES (solo visibles) si hace falta">
+          <label class="mini checkbox" title="Prioriza español (modo por defecto)">
             <input id="optOnlySpanish" type="checkbox" checked />
-            ES (auto)
+            ES
           </label>
 
           <label class="mini">
@@ -488,55 +329,32 @@
           </label>
         </div>
 
-        <div class="row wrap" style="margin-top:10px;" aria-label="Acciones de feeds">
-          <button id="btnAddFeed" class="btn primary" type="button">+ Añadir</button>
+        <div class="row wrap" style="margin-top:10px;">
+          <button id="btnAddFeed" class="btn primary" type="button">Añadir</button>
           <button id="btnExportFeeds" class="btn" type="button">Exportar</button>
           <button id="btnImportFeeds" class="btn" type="button">Importar</button>
-          <button id="btnRestoreDefaultFeeds" class="btn" type="button">Defaults</button>
+          <button id="btnRestoreDefaultFeeds" class="btn danger" type="button">Restaurar</button>
+          <button id="btnSaveFeeds" class="btn" type="button">Guardar</button>
         </div>
 
-        <textarea
-          id="feedsJson"
-          class="textarea"
-          rows="6"
-          placeholder="Export/Import JSON aquí…"
-          style="margin-top:10px;"
-          spellcheck="false"
-          aria-label="JSON de feeds"
-        ></textarea>
+        <div id="feedList" class="feedList" role="list" aria-label="Lista de feeds"></div>
 
-        <div class="hr" role="separator" aria-hidden="true"></div>
-        <div id="feedList" class="feedList" aria-label="Feeds actuales"></div>
-      </div>
-
-      <div class="modalFoot">
-        <div class="mini muted">Activa/desactiva feeds y guarda. Los cambios se aplican al cerrar.</div>
-        <button id="btnSaveFeeds" class="btn primary" type="button">Guardar</button>
+        <label class="mini" style="display:block; margin-top:10px;">
+          JSON (opcional)
+          <textarea id="feedsJson" class="textarea" rows="7" spellcheck="false"></textarea>
+        </label>
       </div>
     </div>
   </div>
 
-  <!-- Sync aria-hidden del modal según .hidden (no interfiere con app.js) -->
+  <script defer src="./app.js"></script>
   <script>
-    (function(){
-      try{
-        var modal = document.getElementById("modal");
-        if(!modal) return;
-
-        function sync(){
-          var hidden = modal.classList.contains("hidden");
-          modal.setAttribute("aria-hidden", hidden ? "true" : "false");
-        }
-        sync();
-
-        if ("MutationObserver" in window) {
-          var mo = new MutationObserver(sync);
-          mo.observe(modal, { attributes:true, attributeFilter:["class"] });
-        }
-      }catch(e){}
-    })();
+    // SW (best-effort, no rompe si falla)
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      });
+    }
   </script>
-
-  <script src="./app.js"></script>
 </body>
 </html>
