@@ -1,97 +1,104 @@
-<!-- index.html — TNP v4.1.1 (NEWSROOM PRO) -->
 <!doctype html>
-<html lang="es" data-theme="dark">
+<html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
-  <meta name="theme-color" content="#060812" />
-  <meta name="description" content="News → Tweet Template Panel (TNP). RSS directos + plantilla." />
+  <meta name="theme-color" content="#070A12" />
+  <meta name="description" content="Panel PRO para extraer noticias (RSS/Atom), resolver link original, imágenes y generar plantilla lista para X." />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./assets/icons/favicon-32.png" sizes="32x32" />
-  <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon-180.png" />
+  <link rel="icon" href="./assets/icons/icon-192.png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon-180.png" sizes="180x180" />
+
+  <link rel="preconnect" href="https://api.allorigins.win" crossorigin />
+  <link rel="preconnect" href="https://api.codetabs.com" crossorigin />
+  <link rel="preconnect" href="https://thingproxy.freeboard.io" crossorigin />
+  <link rel="preconnect" href="https://r.jina.ai" crossorigin />
+
+  <link rel="preload" href="./styles.css" as="style" />
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- acelera OG (best-effort) -->
-  <link rel="preconnect" href="https://r.jina.ai" crossorigin>
-  <title>TNP — News → Tweet Template Panel</title>
+  <title>News → Tweet Template Panel</title>
 </head>
 
 <body>
+  <a class="skipLink" href="#main">Saltar a contenido</a>
+
   <!-- TOPBAR -->
   <header class="topbar" id="topbar">
     <div class="topbar__left">
       <div class="brand">
-        <div class="brand__dot"></div>
+        <div class="brand__logo" aria-hidden="true">🛰️</div>
         <div class="brand__txt">
-          <div class="brand__name">TNP</div>
-          <div class="brand__sub">News → Tweet Template Panel</div>
+          <div class="brand__title">News → Tweet Panel</div>
+          <div class="brand__sub">PRO · RSS directos · Links reales · Imágenes</div>
         </div>
+      </div>
+
+      <div class="topbar__controls">
+        <label class="field field--inline">
+          <span class="field__label">Buscar</span>
+          <input id="searchBox" class="input input--sm" type="search" placeholder="Buscar titular / medio…" />
+        </label>
+
+        <button id="btnRefresh" class="btn btn--primary btn--sm" type="button" title="Refrescar (Shift+click = force + reset backoff)">
+          Refrescar
+        </button>
+        <button id="btnFeeds" class="btn btn--sm" type="button">Feeds</button>
+        <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
+        <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
       </div>
     </div>
 
     <div class="topbar__right">
-      <label class="field field--inline">
-        <span class="field__label">Buscar</span>
-        <input id="searchBox" class="input input--sm" type="text" placeholder="Filtra por palabras…" />
-      </label>
-
-      <button id="btnRefresh" class="btn btn--primary btn--sm" type="button" title="Refrescar (Shift+click = force)">
-        Refrescar
-      </button>
-      <button id="btnFeeds" class="btn btn--sm" type="button">Feeds</button>
-      <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
-      <button id="btnHardReset" class="btn btn--sm btn--danger" type="button" title="Borra storage + caches + SW">
-        Reset
-      </button>
+      <div id="status" class="status">Listo</div>
     </div>
   </header>
 
   <!-- TICKER -->
-  <section class="ticker" id="ticker" aria-label="Ticker">
-    <div class="ticker__rail">
-      <div class="ticker__label">ÚLTIMA HORA</div>
-      <div class="ticker__line">
-        <div id="tnpTickerInner" class="ticker__inner">Cargando…</div>
-      </div>
-      <div id="tnpTrendsPop" class="ticker__pop" aria-hidden="true"></div>
+  <div class="ticker" id="ticker" aria-label="Ticker de noticias">
+    <div class="ticker__label">ÚLTIMA HORA</div>
+    <div class="ticker__track">
+      <div id="tnpTickerInner" class="ticker__inner">Cargando…</div>
     </div>
-  </section>
+    <div id="tnpTrendsPop" class="ticker__pop" aria-hidden="true"></div>
+  </div>
 
-  <!-- MAIN -->
-  <main id="main" class="wrap">
-    <div class="layout">
+  <main id="main" class="layout">
+    <div class="grid">
       <!-- LEFT: COMPOSER -->
-      <section class="panel sticky">
+      <section class="panel">
         <div class="panel__head">
           <div>
-            <div class="panel__title">Generador de tweet</div>
-            <div class="panel__sub">Selecciona una noticia y se rellena tu plantilla.</div>
+            <div class="panel__title">Plantilla</div>
+            <div class="panel__sub">Click en una noticia → se rellena y queda lista para copiar / abrir en X.</div>
           </div>
-          <div id="status" class="status">Cargando…</div>
         </div>
 
         <div class="panel__body">
           <div class="grid2">
             <label class="field">
-              <span class="field__label">🔴 En vivo (URL)</span>
-              <input id="liveUrl" class="input" value="https://twitch.com/globaleyetv" />
+              <span class="field__label">🔴 En vivo (tu link)</span>
+              <input id="liveUrl" class="input" type="url" placeholder="https://twitch.tv/globaleyetv" />
             </label>
 
             <label class="field">
               <span class="field__label">Hashtags</span>
-              <input id="hashtags" class="input" placeholder="#ENVIVO #ÚltimaHora …" />
+              <input id="hashtags" class="input" type="text" placeholder="#ÚltimaHora #España …" />
             </label>
           </div>
 
           <label class="field">
             <span class="field__label">Titular</span>
-            <input id="headline" class="input" placeholder="🚨 ÚLTIMA HORA: …" />
+            <input id="headline" class="input" type="text" placeholder="Se rellena al elegir noticia…" />
           </label>
 
           <label class="field">
-            <span class="field__label">Fuente (URL real)</span>
-            <input id="sourceUrl" class="input" placeholder="https://…" />
+            <span class="field__label">URL de la fuente</span>
+            <input id="sourceUrl" class="input" type="url" placeholder="https://…" />
           </label>
 
           <div class="row row--wrap">
@@ -103,33 +110,33 @@
               <input id="optIncludeSource" type="checkbox" checked />
               <span>Incluir Fuente</span>
             </label>
-
-            <div class="spacer"></div>
-
-            <button id="btnGenTags" class="btn btn--sm" type="button">Auto-tags</button>
-            <button id="btnResetTemplate" class="btn btn--sm" type="button">Reset plantilla</button>
           </div>
 
           <label class="field">
-            <span class="field__label">Plantilla base</span>
-            <textarea id="template" class="input input--area mono" rows="7" spellcheck="false"></textarea>
+            <span class="field__label">Template</span>
+            <textarea id="template" class="input input--area mono" rows="8"></textarea>
           </label>
 
-          <div class="panel__split">
-            <div class="panel__title panel__title--sm">Preview</div>
-            <div class="panel__meta">
-              <span id="charCount" class="badge">0</span>
-              <button id="btnTrim" class="btn btn--sm" type="button">Ajustar</button>
-            </div>
+          <div class="row row--wrap">
+            <button id="btnTrim" class="btn btn--sm" type="button">Recortar titular</button>
+            <button id="btnGenTags" class="btn btn--sm" type="button">Generar hashtags</button>
+            <button id="btnCopyUrl" class="btn btn--sm" type="button">Copiar URL</button>
+
+            <div class="spacer"></div>
+
+            <button id="btnCopy" class="btn btn--primary btn--sm" type="button">Copiar tweet</button>
+            <button id="btnX" class="btn btn--x btn--sm" type="button">Abrir en X</button>
+            <button id="btnResetTemplate" class="btn btn--sm" type="button">Reset template</button>
           </div>
 
-          <textarea id="preview" class="preview mono" rows="7" readonly></textarea>
-          <div id="warn" class="warn" hidden></div>
+          <div class="warn" id="warn"></div>
 
-          <div class="row row--wrap">
-            <button id="btnCopyUrl" class="btn btn--sm" type="button">Copiar URL</button>
-            <button id="btnCopy" class="btn btn--primary" type="button">Copiar Tweet</button>
-            <button id="btnX" class="btn btn--x" type="button">Abrir en X</button>
+          <div class="previewWrap">
+            <div class="previewTitle">
+              Preview
+              <span class="mini muted" id="charCount"></span>
+            </div>
+            <pre id="preview" class="preview"></pre>
           </div>
 
           <hr class="hr" />
@@ -178,7 +185,7 @@
             </label>
 
             <label class="field field--inline">
-              <span class="field__label">Original</span>
+              <span class="field__label">URL original</span>
               <input id="optShowOriginal" type="checkbox" checked />
             </label>
 
@@ -188,23 +195,21 @@
             </label>
 
             <label class="field field--inline">
-              <span class="field__label">Solo ES</span>
-              <input id="optOnlySpanish" type="checkbox" checked />
-            </label>
-
-            <label class="field field--inline">
-              <span class="field__label">Solo “listos”</span>
+              <span class="field__label">Solo “LISTO”</span>
               <input id="optOnlyReady" type="checkbox" />
             </label>
 
             <label class="field field--inline">
-              <span class="field__label">Categoría</span>
+              <span class="field__label">ES prioridad</span>
+              <input id="optOnlySpanish" type="checkbox" checked />
+            </label>
+
+            <label class="field field--inline">
+              <span class="field__label">Cat</span>
               <select id="catFilter" class="input input--sm">
                 <option value="all" selected>Todo</option>
                 <option value="spain">España</option>
                 <option value="world">Mundo</option>
-                <option value="politics">Política</option>
-                <option value="war">Guerra</option>
                 <option value="economy">Economía</option>
                 <option value="tech">Tech</option>
                 <option value="crime">Sucesos</option>
@@ -253,7 +258,6 @@
   </main>
 
   <!-- MODAL FEEDS -->
-  <!-- OJO: lleva class hidden + atributo hidden, para que SIEMPRE se pueda ocultar -->
   <div id="modal" class="modal hidden" hidden aria-hidden="true" role="dialog" aria-label="Gestión de feeds">
     <div class="modal__panel">
       <div class="modal__head">
@@ -267,7 +271,7 @@
       <div class="modal__body">
         <div class="row row--3">
           <input id="newFeedName" class="input input--sm" placeholder="Nombre" />
-          <input id="newFeedUrl" class="input input--sm" placeholder="URL RSS/Atom/JSON" />
+          <input id="newFeedUrl" class="input input--sm" placeholder="URL RSS/Atom" />
           <button id="btnAddFeed" class="btn btn--primary btn--sm" type="button">Añadir</button>
         </div>
 
