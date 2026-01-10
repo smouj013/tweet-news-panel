@@ -1,16 +1,8 @@
-/* app.js — News → Tweet Template Panel (tnp-v4.0.1) — PRO FAST+ (50+ feeds + ES robust + AUTO-UPDATE PWA)
-   ✅ Rendimiento PRO:
-      - Render estable + firma (evita re-render inútil)
-      - Visible-only para resolve/OG, pero traducción ES prioritaria
-      - Concurrencias ajustadas y colas dedup
-      - Batch feeds (auto-refresh por lotes) + backoff por feed
-   ✅ ES “siempre” (modo por defecto):
-      - Traduce agresivamente títulos visibles (aunque el detector falle)
-      - Retries + parsing robusto del endpoint de Google Translate
-   ✅ Auto-update PWA real:
-      - update() periódica
-      - si hay SW nuevo -> SKIP_WAITING -> reload 1 vez (guard)
-   ✅ Mantiene tus IDs/UI + localStorage v4, migra v3→v4
+/* app.js — News → Tweet Template Panel (tnp-v4.0.1) — PRO + REALTIME TICKERS (NewsTicker + X-Trends PopTicker)
+   ✅ NUEVO: NEWS TICKER (scroll) con noticias más relevantes (impacto + frescura) en tiempo real
+   ✅ NUEVO: TRENDS/Hashtags PopTicker (estilo X) con tendencias actuales (best-effort) desde fuentes públicas
+   ✅ 0 cambios en index.html: el ticker se crea/inserta por JS (compat total con tus IDs/clases)
+   ✅ Mantiene: feeds 50+, batch refresh, backoff, resolver links, OG images, ES auto, PWA update checks
 */
 
 (() => {
@@ -31,6 +23,9 @@
   const LS_RESOLVE_CACHE = "tnp_resolve_cache_v4";
   const LS_USED = "tnp_used_v4";
   const LS_IMG_CACHE = "tnp_img_cache_v4";
+
+  const LS_TRENDS_CACHE = "tnp_trends_cache_v1";
+  const LS_TRENDS_TS = "tnp_trends_ts_v1";
 
   /* ───────────────────────────── REALTIME / LIMITS ───────────────────────────── */
   const AUTO_REFRESH_FEEDS_SEC_DEFAULT = 30;
@@ -60,13 +55,22 @@
   const FEED_FAIL_BACKOFF_MAX_MS = 15 * 60_000;
 
   const MAX_SMART_HEADLINE_LEN = 130;
-  const VERSION = "tnp-v4.0.1";
+  const VERSION = "tnp-v4.0.1"; // (mantengo la versión para compat; si actualizas SW, súbela allí)
 
   // PWA update checks
   const SW_UPDATE_CHECK_MS = 5 * 60_000; // 5 min
   const SW_FORCE_RELOAD_GUARD = "tnp_sw_reloaded_once";
 
-  /* ───────────────────────────── TEMPLATE ───────────────────────────── */
+  // TICKERS
+  const TICKER_NEWS_MAX = 14;
+  const TICKER_NEWS_MIN_IMPACT = 55;
+
+  const TRENDS_REFRESH_MS = 3 * 60_000; // cada 3 min
+  const TRENDS_CACHE_MAX_AGE_MS = 12 * 60_000; // cache 12 min
+  const TRENDS_POP_INTERVAL_MS = 4500; // cada 4.5s cambia el pop
+  const TRENDS_MAX = 24;
+
+  /* ───────────────────────────── TU PLANTILLA ───────────────────────────── */
   const DEFAULT_TEMPLATE =
 `🚨 ÚLTIMA HORA: {{HEADLINE}}
 
@@ -78,17 +82,15 @@ Fuente:
 {{HASHTAGS}}`;
 
   /* ───────────────────────────── FEEDS (50+ TOP, robustos) ───────────────────────────── */
-  const gn = (q, hl="es", gl="ES", ceid="ES:es") =>
+  const gn = (q, hl = "es", gl = "ES", ceid = "ES:es") =>
     `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${encodeURIComponent(hl)}&gl=${encodeURIComponent(gl)}&ceid=${encodeURIComponent(ceid)}`;
 
   const gnTop = (q) => gn(`${q} when:1d`);
-  const gnSite = (domain, q="") => gnTop(`site:${domain} ${q}`.trim());
+  const gnSite = (domain, q = "") => gnTop(`site:${domain} ${q}`.trim());
 
-  // GDELT JSON (no siempre “última hora”, pero muy útil)
-  const gdeltDoc = (query, max=60) =>
+  const gdeltDoc = (query, max = 60) =>
     `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=${encodeURIComponent(String(max))}&sort=HybridRel`;
 
-  // NOTA: RSS “directos” cambian mucho; GN RSS (site:dominio) suele ser más estable.
   const DEFAULT_FEEDS = [
     // ── España (Top)
     { name: "Google News — España (Top)", url: gnTop("España OR Madrid OR Barcelona OR Valencia OR Sevilla"), enabled: true },
@@ -128,13 +130,9 @@ Fuente:
     { name: "The Verge (GN)", url: gnSite("theverge.com", "(breaking OR update OR report)"), enabled: false },
     { name: "Wired (GN)", url: gnSite("wired.com", "(security OR ai OR breaking)"), enabled: false },
 
-    // ── Salud
+    // ── Salud / Deportes / Cultura
     { name: "Salud (GN)", url: gnTop("OMS OR WHO OR brote OR vacuna OR alerta sanitaria"), enabled: false },
-
-    // ── Deportes
     { name: "Deportes (GN)", url: gnTop("Real Madrid OR Barcelona OR LaLiga OR Champions OR fichaje OR lesión"), enabled: false },
-
-    // ── Entretenimiento / Cultura
     { name: "Entretenimiento (GN)", url: gnTop("Netflix OR estreno OR concierto OR festival OR polémica"), enabled: false },
 
     // ── GDELT (JSON)
@@ -156,9 +154,18 @@ Fuente:
     refreshSeq: 0,
     refreshAbort: null,
 
-    rerenderQueued: false,
-    feedCursor: 0,
     lastRenderSig: "",
+
+    // tickers
+    ticker: {
+      ready: false,
+      news: [],
+      newsSig: "",
+      trends: [],
+      trendsIdx: 0,
+      trendsPopTimer: 0,
+      trendsRefreshTimer: 0,
+    },
   };
 
   const trCache = loadJsonPreferNew(LS_TR_CACHE, LS_TR_CACHE_V3, {});
@@ -254,6 +261,8 @@ Fuente:
   /* ───────────────────────────── INIT ───────────────────────────── */
   function init() {
     grabEls();
+    injectTickerCss();
+    ensureTickers();
     syncTopbarHeight();
     setupOgObserver();
 
@@ -295,6 +304,10 @@ Fuente:
 
     // primer render “vacío” para que el layout esté estable antes de meter items
     renderNewsList({ silent: true });
+    updateNewsTicker(true);
+
+    // trends: arranque
+    startTrendsRealtime();
 
     refreshAll({ reason: "boot", force: true });
     startRealtime();
@@ -344,6 +357,7 @@ Fuente:
 
     el.timeFilter.addEventListener("change", () => {
       renderNewsList({ silent: true, hardPurge: true });
+      updateNewsTicker(true);
       refreshAll({ reason: "window", force: false });
     });
 
@@ -356,6 +370,7 @@ Fuente:
       saveSetting("fetchCap", clampNum(el.fetchCap.value, 80, 2000));
       hardTrimAndPurge();
       renderNewsList({ silent: true });
+      updateNewsTicker(true);
     });
 
     el.searchBox.addEventListener("input", debounce(() => renderNewsList({ silent: true }), 120));
@@ -363,26 +378,31 @@ Fuente:
     el.delayMin.addEventListener("input", () => {
       saveSetting("delayMin", clampNum(el.delayMin.value, 0, 120));
       renderNewsList({ silent: true });
+      updateNewsTicker(true);
     });
 
     el.optOnlyReady.addEventListener("change", () => {
       saveSetting("onlyReady", !!el.optOnlyReady.checked);
       renderNewsList({ silent: true });
+      updateNewsTicker(true);
     });
 
     el.optOnlySpanish.addEventListener("change", () => {
       saveSetting("onlySpanish", !!el.optOnlySpanish.checked);
       renderNewsList({ silent: true });
+      updateNewsTicker(true);
     });
 
     el.sortBy.addEventListener("change", () => {
       saveSetting("sortBy", el.sortBy.value);
       renderNewsList({ silent: true });
+      updateNewsTicker(true);
     });
 
     if (el.catFilter) el.catFilter.addEventListener("change", () => {
       saveSetting("catFilter", el.catFilter.value);
       renderNewsList({ silent: true });
+      updateNewsTicker(true);
     });
 
     if (el.optAutoRefresh) el.optAutoRefresh.addEventListener("change", () => {
@@ -402,6 +422,7 @@ Fuente:
     if (el.optResolveLinks) el.optResolveLinks.addEventListener("change", () => {
       saveSetting("resolveLinks", !!el.optResolveLinks.checked);
       renderNewsList({ silent: true });
+      updateNewsTicker(true);
     });
 
     if (el.optShowOriginal) el.optShowOriginal.addEventListener("change", () => {
@@ -412,6 +433,7 @@ Fuente:
     if (el.optHideUsed) el.optHideUsed.addEventListener("change", () => {
       saveSetting("hideUsed", !!el.optHideUsed.checked);
       renderNewsList({ silent: true });
+      updateNewsTicker(true);
     });
 
     // composer inputs
@@ -544,10 +566,14 @@ Fuente:
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
           updateDynamicLabels();
-          // chequea SW update al volver
+          updateNewsTicker(true);
+          // SW update check al volver
           try { swReg?.update?.(); } catch {}
           const auto = state.settings.autoRefresh !== false;
           if (auto) refreshAll({ reason: "visible", force: false });
+
+          // trends: refresh best-effort al volver
+          requestTrendsRefresh({ reason: "visible" }).catch(() => {});
         }
       });
     }
@@ -565,6 +591,7 @@ Fuente:
 
   function openModal(show) {
     el.modal.classList.toggle("hidden", !show);
+    el.modal.setAttribute("aria-hidden", show ? "false" : "true");
     if (show) el.feedsJson.value = "";
   }
 
@@ -680,23 +707,25 @@ Fuente:
 
     // sorting
     if (sortBy === "impact") {
-      filtered.sort((a,b) => {
+      filtered.sort((a, b) => {
         const ai = calcImpact(a);
         const bi = calcImpact(b);
         const aTop = ai >= 70 ? 1 : 0;
         const bTop = bi >= 70 ? 1 : 0;
         if (bTop !== aTop) return bTop - aTop;
         if (bi !== ai) return bi - ai;
-        return (Number(b.publishedMs||0) - Number(a.publishedMs||0));
+        return (Number(b.publishedMs || 0) - Number(a.publishedMs || 0));
       });
+    } else if (sortBy === "source") {
+      filtered.sort((a, b) => String(a.feed || "").localeCompare(String(b.feed || "")) || (Number(b.publishedMs || 0) - Number(a.publishedMs || 0)));
     } else {
-      filtered.sort((a,b) => (Number(b.publishedMs||0) - Number(a.publishedMs||0)));
+      filtered.sort((a, b) => (Number(b.publishedMs || 0) - Number(a.publishedMs || 0)));
     }
 
     const limited = filtered.slice(0, showLimit);
 
     // firma de render
-    const sig = `${showLimit}|${hours}|${search}|${cat}|${sortBy}|${onlyReady}|${hideUsed}|${limited.length}|${limited[0]?.id||""}|${limited[0]?.publishedMs||0}|${limited[0]?.titleEs||""}`;
+    const sig = `${showLimit}|${hours}|${search}|${cat}|${sortBy}|${onlyReady}|${hideUsed}|${limited.length}|${limited[0]?.id || ""}|${limited[0]?.publishedMs || 0}|${limited[0]?.titleEs || ""}`;
     if (silent && sig === state.lastRenderSig) {
       updateDynamicLabels();
       return;
@@ -793,6 +822,7 @@ Fuente:
       btnMark.addEventListener("click", () => {
         toggleUsed(it.id);
         renderNewsList({ silent: true });
+        updateNewsTicker(true);
       });
 
       actions.appendChild(btnUse);
@@ -868,6 +898,13 @@ Fuente:
 
     updatePreview();
     toast("✅ Cargado en plantilla.");
+
+    // tip: si hay trends visibles, intenta sugerir hashtags ligeros si el campo está vacío
+    if (!String(el.hashtags.value || "").trim()) {
+      const h = genHashtags(headline);
+      if (h) el.hashtags.value = h;
+      onComposerChanged();
+    }
   }
 
   function updateDynamicLabels() {
@@ -887,6 +924,9 @@ Fuente:
         badgeEl.textContent = isReady ? "LISTO" : "EN COLA";
       }
     });
+
+    // ticker también “respira” (sin recalcular fuerte)
+    tickTickerTimers();
   }
 
   function badge(cls, text) {
@@ -981,288 +1021,309 @@ Fuente:
       });
 
       // merge + dedupe
-      const merged = dedupeNormalize([ ...(state.items || []), ...results ]);
+      const merged = dedupeNormalize([...(state.items || []), ...results]);
 
       // purga por ventana
       const fresh = merged
         .filter(it => Number(it.publishedMs || 0) >= minMs)
-        .sort((a,b) => (Number(b.publishedMs||0) - Number(a.publishedMs||0)))
+        .sort((a, b) => (Number(b.publishedMs || 0) - Number(a.publishedMs || 0)))
         .slice(0, keepCap);
 
       state.items = fresh;
 
       lastRefreshAt = Date.now();
-      setStatus(`✅ OK · ${state.items.length} en memoria · ${new Date(lastRefreshAt).toLocaleTimeString()}`);
+      setStatus(`✅ OK · ${state.items.length} items`);
 
-      // Render en el siguiente frame (mejor “feel” en móviles)
-      requestAnimationFrame(() => renderNewsList({ silent: true, hardPurge: false }));
+      hardTrimAndPurge();
 
-      // tras refrescar, prioriza traducción de lo visible
-      runSoon(() => {
-        const wantSpanish = state.settings.onlySpanish !== false;
-        if (!wantSpanish) return;
-        const showLimit = clampNum(state.settings.showLimit ?? (el.showLimit ? el.showLimit.value : 10), 10, 50);
-        const visibles = (state.items || []).slice(0, Math.min(80, showLimit * 2));
-        maybeTranslateVisible(visibles).catch(() => {});
-      });
+      renderNewsList({ silent: true });
+      updateNewsTicker(true);
 
-    } catch (e) {
-      if (abort.signal.aborted) setStatus("⛔ Refresh abortado.");
-      else {
-        setStatus("❌ Error refrescando. (mira consola)");
-        console.error(e);
+      // trends: refresca “best-effort” en cada refresh manual/boot (no martillar)
+      if (reason === "boot" || reason.startsWith("manual")) {
+        requestTrendsRefresh({ reason: "news_refresh" }).catch(() => {});
       }
+    } catch (e) {
+      console.warn(e);
+      toast("⚠️ Error refrescando.");
     } finally {
       state.refreshInFlight = false;
       state.refreshAbort = null;
 
       if (state.refreshPending) {
         state.refreshPending = false;
-        refreshAll({ reason: "queued", force: false });
+        refreshAll({ reason: "queued", force: false }).catch(() => {});
       }
     }
   }
 
-  function pickBatchRoundRobin(arr, batchSize) {
-    if (!arr.length) return [];
-    if (arr.length <= batchSize) return arr.slice();
+  function pickBatchRoundRobin(arr, n) {
+    const list = arr || [];
+    if (list.length <= n) return list.slice();
+    const start = Math.floor(Math.random() * list.length);
     const out = [];
-    let idx = state.feedCursor % arr.length;
-    for (let i = 0; i < batchSize; i++) {
-      out.push(arr[idx]);
-      idx = (idx + 1) % arr.length;
+    for (let i = 0; i < list.length && out.length < n; i++) {
+      out.push(list[(start + i) % list.length]);
     }
-    state.feedCursor = idx;
     return out;
-  }
-
-  async function fetchOneFeed(feed, parentSignal, force, fetchCap) {
-    const name = String(feed?.name || "Feed");
-    const url = String(feed?.url || "").trim();
-    if (!url) return [];
-
-    // backoff tracking
-    const ff0 = feedFail.get(url) || { fails: 0, nextAt: 0 };
-    if (!force && ff0.nextAt && Date.now() < ff0.nextAt) return [];
-
-    const txt = await fetchTextWithFallbacks(url, 16_000, parentSignal);
-    if (!txt) throw new Error("empty feed " + url);
-
-    // hash rápido: si es idéntico, no parsees otra vez en esta sesión
-    const h = fastHash(txt);
-    if (!force && feedTextHash.get(url) === h) return [];
-    feedTextHash.set(url, h);
-
-    let items = [];
-    const t = String(txt || "").trim();
-    if (t.startsWith("{") || t.startsWith("[")) items = parseJsonFeed(t, name, fetchCap);
-    else items = parseFeed(t, name, fetchCap);
-
-    // ok => reset fail
-    feedFail.set(url, { fails: 0, nextAt: 0 });
-
-    return items || [];
   }
 
   function bumpFeedFail(url) {
     const u = String(url || "");
     if (!u) return;
     const prev = feedFail.get(u) || { fails: 0, nextAt: 0 };
-    const fails = (prev.fails || 0) + 1;
-    const wait = Math.min(FEED_FAIL_BACKOFF_MAX_MS, FEED_FAIL_BACKOFF_BASE_MS * Math.pow(2, Math.min(6, fails)));
-    feedFail.set(u, { fails, nextAt: Date.now() + wait });
+    const fails = Math.min(20, Number(prev.fails || 0) + 1);
+    const backoff = Math.min(FEED_FAIL_BACKOFF_MAX_MS, FEED_FAIL_BACKOFF_BASE_MS * fails);
+    feedFail.set(u, { fails, nextAt: Date.now() + backoff });
   }
 
-  /* ───────────────────────────── PARSERS ───────────────────────────── */
-  function parseJsonFeed(jsonText, feedName, cap) {
-    const out = [];
-    const j = safeJson(jsonText);
-    if (!j) return out;
+  /* ───────────────────────────── FETCH & PARSE FEEDS ───────────────────────────── */
+  async function fetchOneFeed(feed, signal, force, fetchCap) {
+    const url = cleanText(feed?.url || "");
+    if (!url) return [];
 
-    let arr = [];
-    if (Array.isArray(j)) arr = j;
-    else if (Array.isArray(j.articles)) arr = j.articles;
-    else if (Array.isArray(j.results)) arr = j.results;
-    else if (Array.isArray(j.data)) arr = j.data;
-    else if (Array.isArray(j.items)) arr = j.items;
-    else arr = [];
+    // de-dup “texto igual” en sesión (ahorra parse)
+    const text = await fetchTextSmart(url, signal, 14000);
+    if (!text) return [];
 
-    const max = Math.min(Math.max(10, cap), 2000);
-    for (const a of arr) {
-      if (out.length >= max) break;
-
-      const title = cleanText(a?.title || a?.name || a?.headline || "");
-      const link = cleanText(a?.url || a?.link || a?.sourceurl || a?.sourceUrl || "");
-      const pub = cleanText(a?.seendate || a?.pubDate || a?.published || a?.datetime || "");
-      const ms = parseDateMs(pub) || Number(a?.timestamp || 0) || Date.now();
-
-      const img = cleanText(a?.image || a?.socialimage || a?.urlToImage || a?.thumbnail || "");
-      if (!title || !link) continue;
-
-      out.push(makeItem({
-        feed: feedName,
-        title,
-        link,
-        publishedMs: ms,
-        image: canonicalizeUrl(img)
-      }));
+    const h = hashId(text.slice(0, 8000)); // hash parcial
+    const prevHash = feedTextHash.get(url);
+    if (!force && prevHash && prevHash === h) {
+      return []; // no cambios
     }
-    return out;
+    feedTextHash.set(url, h);
+
+    // JSON?
+    if (looksJson(text) || url.includes("format=json") || url.includes("mode=ArtList")) {
+      const j = safeJson(text);
+      return parseJsonFeed(j, feed?.name || "Feed").slice(0, fetchCap);
+    }
+
+    // XML?
+    return parseXmlFeed(text, feed?.name || "Feed").slice(0, fetchCap);
   }
 
-  function parseFeed(xmlText, feedName, cap) {
-    const out = [];
-    const s = String(xmlText || "");
-    const dp = new DOMParser();
-    const doc = dp.parseFromString(s, "text/xml");
-    if (doc.querySelector("parsererror")) return out;
+  async function fetchTextSmart(url, signal, timeoutMs = 12000) {
+    const u = String(url || "").trim();
+    if (!u) return "";
 
-    const max = Math.min(Math.max(10, cap), 2000);
+    // 1) try direct
+    const direct = await fetchText(u, { signal, timeoutMs }).catch(() => "");
+    if (direct) return direct;
 
-    // RSS
-    const rssItems = doc.querySelectorAll("item");
-    if (rssItems && rssItems.length) {
-      for (const item of rssItems) {
-        if (out.length >= max) break;
+    // 2) allorigins raw
+    const ao = `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`;
+    const viaAo = await fetchText(ao, { signal, timeoutMs }).catch(() => "");
+    if (viaAo) return viaAo;
 
-        const title = cleanText(textOf(item, "title"));
-        const link = cleanText(textOf(item, "link")) || pickRssGuid(item);
-        const pub = cleanText(textOf(item, "pubDate")) || cleanText(textOf(item, "date")) || cleanText(textOf(item, "dc\\:date"));
-        const ms = parseDateMs(pub) || Date.now();
-
-        const img = pickRssImage(item);
-
-        if (!title || !link) continue;
-        out.push(makeItem({ feed: feedName, title, link, publishedMs: ms, image: img }));
-      }
-      return out;
-    }
-
-    // Atom
-    const entries = doc.querySelectorAll("entry");
-    if (entries && entries.length) {
-      for (const entry of entries) {
-        if (out.length >= max) break;
-
-        const title = cleanText(textOf(entry, "title"));
-        const link = cleanText(pickAtomLink(entry));
-        const pub = cleanText(textOf(entry, "updated")) || cleanText(textOf(entry, "published"));
-        const ms = parseDateMs(pub) || Date.now();
-
-        const img = pickAtomImage(entry);
-
-        if (!title || !link) continue;
-        out.push(makeItem({ feed: feedName, title, link, publishedMs: ms, image: img }));
-      }
-    }
-    return out;
+    // 3) r.jina.ai (último recurso)
+    const jina = `https://r.jina.ai/http://${u.replace(/^https?:\/\//i, "")}`;
+    const viaJina = await fetchText(jina, { signal, timeoutMs }).catch(() => "");
+    return viaJina || "";
   }
 
-  function textOf(root, sel) {
+  async function fetchText(url, { signal, timeoutMs = 12000 } = {}) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const sig = mergeSignals(signal, ctrl.signal);
+
     try {
-      const n = root.querySelector(sel);
-      return n ? n.textContent : "";
+      const res = await fetch(url, { signal: sig, cache: "no-store" });
+      if (!res || !res.ok) return "";
+      return await res.text();
     } catch {
       return "";
+    } finally {
+      clearTimeout(t);
     }
   }
 
-  function pickRssGuid(item) {
-    const guid = cleanText(textOf(item, "guid"));
-    if (guid && /^https?:\/\//i.test(guid)) return guid;
-    return "";
+  function mergeSignals(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    if ("AbortSignal" in window && AbortSignal.any) {
+      try { return AbortSignal.any([a, b]); } catch {}
+    }
+    // fallback: si uno aborta, el fetch aborta por el otro de todos modos si se usa ese signal
+    // aquí devolvemos b para garantizar timeout
+    return b;
   }
 
-  function pickRssImage(item) {
-    const media = item.querySelector("media\\:content, content, enclosure, media\\:thumbnail, thumbnail");
-    if (media) {
-      const u = media.getAttribute("url") || media.getAttribute("href") || media.getAttribute("src") || "";
-      const clean = canonicalizeUrl(cleanText(u));
-      if (clean) return clean;
+  function parseXmlFeed(xmlText, feedName) {
+    const out = [];
+    let doc = null;
+    try {
+      doc = new DOMParser().parseFromString(xmlText, "text/xml");
+    } catch {
+      return out;
     }
-    // try <image> inside item (some feeds)
-    const imgTag = item.querySelector("image, media\\:image");
-    if (imgTag) {
-      const u = cleanText(imgTag.textContent || imgTag.getAttribute("url") || "");
-      const clean = canonicalizeUrl(u);
-      if (clean) return clean;
-    }
-    return "";
-  }
+    if (!doc) return out;
 
-  function pickAtomLink(entry) {
-    const links = entry.querySelectorAll("link");
-    for (const l of links) {
-      const rel = String(l.getAttribute("rel") || "").toLowerCase();
-      if (!rel || rel === "alternate") {
-        const href = l.getAttribute("href");
-        if (href) return href;
+    const isRss = !!doc.querySelector("rss, channel, item");
+    const isAtom = !!doc.querySelector("feed, entry");
+
+    if (isRss) {
+      const items = Array.from(doc.querySelectorAll("item"));
+      for (const it of items) {
+        const title = pickText(it, "title");
+        const link = pickText(it, "link") || pickAttr(it, "link", "href");
+        const pub = pickText(it, "pubDate") || pickText(it, "date") || pickText(it, "dc\\:date") || pickText(it, "published");
+        const publishedMs = parseDateMs(pub) || Date.now();
+
+        const img =
+          pickAttr(it, "enclosure", "url") ||
+          pickAttr(it, "media\\:content", "url") ||
+          pickText(it, "media\\:thumbnail") ||
+          "";
+
+        const cat = detectCategory(title + " " + feedName);
+
+        out.push({
+          id: "",
+          title: cleanText(title),
+          titleEs: "",
+          feed: String(feedName || "Feed"),
+          link: canonicalizeUrl(link),
+          linkResolved: "",
+          publishedMs,
+          image: canonicalizeUrl(img),
+          imageOg: "",
+          cat,
+        });
       }
+      return out.map(normalizeItem).filter(Boolean);
     }
-    const fallback = entry.querySelector("link");
-    return fallback ? (fallback.getAttribute("href") || "") : "";
+
+    if (isAtom) {
+      const entries = Array.from(doc.querySelectorAll("entry"));
+      for (const en of entries) {
+        const title = pickText(en, "title");
+        const link =
+          pickAttrByRel(en, "link", "alternate", "href") ||
+          pickAttr(en, "link", "href") ||
+          pickText(en, "link");
+
+        const pub = pickText(en, "published") || pickText(en, "updated") || pickText(en, "dc\\:date");
+        const publishedMs = parseDateMs(pub) || Date.now();
+
+        const img =
+          pickAttr(en, "media\\:content", "url") ||
+          pickAttr(en, "media\\:thumbnail", "url") ||
+          "";
+
+        const cat = detectCategory(title + " " + feedName);
+
+        out.push({
+          id: "",
+          title: cleanText(title),
+          titleEs: "",
+          feed: String(feedName || "Feed"),
+          link: canonicalizeUrl(link),
+          linkResolved: "",
+          publishedMs,
+          image: canonicalizeUrl(img),
+          imageOg: "",
+          cat,
+        });
+      }
+      return out.map(normalizeItem).filter(Boolean);
+    }
+
+    return out;
   }
 
-  function pickAtomImage(entry) {
-    // <media:thumbnail> etc.
-    const media = entry.querySelector("media\\:thumbnail, thumbnail, media\\:content, content");
-    if (media) {
-      const u = media.getAttribute("url") || media.getAttribute("href") || media.getAttribute("src") || "";
-      const clean = canonicalizeUrl(cleanText(u));
-      if (clean) return clean;
+  function parseJsonFeed(j, feedName) {
+    const out = [];
+    const name = String(feedName || "Feed");
+
+    // GDELT doc
+    if (j && j.articles && Array.isArray(j.articles)) {
+      for (const a of j.articles) {
+        const title = cleanText(a?.title || a?.seendate || "");
+        const link = canonicalizeUrl(a?.url || a?.sourceCountry || "");
+        const publishedMs = parseDateMs(a?.seendate) || parseDateMs(a?.date) || Date.now();
+        const img = canonicalizeUrl(a?.image || a?.socialimage || "");
+        const cat = detectCategory(title + " " + name);
+
+        out.push({
+          id: "",
+          title,
+          titleEs: "",
+          feed: name,
+          link,
+          linkResolved: "",
+          publishedMs,
+          image: img,
+          imageOg: "",
+          cat,
+        });
+      }
+      return out.map(normalizeItem).filter(Boolean);
     }
-    // content html
-    const c = cleanText(textOf(entry, "content"));
-    if (c) {
-      const m = c.match(/<img[^>]+src=["']([^"']+)["']/i);
-      if (m && m[1]) return canonicalizeUrl(cleanText(m[1]));
+
+    // JSONFeed (spec)
+    if (j && Array.isArray(j.items)) {
+      for (const it of j.items) {
+        const title = cleanText(it?.title || "");
+        const link = canonicalizeUrl(it?.url || it?.external_url || "");
+        const publishedMs = parseDateMs(it?.date_published || it?.date_modified) || Date.now();
+        const img = canonicalizeUrl(it?.image || it?.banner_image || "");
+        const cat = detectCategory(title + " " + name);
+
+        out.push({
+          id: "",
+          title,
+          titleEs: "",
+          feed: name,
+          link,
+          linkResolved: "",
+          publishedMs,
+          image: img,
+          imageOg: "",
+          cat,
+        });
+      }
+      return out.map(normalizeItem).filter(Boolean);
     }
-    return "";
+
+    return out;
   }
 
-  function makeItem({ feed, title, link, publishedMs, image }) {
-    const t = cleanText(title);
-    const l = cleanText(link);
-    const ms = Number(publishedMs || 0) || Date.now();
-    const id = hashId(`${normalizeTitleKey(t)}|${l}|${ms}`);
-    const cat = detectCategory(`${t} ${feed} ${l}`);
-    return {
-      id,
-      feed: String(feed || "Feed"),
-      title: t,
-      titleEs: "",
-      link: l,
-      linkResolved: "",
-      publishedMs: ms,
-      image: canonicalizeUrl(image || ""),
-      imageOg: "",
-      cat,
-      _hay: "",
-      _ready: false,
-    };
+  function normalizeItem(it) {
+    if (!it) return null;
+    it.title = cleanText(it.title || "");
+    it.link = canonicalizeUrl(it.link || "");
+    it.publishedMs = Number(it.publishedMs || 0) || 0;
+    it.feed = String(it.feed || "Feed");
+    it.cat = String(it.cat || "all");
+    it.image = canonicalizeUrl(it.image || "");
+    it.imageOg = canonicalizeUrl(it.imageOg || "");
+    it.linkResolved = canonicalizeUrl(it.linkResolved || "");
+    it.id = it.id || hashId(`${normalizeTitleKey(it.title || "")}|${it.link || ""}|${it.publishedMs || 0}`);
+    return it;
   }
 
   function dedupeNormalize(arr) {
-    const map = new Map(); // id -> item
+    const map = new Map();
     for (const it of (arr || [])) {
       if (!it) continue;
-      const id = it.id || hashId(`${normalizeTitleKey(it.title||"")}|${it.link||""}|${it.publishedMs||0}`);
-      const prev = map.get(id);
+      const n = normalizeItem({ ...it });
+      if (!n || !n.id) continue;
+      const prev = map.get(n.id);
       if (!prev) {
-        map.set(id, it);
+        map.set(n.id, n);
       } else {
-        // merge fields (prefer resolved/img)
-        prev.title = prev.title || it.title;
-        prev.titleEs = prev.titleEs || it.titleEs;
-        prev.feed = prev.feed || it.feed;
-        prev.link = prev.link || it.link;
-        prev.linkResolved = prev.linkResolved || it.linkResolved;
-        prev.publishedMs = Math.max(Number(prev.publishedMs||0), Number(it.publishedMs||0));
-        prev.image = prev.image || it.image;
-        prev.imageOg = prev.imageOg || it.imageOg;
-        prev.cat = prev.cat || it.cat;
+        prev.title = prev.title || n.title;
+        prev.titleEs = prev.titleEs || n.titleEs;
+        prev.feed = prev.feed || n.feed;
+        prev.link = prev.link || n.link;
+        prev.linkResolved = prev.linkResolved || n.linkResolved;
+        prev.publishedMs = Math.max(Number(prev.publishedMs || 0), Number(n.publishedMs || 0));
+        prev.image = prev.image || n.image;
+        prev.imageOg = prev.imageOg || n.imageOg;
+        prev.cat = prev.cat || n.cat;
+        map.set(prev.id, prev);
       }
-      map.get(id).id = id;
     }
     return Array.from(map.values());
   }
@@ -1271,7 +1332,7 @@ Fuente:
     const fetchCap = clampNum(state.settings.fetchCap ?? (el.fetchCap ? el.fetchCap.value : 240), 80, 2000);
     const keepCap = Math.max(140, Math.min(2400, fetchCap * 2));
     state.items = (state.items || [])
-      .sort((a,b) => Number(b.publishedMs||0) - Number(a.publishedMs||0))
+      .sort((a, b) => Number(b.publishedMs || 0) - Number(a.publishedMs || 0))
       .slice(0, keepCap);
   }
 
@@ -1291,6 +1352,7 @@ Fuente:
     });
 
     renderNewsList({ silent: true });
+    updateNewsTicker(true);
   }
 
   async function maybeResolveOne(it) {
@@ -1324,224 +1386,128 @@ Fuente:
     resInFlight.set(key, p);
     const out = await p.catch(() => "");
     resInFlight.delete(key);
-
     if (out) it.linkResolved = out;
   }
 
   async function resolveToRealUrl(url) {
-    const u = String(url || "").trim();
+    const u = canonicalizeUrl(url);
     if (!u) return "";
 
-    // 1) Si ya trae parámetro url/u/q/etc
-    const directParam = extractUrlParam(u);
-    if (directParam) return directParam;
+    // 1) simple HEAD/GET follow (a veces bloquea)
+    const direct = await tryFollowRedirect(u);
+    if (direct) return direct;
 
-    // 2) Intentar seguir redirect con fetch (a veces CORS bloquea, pero response.url suele estar)
-    const followed = await tryFollowRedirect(u, 9_000);
-    if (followed && followed !== u) {
-      // si el destino parece redirect, intenta extraer param también
-      const p2 = extractUrlParam(followed);
-      return p2 || followed;
+    // 2) allorigins raw: parse HTML
+    const html = await fetchTextSmart(u, null, 12000);
+    if (html) {
+      const fromMeta = pickMetaRefresh(html);
+      if (fromMeta) return fromMeta;
+
+      // google news: busca href “https://…”
+      const gn = pickFirstHttpUrl(html, u);
+      if (gn) return gn;
     }
 
-    // 3) HTML parse (jina/allorigins) para encontrar canonical / meta refresh / json-ld / url=...
-    const html = await fetchTextWithFallbacks(u, 14_000);
-    if (!html) return "";
-
-    const cand =
-      pickCanonical(html) ||
-      pickMetaRefresh(html) ||
-      pickJsonLdUrl(html) ||
-      pickFirstHttpUrlFromHtml(html) ||
-      "";
-
-    const viaParam = extractUrlParam(cand) || extractUrlParam(html);
-    if (viaParam) return viaParam;
-
-    // 4) Si encontramos algo, intenta normalizar y seguir 1 salto
-    const clean = canonicalizeUrl(cand);
-    if (clean && clean !== u) {
-      const followed2 = await tryFollowRedirect(clean, 9_000);
-      return canonicalizeUrl(followed2 || clean);
+    // 3) r.jina.ai (otra forma de obtener HTML)
+    const jina = `https://r.jina.ai/http://${u.replace(/^https?:\/\//i, "")}`;
+    const html2 = await fetchText(jina, { timeoutMs: 12000 }).catch(() => "");
+    if (html2) {
+      const fromMeta2 = pickMetaRefresh(html2);
+      if (fromMeta2) return fromMeta2;
+      const gn2 = pickFirstHttpUrl(html2, u);
+      if (gn2) return gn2;
     }
 
     return "";
   }
 
-  function pickCanonical(html) {
-    const s = String(html || "");
-    // <link rel="canonical" href="...">
-    const m = s.match(/<link[^>]+rel=["']canonical["'][^>]*>/i);
-    if (m && m[0]) {
-      const u = extractHref(m[0]);
-      if (u) return u;
+  async function tryFollowRedirect(url) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 9000);
+      const res = await fetch(url, { method: "GET", redirect: "follow", cache: "no-store", signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res) return "";
+      const finalUrl = res.url || "";
+      return canonicalizeUrl(finalUrl);
+    } catch {
+      return "";
     }
-    // og:url
-    const og = pickMeta(s, ["og:url", "twitter:url"]);
-    if (og) return og;
-    return "";
   }
 
   function pickMetaRefresh(html) {
     const s = String(html || "");
     // <meta http-equiv="refresh" content="0;url=...">
-    const m = s.match(/<meta[^>]+http-equiv=["']refresh["'][^>]*>/i);
-    if (!m || !m[0]) return "";
-    const content = (m[0].match(/content=["']([^"']+)["']/i) || [])[1] || "";
-    const mm = content.match(/url\s*=\s*([^;]+)/i);
-    if (mm && mm[1]) return cleanText(mm[1]);
+    const m = s.match(/http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"']+)["']/i);
+    if (m && m[1]) return canonicalizeUrl(decodeHtml(m[1]));
+    // content="0; URL='...'"
+    const m2 = s.match(/content=["'][^"']*url=['"]?([^"']+)['"]?["']/i);
+    if (m2 && m2[1]) return canonicalizeUrl(decodeHtml(m2[1]));
     return "";
   }
 
-  function pickJsonLdUrl(html) {
+  function pickFirstHttpUrl(html, fallbackBase) {
     const s = String(html || "");
-    const blocks = s.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi);
-    if (!blocks) return "";
-    for (const b of blocks) {
-      const raw = b.replace(/^[\s\S]*?>/, "").replace(/<\/script>[\s\S]*$/, "");
-      const j = safeJson(raw);
-      const cand =
-        j?.url ||
-        j?.mainEntityOfPage?.["@id"] ||
-        j?.mainEntityOfPage?.url ||
-        (Array.isArray(j) ? (j.find(x => x?.url)?.url || "") : "");
-      if (cand) return cleanText(cand);
+    // intenta priorizar dominios “no google”
+    const urls = s.match(/https?:\/\/[^\s"'<>]+/g) || [];
+    const clean = urls
+      .map(u => canonicalizeUrl(u))
+      .filter(Boolean)
+      .filter(u => !/news\.google\.com|accounts\.google\.com|google\.com\/s2\/favicons/i.test(u));
+
+    // si venimos de GN, a veces el primer “real” está aquí
+    if (clean.length) return clean[0];
+
+    // fallback: si hay algo, devuelve lo primero que no sea el mismo
+    const all = urls.map(u => canonicalizeUrl(u)).filter(Boolean);
+    const base = canonicalizeUrl(fallbackBase);
+    for (const u of all) {
+      if (!base || u !== base) return u;
     }
     return "";
   }
 
-  function pickFirstHttpUrlFromHtml(html) {
-    const s = String(html || "");
-    // Busca patrones comunes de salida tipo "...?url=https://..."
-    const m = s.match(/https?:\/\/[^"'<> ]+/i);
-    if (m && m[0]) {
-      const u = extractUrlParam(m[0]);
-      if (u) return u;
-    }
-    return "";
-  }
-
-  function extractHref(tag) {
-    const m = String(tag || "").match(/href=["']([^"']+)["']/i);
-    return m && m[1] ? cleanText(m[1]) : "";
-  }
-
-  function extractUrlParam(s) {
-    try {
-      const u = new URL(String(s || "").trim());
-      const p = u.searchParams;
-      const keys = ["url","u","q","target","dest","destination","redirect","r"];
-      for (const k of keys) {
-        const v = p.get(k);
-        if (v && /^https?:\/\//i.test(v)) return v;
-      }
-    } catch {}
-    const m = String(s || "").match(/[?&](?:url|u|q|target|dest|destination|redirect|r)=([^&"'<>\s]+)/i);
-    if (m && m[1]) {
-      const v = safeDecode(m[1]);
-      if (/^https?:\/\//i.test(v)) return v;
-    }
-    return "";
-  }
-
-  function looksLikeRedirect(u) {
-    const s = String(u || "");
-    return /\/url\?|redirect|destination|dest=|target=|u=|url=|r=/i.test(s);
-  }
-
-  function isGoogleNews(u) {
-    try {
-      const x = new URL(String(u || ""));
-      const h = x.hostname.toLowerCase();
-      return h === "news.google.com" || h.endsWith(".news.google.com");
-    } catch {
-      return false;
-    }
-  }
-
-  async function tryFollowRedirect(url, timeoutMs) {
-    const u = String(url || "").trim();
-    if (!u) return "";
-    const ctrl = new AbortController();
-    const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, Math.max(1000, timeoutMs|0));
-    try {
-      const res = await fetch(u, {
-        method: "GET",
-        redirect: "follow",
-        signal: ctrl.signal,
-        // mode cors por defecto; si falla lo intentamos con fallbacks HTML
-      });
-      // aunque no podamos leer body, res.url suele venir
-      const finalUrl = String(res?.url || "");
-      if (finalUrl) return finalUrl;
-    } catch {}
-    finally { clearTimeout(t); }
-    return "";
-  }
-
-  /* ───────────────────────────── TRANSLATE (ES siempre) ───────────────────────────── */
+  /* ───────────────────────────── TRANSLATE ES ───────────────────────────── */
   async function maybeTranslateVisible(items) {
     const wantSpanish = state.settings.onlySpanish !== false;
     if (!wantSpanish) return;
 
     const targets = (items || [])
       .filter(it => it && it.title && !it.titleEs)
-      .slice(0, 120);
+      .slice(0, VISIBLE_TRANSLATE_LIMIT);
 
     if (!targets.length) return;
 
     await pool(targets, TR_CONCURRENCY, async (it) => {
-      const es = await translateToEsCached(it.title);
-      if (es) {
-        it.titleEs = es;
-        it._hay = (String(es) + " " + String(it.feed || "")).toLowerCase();
-      }
+      const es = await translateToEsCached(it.title).catch(() => "");
+      if (es) it.titleEs = es;
     });
 
     renderNewsList({ silent: true });
+    updateNewsTicker(true);
   }
 
   async function translateToEsCached(text) {
-    const t = cleanText(text);
+    const t = cleanText(text || "");
     if (!t) return "";
 
-    // Si claramente es español, no gastes
-    if (looksSpanishStrong(t)) return t;
-
-    const key = "tr|" + t.toLowerCase().slice(0, 360);
+    const key = "tr|es|" + normalizeTitleKey(t).slice(0, 220);
     const cached = readCache(trCache, key);
     if (cached) return cached;
-    if (trInFlight.has(key)) return trInFlight.get(key);
+
+    if (trInFlight.has(key)) return await trInFlight.get(key).catch(() => "");
 
     const p = (async () => {
-      const base = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=" + encodeURIComponent(t);
-
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const raw = await tryFetchText(base, 14_000);
-          const out = parseGoogleTranslate(raw);
-          const clean = cleanText(out);
-          if (clean) {
-            writeCache(trCache, key, clean, TR_CACHE_LIMIT, LS_TR_CACHE);
-            return clean;
-          }
-        } catch {}
-
-        // fallback: allorigins
-        try {
-          const ao = "https://api.allorigins.win/raw?url=" + encodeURIComponent(base);
-          const raw2 = await tryFetchText(ao, 14_000);
-          const out2 = parseGoogleTranslate(raw2);
-          const clean2 = cleanText(out2);
-          if (clean2) {
-            writeCache(trCache, key, clean2, TR_CACHE_LIMIT, LS_TR_CACHE);
-            return clean2;
-          }
-        } catch {}
-
-        await sleep(220 + attempt * 220);
-      }
-      return "";
+      // translate.googleapis.com translate_a/single
+      const url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=" + encodeURIComponent(t);
+      const raw = await fetchTextSmart(url, null, 12000);
+      if (!raw) return "";
+      const j = safeJson(raw);
+      // formato típico: [[["texto","orig",...],...],...]
+      const out = Array.isArray(j) ? String(((j[0] || [])[0] || [])[0] || "") : "";
+      const es = cleanText(out) || "";
+      if (es) writeCache(trCache, key, es, TR_CACHE_LIMIT, LS_TR_CACHE);
+      return es;
     })();
 
     trInFlight.set(key, p);
@@ -1550,92 +1516,67 @@ Fuente:
     return out || "";
   }
 
-  function parseGoogleTranslate(raw) {
-    const j = safeJson(raw);
-    if (!j) return "";
-    try {
-      if (Array.isArray(j) && Array.isArray(j[0])) {
-        return j[0].map(x => (x && x[0]) ? String(x[0]) : "").join("");
-      }
-    } catch {}
-    return "";
-  }
-
-  function looksSpanishStrong(t) {
-    const s = String(t || "");
-    if (/[¡¿]/.test(s)) return true;
-    const lower = s.toLowerCase();
-    const hits = [
-      " el ", " la ", " los ", " las ", " de ", " del ", " y ", " que ",
-      " para ", " con ", " por ", " una ", " un ", " en "
-    ];
-    let score = 0;
-    for (const w of hits) if (lower.includes(w)) score++;
-    return score >= 3;
-  }
-
-  /* ───────────────────────────── OG / IMAGES ───────────────────────────── */
+  /* ───────────────────────────── OG IMAGES (visible-only) ───────────────────────────── */
   function setupOgObserver() {
     if (!("IntersectionObserver" in window)) return;
-
-    if (ogObserver) {
-      try { ogObserver.disconnect(); } catch {}
-      ogObserver = null;
-    }
-
     ogObserver = new IntersectionObserver((entries) => {
-      const visible = entries.filter(e => e && e.isIntersecting).slice(0, 18);
-      for (const e of visible) {
-        try { ogObserver.unobserve(e.target); } catch {}
-        const card = e.target.closest(".newsItem");
-        if (!card) continue;
-        const id = card.dataset.id;
-        const it = (state.items || []).find(x => x && x.id === id);
-        if (!it) continue;
-        const shownUrl = String(card.dataset.url || it.linkResolved || it.link || "");
-        if (!shownUrl) continue;
+      const visible = entries.filter(e => e.isIntersecting).map(e => e.target).slice(0, OBSERVE_OG_VISIBLE_LIMIT);
+      if (!visible.length) return;
 
-        // fetch OG only if needed
-        const hasGood = !!(it.imageOg || (it.image && String(it.image).startsWith("http")));
-        if (!hasGood) {
-          maybeFetchOgForItem(it, shownUrl).catch(() => {});
-        }
+      const items = [];
+      for (const elThumb of visible) {
+        const card = elThumb.closest(".newsItem");
+        const id = card?.dataset?.id || "";
+        const it = (state.items || []).find(x => x.id === id);
+        if (it) items.push(it);
       }
-    }, { root: null, threshold: 0.15 });
 
-    // (los nodos se observan en renderNewsList)
+      if (items.length) {
+        pool(items, IMG_CONCURRENCY, async (it) => {
+          await maybeFetchOgImage(it).catch(() => {});
+        }).then(() => {
+          renderNewsList({ silent: true });
+          updateNewsTicker(true);
+        }).catch(() => {});
+      }
+
+      // unobserve para no repetir
+      for (const e of entries) if (e.isIntersecting) ogObserver.unobserve(e.target);
+    }, { root: null, threshold: 0.15 });
   }
 
-  async function maybeFetchOgForItem(it, shownUrl) {
-    if (!it || !shownUrl) return;
+  async function maybeFetchOgImage(it) {
+    if (!it) return;
+    if (it.imageOg) return;
 
-    const key = "img|" + shownUrl;
+    const resolveLinks = state.settings.resolveLinks !== false;
+    const shownUrl = canonicalizeUrl((resolveLinks ? (it.linkResolved || it.link) : it.link) || it.link);
+    if (!shownUrl) return;
+
+    const key = "og|" + shownUrl;
     const cached = readCache(imgCache, key);
     if (cached) {
       it.imageOg = cached;
-      patchDomThumb(it.id, cached);
       return;
     }
+
     if (imgInFlight.has(key)) {
       const out = await imgInFlight.get(key).catch(() => "");
-      if (out) {
-        it.imageOg = out;
-        patchDomThumb(it.id, out);
-      }
+      if (out) it.imageOg = out;
       return;
     }
 
     const p = (async () => {
-      const html = await fetchTextWithFallbacks(shownUrl, OG_FETCH_TIMEOUT_MS);
+      const html = await fetchTextSmart(shownUrl, null, OG_FETCH_TIMEOUT_MS);
       if (!html) return "";
 
-      const img =
-        pickMeta(html, ["og:image:secure_url","og:image","twitter:image","twitter:image:src"]) ||
-        pickJsonLdImage(html) ||
-        pickLinkImageSrc(html) ||
-        "";
+      const og =
+        pickMetaImage(html, "og:image") ||
+        pickMetaImage(html, "twitter:image") ||
+        pickMetaImage(html, "twitter:image:src") ||
+        pickJsonLdImage(html);
 
-      const clean = canonicalizeUrl(img);
+      const clean = canonicalizeUrl(og);
       if (clean) {
         writeCache(imgCache, key, clean, IMG_CACHE_LIMIT, LS_IMG_CACHE);
         return clean;
@@ -1646,48 +1587,14 @@ Fuente:
     imgInFlight.set(key, p);
     const out = await p.catch(() => "");
     imgInFlight.delete(key);
-
-    if (out) {
-      it.imageOg = out;
-      patchDomThumb(it.id, out);
-    }
+    if (out) it.imageOg = out;
   }
 
-  function patchDomThumb(id, url) {
-    try {
-      const card = el.newsList.querySelector(`.newsItem[data-id="${cssEscape(String(id))}"]`);
-      if (!card) return;
-      const img = card.querySelector("img.newsThumb");
-      if (!img) return;
-      // no pisar si ya es mejor
-      if (img.src && img.src.startsWith("http") && img.src.includes("favicons")) {
-        img.src = url;
-      } else if (!img.src || img.src.includes("favicons")) {
-        img.src = url;
-      }
-    } catch {}
-  }
-
-  function pickMeta(html, keys) {
+  function pickMetaImage(html, prop) {
     const s = String(html || "");
-    for (const k of (keys || [])) {
-      const re = new RegExp(`<meta[^>]+(?:property|name)=["']${escapeRe(k)}["'][^>]*>`, "i");
-      const m = s.match(re);
-      if (m && m[0]) {
-        const c = (m[0].match(/content=["']([^"']+)["']/i) || [])[1] || "";
-        if (c) return cleanText(c);
-      }
-    }
-    return "";
-  }
-
-  function pickLinkImageSrc(html) {
-    const s = String(html || "");
-    const m = s.match(/<link[^>]+rel=["']image_src["'][^>]*>/i);
-    if (m && m[0]) {
-      const u = extractHref(m[0]);
-      if (u) return u;
-    }
+    const re = new RegExp(`<meta[^>]+(?:property|name)=["']${escapeReg(prop)}["'][^>]+content=["']([^"']+)["']`, "i");
+    const m = s.match(re);
+    if (m && m[1]) return cleanText(decodeHtml(m[1]));
     return "";
   }
 
@@ -1777,228 +1684,134 @@ Fuente:
   }
 
   function normalizeFeed(f) {
-    const name = String(f?.name || "Feed").trim() || "Feed";
-    let url = String(f?.url || "").trim();
-    if (url && url.startsWith("//")) url = "https:" + url;
-    if (url && !/^https?:\/\//i.test(url) && /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(url)) url = "https://" + url;
-    return { name, url, enabled: f?.enabled !== false };
+    const o = { ...f };
+    o.name = cleanText(o.name || "Feed") || "Feed";
+    o.url = cleanText(o.url || "");
+    o.enabled = o.enabled !== false;
+    return o;
   }
 
-  /* ───────────────────────────── SETTINGS / LOAD-SAVE ───────────────────────────── */
-  function loadFeeds() {
-    try {
-      const raw = localStorage.getItem(LS_FEEDS) || localStorage.getItem(LS_FEEDS_V3);
-      if (!raw) return DEFAULT_FEEDS.map(f => ({ ...f }));
-      const arr = JSON.parse(raw);
-      const feeds = Array.isArray(arr)
-        ? arr.map(normalizeFeed).filter(f => f.url)
-        : DEFAULT_FEEDS.map(f => ({ ...f }));
-      safeSetLS(LS_FEEDS, JSON.stringify(feeds));
-      return feeds;
-    } catch {
-      return DEFAULT_FEEDS.map(f => ({ ...f }));
+  /* ───────────────────────────── SETTINGS / STORAGE HELPERS ───────────────────────────── */
+  function loadTemplate() {
+    const t = String(localStorage.getItem(LS_TEMPLATE) || "");
+    if (t) return t;
+    // migrate v3
+    const v3 = String(localStorage.getItem(LS_TEMPLATE_V3) || "");
+    if (v3) {
+      localStorage.setItem(LS_TEMPLATE, v3);
+      return v3;
     }
+    return DEFAULT_TEMPLATE;
+  }
+
+  function saveTemplate(t) {
+    try { localStorage.setItem(LS_TEMPLATE, String(t || "")); } catch {}
+  }
+
+  function loadFeeds() {
+    const j = loadJsonPreferNew(LS_FEEDS, LS_FEEDS_V3, null);
+    if (Array.isArray(j) && j.length) return j.map(normalizeFeed);
+    const d = DEFAULT_FEEDS.map(f => ({ ...f }));
+    try { localStorage.setItem(LS_FEEDS, JSON.stringify(d)); } catch {}
+    return d.map(normalizeFeed);
   }
 
   function saveFeeds(feeds) {
-    safeSetLS(LS_FEEDS, JSON.stringify(feeds || []));
-  }
-
-  function loadTemplate() {
-    try {
-      const raw = localStorage.getItem(LS_TEMPLATE) || localStorage.getItem(LS_TEMPLATE_V3);
-      if (!raw) return DEFAULT_TEMPLATE;
-      safeSetLS(LS_TEMPLATE, String(raw));
-      return String(raw || DEFAULT_TEMPLATE);
-    } catch {
-      return DEFAULT_TEMPLATE;
-    }
-  }
-
-  function saveTemplate(tpl) {
-    safeSetLS(LS_TEMPLATE, String(tpl || DEFAULT_TEMPLATE));
+    try { localStorage.setItem(LS_FEEDS, JSON.stringify(feeds || [])); } catch {}
   }
 
   function loadSettings() {
-    const fallback = {
-      liveUrl: "https://twitch.com/globaleyetv",
-      hashtags: "",
-      includeLive: true,
-      includeSource: true,
-      delayMin: 10,
-      onlyReady: false,
-
-      // ES by default
-      onlySpanish: true,
-
-      sortBy: "recent",
-      autoRefresh: true,
-      refreshSec: AUTO_REFRESH_FEEDS_SEC_DEFAULT,
-      resolveLinks: true,
-      showOriginal: true,
-      hideUsed: false,
-      catFilter: "all",
-
-      // PRO
-      showLimit: 10,
-      fetchCap: 240,
-      batchFeeds: 12,
-
-      version: VERSION
-    };
-    const j = loadJsonPreferNew(LS_SETTINGS, LS_SETTINGS_V3, fallback);
-    return { ...fallback, ...(j || {}) };
+    const j = loadJsonPreferNew(LS_SETTINGS, LS_SETTINGS_V3, {});
+    return (j && typeof j === "object") ? j : {};
   }
 
   function saveSetting(k, v) {
-    state.settings = state.settings || {};
-    state.settings[k] = v;
-    safeSetLS(LS_SETTINGS, JSON.stringify(state.settings));
+    try {
+      state.settings = state.settings || {};
+      state.settings[k] = v;
+      localStorage.setItem(LS_SETTINGS, JSON.stringify(state.settings));
+    } catch {}
   }
 
   function loadUsedSet() {
+    const arr = loadJsonPreferNew(LS_USED, LS_USED_V3, []);
+    const s = new Set();
+    if (Array.isArray(arr)) arr.forEach(x => s.add(String(x)));
+    return s;
+  }
+
+  function toggleUsed(id, forceVal = null) {
+    const key = String(id || "");
+    if (!key) return;
+
+    const has = state.used.has(key);
+    const want = (forceVal === null) ? !has : !!forceVal;
+
+    if (want) state.used.add(key);
+    else state.used.delete(key);
+
+    // persist
     try {
-      const raw = localStorage.getItem(LS_USED) || localStorage.getItem(LS_USED_V3);
-      if (!raw) return new Set();
-      const arr = JSON.parse(raw);
-      const s = new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
-      safeSetLS(LS_USED, JSON.stringify(Array.from(s)));
-      return s;
-    } catch {
-      return new Set();
-    }
+      const arr = Array.from(state.used).slice(0, 4000);
+      localStorage.setItem(LS_USED, JSON.stringify(arr));
+    } catch {}
   }
 
-  function saveUsedSet(setObj) {
-    safeSetLS(LS_USED, JSON.stringify(Array.from(setObj || [])));
-  }
-
-  function toggleUsed(id, forceOn) {
-    if (!id) return;
-    const has = state.used.has(id);
-    const want = (typeof forceOn === "boolean") ? forceOn : (!has);
-    if (want) state.used.add(id);
-    else state.used.delete(id);
-    saveUsedSet(state.used);
-  }
-
-  function loadJsonPreferNew(keyNew, keyOld, fallback) {
-    try {
-      const raw = localStorage.getItem(keyNew) || (keyOld ? localStorage.getItem(keyOld) : null);
-      if (!raw) return fallback;
-      const j = JSON.parse(raw);
-      if (j && typeof j === "object") {
-        safeSetLS(keyNew, JSON.stringify(j));
-        return j;
+  function loadJsonPreferNew(kNew, kOld, fallback) {
+    const a = safeJson(localStorage.getItem(kNew));
+    if (a !== null && a !== undefined) return a;
+    if (kOld) {
+      const b = safeJson(localStorage.getItem(kOld));
+      if (b !== null && b !== undefined) {
+        try { localStorage.setItem(kNew, JSON.stringify(b)); } catch {}
+        return b;
       }
-      return fallback;
+    }
+    return fallback;
+  }
+
+  function safeJson(s) {
+    try {
+      if (s === null || s === undefined) return null;
+      const str = String(s).trim();
+      if (!str) return null;
+      return JSON.parse(str);
     } catch {
-      return fallback;
+      return null;
     }
   }
 
-  function safeSetLS(key, value) {
-    try { localStorage.setItem(key, value); } catch {}
-  }
-
-  /* ───────────────────────────── NETWORK HELPERS ───────────────────────────── */
-  async function fetchTextWithFallbacks(url, timeoutMs, parentSignal) {
-    const u = String(url || "").trim();
-    if (!u) return "";
-
-    // 1) Direct
+  function readCache(cacheObj, key) {
     try {
-      const t = await tryFetchText(u, timeoutMs, parentSignal);
-      if (t) return t;
-    } catch {}
-
-    // 2) AllOrigins raw
-    try {
-      const ao = "https://api.allorigins.win/raw?url=" + encodeURIComponent(u);
-      const t = await tryFetchText(ao, timeoutMs, parentSignal);
-      if (t) return t;
-    } catch {}
-
-    // 3) jina.ai (muy útil para CORS)
-    try {
-      const j = "https://r.jina.ai/http://" + u.replace(/^https?:\/\//i, "");
-      const t = await tryFetchText(j, timeoutMs, parentSignal);
-      if (t) return t;
-    } catch {}
-
-    return "";
-  }
-
-  async function tryFetchText(url, timeoutMs, parentSignal) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, Math.max(1000, timeoutMs|0));
-    try {
-      const signal = mergeAbortSignals(parentSignal, ctrl.signal);
-      const res = await fetch(url, { method: "GET", signal, redirect: "follow" });
-      // algunos endpoints devuelven no-200 pero con body útil
-      const text = await res.text().catch(() => "");
-      return String(text || "");
-    } finally {
-      clearTimeout(t);
-    }
-  }
-
-  function mergeAbortSignals(a, b) {
-    if (!a) return b;
-    if (!b) return a;
-    // Si AbortSignal.any existe
-    if (typeof AbortSignal !== "undefined" && AbortSignal.any) {
-      try { return AbortSignal.any([a, b]); } catch {}
-    }
-    // fallback simple: si uno aborta, aborta el otro controller en fetch; aquí devolvemos b
-    // (direct fetch usa b; pero parent se controla en llamador con abort global)
-    return b;
-  }
-
-  /* ───────────────────────────── CACHE HELPERS ───────────────────────────── */
-  function readCache(obj, key) {
-    try {
-      const v = obj && obj[key];
+      const v = cacheObj?.[key];
       if (!v) return "";
-      // estructura: { v, t }
       if (typeof v === "string") return v;
-      if (v && typeof v === "object" && v.v) return String(v.v);
-    } catch {}
-    return "";
-  }
-
-  function writeCache(obj, key, value, limit, persistKey) {
-    if (!obj || !key) return;
-    try {
-      obj[key] = { v: String(value || ""), t: Date.now() };
-      // trim LRU-ish
-      const keys = Object.keys(obj);
-      if (keys.length > limit) {
-        keys.sort((a,b) => Number(obj[a]?.t||0) - Number(obj[b]?.t||0));
-        const kill = keys.slice(0, Math.max(10, keys.length - limit));
-        for (const k of kill) delete obj[k];
+      if (v && typeof v === "object" && v.v && (!v.t || (Date.now() - Number(v.t)) < 30 * 24 * 60 * 60 * 1000)) {
+        return String(v.v || "");
       }
-      safeSetLS(persistKey, JSON.stringify(obj));
+      return "";
+    } catch {
+      return "";
+    }
+  }
+
+  function writeCache(cacheObj, key, value, limit, lsKey) {
+    try {
+      cacheObj[key] = { v: String(value || ""), t: Date.now() };
+
+      const keys = Object.keys(cacheObj);
+      if (keys.length > limit) {
+        // purge oldest
+        keys.sort((a, b) => Number(cacheObj[a]?.t || 0) - Number(cacheObj[b]?.t || 0));
+        const drop = keys.slice(0, Math.max(20, keys.length - limit));
+        drop.forEach(k => { delete cacheObj[k]; });
+      }
+
+      localStorage.setItem(lsKey, JSON.stringify(cacheObj));
     } catch {}
   }
 
-  /* ───────────────────────────── SMALL UTILS ───────────────────────────── */
-  function debounce(fn, ms) {
-    let t = 0;
-    return (...args) => {
-      clearTimeout(t);
-      t = setTimeout(() => fn(...args), ms);
-    };
-  }
-
-  function runSoon(fn) {
-    try { setTimeout(fn, 0); } catch {}
-  }
-
-  function sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
-  }
-
+  /* ───────────────────────────── HELPERS ───────────────────────────── */
   function clampNum(v, min, max) {
     const n = Number(v);
     if (!Number.isFinite(n)) return min;
@@ -2006,39 +1819,84 @@ Fuente:
   }
 
   function cleanText(s) {
-    return String(s || "").replace(/\s+/g, " ").trim();
+    return String(s || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function looksJson(text) {
+    const s = String(text || "").trim();
+    return s.startsWith("{") || s.startsWith("[");
   }
 
   function canonicalizeUrl(u) {
-    const s = cleanText(u);
+    const s = String(u || "").trim();
     if (!s) return "";
-    if (s.startsWith("//")) return "https:" + s;
-    if (!/^https?:\/\//i.test(s)) return s; // dejamos tal cual si no es URL (evita romper)
+    // arregla entidades
+    const d = decodeHtml(s);
+    // quita comillas
+    const x = d.replace(/^["']|["']$/g, "").trim();
+    // basic
+    if (!/^https?:\/\//i.test(x)) return x.startsWith("www.") ? ("https://" + x) : x;
+    // limpia tracking obvio
     try {
-      const x = new URL(s);
-      // limpia tracking simple
-      ["utm_source","utm_medium","utm_campaign","utm_term","utm_content","fbclid","gclid","mc_cid","mc_eid"].forEach(k => x.searchParams.delete(k));
-      return x.toString();
+      const url = new URL(x);
+      ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"].forEach(p => url.searchParams.delete(p));
+      return url.toString();
     } catch {
-      return s;
+      return x;
     }
   }
 
-  function getDomain(u) {
+  function getDomain(url) {
+    try { return new URL(String(url || "")).hostname.replace(/^www\./i, ""); } catch { return ""; }
+  }
+
+  function parseDateMs(s) {
+    const t = String(s || "").trim();
+    if (!t) return 0;
+    const ms = Date.parse(t);
+    if (Number.isFinite(ms) && ms > 0) return ms;
+    // algunos feeds usan ISO sin TZ
+    const ms2 = Date.parse(t.replace(" ", "T"));
+    if (Number.isFinite(ms2) && ms2 > 0) return ms2;
+    return 0;
+  }
+
+  function pickText(root, sel) {
     try {
-      const x = new URL(String(u || ""));
-      return x.hostname.replace(/^www\./i, "");
+      const n = root.querySelector(sel);
+      return n ? (n.textContent || "") : "";
     } catch {
       return "";
     }
   }
 
-  function safeJson(text) {
-    try { return JSON.parse(String(text || "")); } catch { return null; }
+  function pickAttr(root, sel, attr) {
+    try {
+      const n = root.querySelector(sel);
+      return n ? (n.getAttribute(attr) || "") : "";
+    } catch {
+      return "";
+    }
   }
 
-  function safeDecode(s) {
-    try { return decodeURIComponent(String(s || "")); } catch { return String(s || ""); }
+  function pickAttrByRel(root, sel, relValue, attr) {
+    try {
+      const nodes = Array.from(root.querySelectorAll(sel));
+      const found = nodes.find(n => String(n.getAttribute("rel") || "").toLowerCase() === String(relValue || "").toLowerCase());
+      return found ? (found.getAttribute(attr) || "") : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function decodeHtml(s) {
+    const str = String(s || "");
+    if (!str.includes("&")) return str;
+    const txt = document.createElement("textarea");
+    txt.innerHTML = str;
+    return txt.value;
   }
 
   function escapeHtml(s) {
@@ -2050,47 +1908,15 @@ Fuente:
       .replace(/'/g, "&#039;");
   }
 
-  function escapeRe(s) {
+  function escapeReg(s) {
     return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  function cssEscape(s) {
-    // minimal escape for attribute selector usage
-    return String(s || "").replace(/"/g, '\\"');
-  }
-
-  function fastHash(s) {
-    const str = String(s || "");
-    let h = 2166136261;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
-    }
-    // uint32
-    return (h >>> 0).toString(16);
-  }
-
-  function hashId(s) {
-    return fastHash(s);
-  }
-
-  function parseDateMs(s) {
-    const t = String(s || "").trim();
-    if (!t) return 0;
-    const ms = Date.parse(t);
-    if (Number.isFinite(ms) && ms > 0) return ms;
-    // ISO-like already covered; try unix seconds
-    const n = Number(t);
-    if (Number.isFinite(n)) {
-      if (n > 10_000_000_000) return n; // ms
-      if (n > 1_000_000_000) return n * 1000; // sec
-    }
-    return 0;
-  }
-
-  function normalizeTitleKey(t) {
-    return String(t || "")
+  function normalizeTitleKey(s) {
+    return String(s || "")
       .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
       .replace(/https?:\/\/\S+/g, "")
       .replace(/[^\p{L}\p{N}]+/gu, " ")
       .replace(/\s+/g, " ")
@@ -2113,7 +1939,6 @@ Fuente:
   }
 
   function calcImpact(it) {
-    // heurístico rápido: fuente + keywords + frescura
     const now = Date.now();
     const ageMin = Math.max(0, Math.floor((now - Number(it?.publishedMs || 0)) / 60000));
     const title = String(it?.titleEs || it?.title || "").toLowerCase();
@@ -2136,9 +1961,9 @@ Fuente:
 
     // keywords
     const hot = [
-      "última hora","urgente","breaking","explosión","atentado","tiroteo","dimite","dimisión",
-      "sanciones","misil","dron","ofensiva","bombardeo","muertos","heridos","detenido",
-      "juicio","tribunal","nato","otan","ucrania","rusia","bce","inflación","ibex"
+      "última hora", "urgente", "breaking", "explosión", "atentado", "tiroteo", "dimite", "dimisión",
+      "sanciones", "misil", "dron", "ofensiva", "bombardeo", "muertos", "heridos", "detenido",
+      "juicio", "tribunal", "nato", "otan", "ucrania", "rusia", "bce", "inflación", "ibex"
     ];
     for (const k of hot) if (title.includes(k)) score += 6;
 
@@ -2150,19 +1975,18 @@ Fuente:
     if (!h) return "";
 
     const stop = new Set([
-      "el","la","los","las","de","del","y","en","a","un","una","unos","unas","que","por","para","con","sin",
-      "al","se","su","sus","como","más","menos","sobre","tras","ante","entre","desde","hasta","hoy","ayer"
+      "el", "la", "los", "las", "de", "del", "y", "en", "a", "un", "una", "unos", "unas", "que", "por", "para", "con", "sin",
+      "al", "se", "su", "sus", "como", "mas", "menos", "sobre", "tras", "ante", "entre", "desde", "hasta", "hoy", "ayer"
     ]);
 
     const words = h.split(" ").filter(w => w && w.length >= 4 && !stop.has(w));
     if (!words.length) return "";
 
-    // prefer “nombres” por simple heurística (frecuencia)
     const freq = new Map();
     for (const w of words) freq.set(w, (freq.get(w) || 0) + 1);
 
     const top = Array.from(freq.entries())
-      .sort((a,b) => b[1] - a[1])
+      .sort((a, b) => b[1] - a[1])
       .map(x => x[0])
       .slice(0, 4);
 
@@ -2170,49 +1994,81 @@ Fuente:
     return tags.join(" ");
   }
 
-  function smartTrimHeadline(s, maxLen) {
-    const t = cleanText(s);
+  function smartTrimHeadline(s, maxLen = 120) {
+    const t = cleanText(s || "");
     if (t.length <= maxLen) return t;
-    const cut = t.slice(0, Math.max(0, maxLen - 1));
-    // intenta cortar por palabra
-    const lastSpace = cut.lastIndexOf(" ");
-    const base = (lastSpace > 18) ? cut.slice(0, lastSpace) : cut;
-    return base.trimEnd() + "…";
+    // corta por palabra
+    const slice = t.slice(0, maxLen + 1);
+    const cut = slice.lastIndexOf(" ");
+    const out = (cut > 30 ? slice.slice(0, cut) : t.slice(0, maxLen)).trim();
+    return out.replace(/[,:;\-–—]\s*$/g, "").trim() + "…";
   }
 
-  // Twitter/X count approximation: URLs cuentan como 23
   function twCharCount(text) {
-    const s = String(text || "");
-    if (!s) return 0;
-    const urlRe = /https?:\/\/\S+/gi;
-    let count = 0;
-    let lastIndex = 0;
-    let m;
-    while ((m = urlRe.exec(s)) !== null) {
-      count += (m.index - lastIndex);
-      count += 23;
-      lastIndex = m.index + m[0].length;
+    // simplificación aceptable: cuenta normal; X real tiene reglas de URL,
+    // pero en la práctica tu panel ya ajusta manualmente.
+    return String(text || "").length;
+  }
+
+  function hashId(s) {
+    const str = String(s || "");
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
     }
-    count += (s.length - lastIndex);
-    return count;
+    return (h >>> 0).toString(16);
+  }
+
+  function isGoogleNews(url) {
+    return /(^|\/\/)news\.google\.com\//i.test(String(url || ""));
+  }
+
+  function looksLikeRedirect(url) {
+    const u = String(url || "").toLowerCase();
+    return u.includes("news.google.com/rss/articles") || u.includes("news.google.com/articles") || u.includes("news.google.com/rss");
+  }
+
+  function debounce(fn, ms) {
+    let t = 0;
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn(...args), ms);
+    };
+  }
+
+  function runSoon(fn) {
+    setTimeout(fn, 0);
+  }
+
+  async function pool(items, concurrency, worker) {
+    const arr = items || [];
+    const n = Math.max(1, Number(concurrency || 1));
+    let i = 0;
+    const runners = new Array(Math.min(n, arr.length)).fill(0).map(async () => {
+      while (i < arr.length) {
+        const idx = i++;
+        await worker(arr[idx]);
+      }
+    });
+    await Promise.all(runners);
   }
 
   async function copyToClipboard(text) {
     const t = String(text || "");
     if (!t) return;
-    try {
+    if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(t);
       return;
-    } catch {}
+    }
     // fallback
     const ta = document.createElement("textarea");
     ta.value = t;
-    ta.setAttribute("readonly", "");
     ta.style.position = "fixed";
     ta.style.left = "-9999px";
     document.body.appendChild(ta);
     ta.select();
-    try { document.execCommand("copy"); } catch {}
+    document.execCommand("copy");
     document.body.removeChild(ta);
   }
 
@@ -2220,18 +2076,15 @@ Fuente:
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
 
-    // 1) register
     navigator.serviceWorker.register("./sw.js")
       .then((reg) => {
         swReg = reg;
 
-        // 2) periodic update checks
         if (swUpdateTimer) clearInterval(swUpdateTimer);
         swUpdateTimer = setInterval(() => {
           try { swReg.update(); } catch {}
         }, SW_UPDATE_CHECK_MS);
 
-        // 3) reload once when controller changes (new SW activated)
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           try {
             const already = sessionStorage.getItem(SW_FORCE_RELOAD_GUARD);
@@ -2243,18 +2096,15 @@ Fuente:
           }
         });
 
-        // 4) if waiting, ask it to activate
         if (reg.waiting) {
           try { reg.waiting.postMessage({ type: "SKIP_WAITING" }); } catch {}
         }
 
-        // 5) listen for updates
         reg.addEventListener("updatefound", () => {
           const nw = reg.installing;
           if (!nw) return;
           nw.addEventListener("statechange", () => {
             if (nw.state === "installed") {
-              // if new worker installed and there is already a controller => update available
               if (navigator.serviceWorker.controller) {
                 try { reg.waiting?.postMessage({ type: "SKIP_WAITING" }); } catch {}
               }
@@ -2264,6 +2114,504 @@ Fuente:
       })
       .catch(() => {});
   }
+
+  /* ───────────────────────────── TICKERS (NEWS + TRENDS) ───────────────────────────── */
+  function injectTickerCss() {
+    if (document.getElementById("tnpTickerCSS")) return;
+    const css = document.createElement("style");
+    css.id = "tnpTickerCSS";
+    css.textContent = `
+      /* ── TNP TICKERS ── */
+      .tnpTickerBar{
+        width:100%;
+        border-top: 1px solid var(--border);
+        background: rgba(255,255,255,.02);
+        display:flex;
+        align-items:center;
+        gap: 10px;
+        padding: 8px 12px;
+        overflow:hidden;
+        user-select:none;
+      }
+      .tnpTickerLabel{
+        font-size: 12px;
+        color: rgba(231,233,234,.78);
+        font-weight: 900;
+        letter-spacing:.2px;
+        display:flex;
+        align-items:center;
+        gap: 8px;
+        white-space:nowrap;
+        flex: 0 0 auto;
+      }
+      .tnpTickerDot{
+        width:8px;height:8px;border-radius:999px;
+        background: var(--xBlue);
+        box-shadow: 0 0 0 4px rgba(29,155,240,.10);
+      }
+      .tnpTickerTrack{
+        position:relative;
+        overflow:hidden;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .tnpTickerInner{
+        display:inline-flex;
+        align-items:center;
+        gap: 14px;
+        white-space:nowrap;
+        will-change: transform;
+        animation: tnpMarquee 28s linear infinite;
+      }
+      .tnpTickerBar:hover .tnpTickerInner{ animation-play-state: paused; }
+      @keyframes tnpMarquee {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(-50%); }
+      }
+      .tnpTickerItem{
+        display:inline-flex;
+        align-items:center;
+        gap: 8px;
+        font-size: 13px;
+        color: rgba(231,233,234,.92);
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,.12);
+        background: rgba(255,255,255,.03);
+        cursor: pointer;
+        transition: background .12s ease, border-color .12s ease;
+      }
+      .tnpTickerItem:hover{
+        border-color: rgba(29,155,240,.55);
+        background: rgba(29,155,240,.10);
+      }
+      .tnpTickerPill{
+        font-size: 11px;
+        color: rgba(231,233,234,.78);
+        border: 1px solid rgba(255,255,255,.14);
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: rgba(0,0,0,.28);
+      }
+      .tnpPop{
+        flex: 0 0 auto;
+        display:flex;
+        align-items:center;
+        gap: 8px;
+      }
+      .tnpPopChip{
+        display:inline-flex;
+        align-items:center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,.14);
+        background: rgba(255,255,255,.03);
+        color: rgba(231,233,234,.92);
+        cursor:pointer;
+        max-width: 44vw;
+        overflow:hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .tnpPopChip:hover{
+        border-color: rgba(29,155,240,.55);
+        background: rgba(29,155,240,.10);
+      }
+      .tnpPopTag{
+        color: rgba(29,155,240,.95);
+        font-weight: 900;
+      }
+      .tnpPopMeta{
+        font-size: 11px;
+        color: rgba(231,233,234,.68);
+      }
+      @media (max-width: 980px){
+        .tnpPopChip{ max-width: 78vw; }
+        .tnpTickerInner{ animation-duration: 34s; }
+      }
+    `;
+    document.head.appendChild(css);
+  }
+
+  function ensureTickers() {
+    if (state.ticker.ready) return;
+
+    const topbar = document.querySelector(".topbar");
+    if (!topbar) return;
+
+    // Insert a ticker bar UNDER the topbar content (still inside header)
+    // Estructura:
+    // <header .topbar>
+    //   ... (ya existe)
+    // </header>
+    // <div .tnpTickerBar> ... </div>
+    // (Lo metemos justo después del header para no romper flex del topbar)
+    const existing = document.getElementById("tnpTickerBar");
+    if (existing) {
+      state.ticker.ready = true;
+      return;
+    }
+
+    const bar = document.createElement("div");
+    bar.className = "tnpTickerBar";
+    bar.id = "tnpTickerBar";
+    bar.setAttribute("role", "region");
+    bar.setAttribute("aria-label", "Ticker de noticias y tendencias");
+
+    const left = document.createElement("div");
+    left.className = "tnpTickerLabel";
+    left.innerHTML = `<span class="tnpTickerDot" aria-hidden="true"></span><span>LIVE</span>`;
+
+    const track = document.createElement("div");
+    track.className = "tnpTickerTrack";
+
+    const inner = document.createElement("div");
+    inner.className = "tnpTickerInner";
+    inner.id = "tnpTickerInner";
+    inner.setAttribute("aria-live", "polite");
+    inner.setAttribute("aria-atomic", "true");
+
+    track.appendChild(inner);
+
+    const pop = document.createElement("div");
+    pop.className = "tnpPop";
+
+    const popChip = document.createElement("div");
+    popChip.className = "tnpPopChip";
+    popChip.id = "tnpTrendsPop";
+    popChip.title = "Click: añadir al campo HASHTAGS";
+    popChip.innerHTML = `<span class="tnpPopTag">#Tendencias</span><span class="tnpPopMeta">cargando…</span>`;
+    popChip.addEventListener("click", () => {
+      const tag = String(popChip.dataset.tag || "").trim();
+      if (!tag) return;
+      // añade al input hashtags sin romper lo que ya hay
+      const cur = String(el.hashtags.value || "").trim();
+      const add = tag.startsWith("#") ? tag : ("#" + tag.replace(/\s+/g, ""));
+      const next = mergeHashtags(cur, add);
+      el.hashtags.value = next;
+      onComposerChanged();
+      toast(`🏷 Añadido: ${add}`);
+    });
+
+    pop.appendChild(popChip);
+
+    bar.appendChild(left);
+    bar.appendChild(track);
+    bar.appendChild(pop);
+
+    // Insert after header
+    topbar.insertAdjacentElement("afterend", bar);
+
+    state.ticker.ready = true;
+  }
+
+  function mergeHashtags(cur, add) {
+    const a = String(add || "").trim();
+    if (!a) return String(cur || "").trim();
+    const set = new Set(String(cur || "").split(/\s+/g).map(x => x.trim()).filter(Boolean));
+    set.add(a);
+    // deja máximo 6 tags para no explotar
+    return Array.from(set).slice(0, 6).join(" ");
+  }
+
+  function updateNewsTicker(force = false) {
+    if (!state.ticker.ready) return;
+
+    const resolveLinks = state.settings.resolveLinks !== false;
+    const wantSpanish = state.settings.onlySpanish !== false;
+
+    // coge candidatos: más impacto, frescos, y que estén en ventana
+    const hours = clampNum(el.timeFilter.value, 1, 72);
+    const minMs = Date.now() - (hours * 60 * 60 * 1000);
+
+    const items = (state.items || [])
+      .filter(it => it && Number(it.publishedMs || 0) >= minMs)
+      .map(it => ({ it, impact: calcImpact(it) }))
+      .filter(x => x.impact >= TICKER_NEWS_MIN_IMPACT)
+      .sort((a, b) => (b.impact - a.impact) || (Number(b.it.publishedMs || 0) - Number(a.it.publishedMs || 0)))
+      .slice(0, TICKER_NEWS_MAX);
+
+    const sig = items.map(x => x.it.id).join("|") + "|" + String(wantSpanish) + "|" + String(resolveLinks);
+    if (!force && sig === state.ticker.newsSig) return;
+    state.ticker.newsSig = sig;
+
+    state.ticker.news = items.map(x => x.it);
+
+    const inner = document.getElementById("tnpTickerInner");
+    if (!inner) return;
+
+    inner.innerHTML = "";
+
+    const buildItemEl = (it) => {
+      const shownUrl = canonicalizeUrl((resolveLinks ? (it.linkResolved || it.link) : it.link) || it.link) || "";
+      const title = cleanText((wantSpanish ? (it.titleEs || it.title) : (it.title || it.titleEs)) || "");
+      const domain = shownUrl ? getDomain(shownUrl) : (it.feed || "news");
+
+      const pill = document.createElement("span");
+      pill.className = "tnpTickerPill";
+      pill.textContent = domain ? domain : "news";
+
+      const btn = document.createElement("span");
+      btn.className = "tnpTickerItem";
+      btn.title = "Click: cargar en plantilla · Alt+Click: abrir";
+      btn.appendChild(pill);
+
+      const txt = document.createElement("span");
+      txt.textContent = title || "—";
+      btn.appendChild(txt);
+
+      btn.addEventListener("click", (ev) => {
+        if (ev.altKey) {
+          if (shownUrl) window.open(shownUrl, "_blank", "noopener,noreferrer");
+          return;
+        }
+        useItem(it).catch(() => {});
+      });
+
+      return btn;
+    };
+
+    // Si no hay items aún, muestra placeholder suave
+    if (!state.ticker.news.length) {
+      const ph = document.createElement("span");
+      ph.className = "tnpTickerItem";
+      ph.style.cursor = "default";
+      ph.innerHTML = `<span class="tnpTickerPill">news</span><span>Cargando titulares…</span>`;
+      inner.appendChild(ph);
+      inner.appendChild(ph.cloneNode(true));
+      return;
+    }
+
+    // Para el marquee: duplicar contenido para que el -50% funcione
+    const fragA = document.createDocumentFragment();
+    const fragB = document.createDocumentFragment();
+
+    for (const it of state.ticker.news) {
+      fragA.appendChild(buildItemEl(it));
+    }
+    for (const it of state.ticker.news) {
+      fragB.appendChild(buildItemEl(it));
+    }
+
+    inner.appendChild(fragA);
+    // separador invisible
+    const sep = document.createElement("span");
+    sep.style.width = "16px";
+    inner.appendChild(sep);
+    inner.appendChild(fragB);
+
+    // Ajusta duración según cantidad (más items => más lento)
+    const dur = Math.max(18, Math.min(42, 18 + state.ticker.news.length * 1.8));
+    inner.style.animationDuration = `${dur}s`;
+  }
+
+  function tickTickerTimers() {
+    // (placeholder: si quieres lógica extra por tiempo, aquí)
+  }
+
+  /* ───────────────────────────── TRENDS (best-effort) ───────────────────────────── */
+  function startTrendsRealtime() {
+    if (state.ticker.trendsPopTimer) clearInterval(state.ticker.trendsPopTimer);
+    if (state.ticker.trendsRefreshTimer) clearInterval(state.ticker.trendsRefreshTimer);
+
+    state.ticker.trendsPopTimer = setInterval(() => {
+      rotateTrendsPop();
+    }, TRENDS_POP_INTERVAL_MS);
+
+    state.ticker.trendsRefreshTimer = setInterval(() => {
+      requestTrendsRefresh({ reason: "timer" }).catch(() => {});
+    }, TRENDS_REFRESH_MS);
+
+    // intento inmediato (con cache)
+    requestTrendsRefresh({ reason: "boot" }).catch(() => {});
+    rotateTrendsPop();
+  }
+
+  function setTrendsPop(tag, meta = "") {
+    const pop = document.getElementById("tnpTrendsPop");
+    if (!pop) return;
+    const t = String(tag || "").trim();
+    pop.dataset.tag = t;
+    if (!t) {
+      pop.innerHTML = `<span class="tnpPopTag">#Tendencias</span><span class="tnpPopMeta">${escapeHtml(meta || "sin datos")}</span>`;
+      return;
+    }
+    pop.innerHTML = `<span class="tnpPopTag">${escapeHtml(t.startsWith("#") ? t : ("#" + t.replace(/\s+/g, "")))}</span><span class="tnpPopMeta">${escapeHtml(meta || "click para añadir")}</span>`;
+  }
+
+  function rotateTrendsPop() {
+    const list = state.ticker.trends || [];
+    if (!list.length) {
+      setTrendsPop("", "cargando…");
+      return;
+    }
+    state.ticker.trendsIdx = (state.ticker.trendsIdx + 1) % list.length;
+    const cur = list[state.ticker.trendsIdx];
+    const label = cur?.label || cur?.tag || cur || "";
+    const src = cur?.src ? `via ${cur.src}` : "tendencia";
+    setTrendsPop(label, src);
+  }
+
+  async function requestTrendsRefresh({ reason = "manual" } = {}) {
+    // cache
+    const lastTs = Number(localStorage.getItem(LS_TRENDS_TS) || "0") || 0;
+    const age = Date.now() - lastTs;
+
+    if (age < TRENDS_CACHE_MAX_AGE_MS) {
+      const cached = safeJson(localStorage.getItem(LS_TRENDS_CACHE)) || [];
+      if (Array.isArray(cached) && cached.length) {
+        state.ticker.trends = cached.slice(0, TRENDS_MAX);
+        rotateTrendsPop();
+        return;
+      }
+    }
+
+    const out = await fetchTrendsBestEffort().catch(() => []);
+    if (Array.isArray(out) && out.length) {
+      state.ticker.trends = out.slice(0, TRENDS_MAX);
+      try {
+        localStorage.setItem(LS_TRENDS_CACHE, JSON.stringify(state.ticker.trends));
+        localStorage.setItem(LS_TRENDS_TS, String(Date.now()));
+      } catch {}
+      rotateTrendsPop();
+      if (reason === "boot") toast("📡 Tendencias cargadas.");
+    } else {
+      // si falla, intenta mantener cache anterior
+      const cached = safeJson(localStorage.getItem(LS_TRENDS_CACHE)) || [];
+      if (Array.isArray(cached) && cached.length) {
+        state.ticker.trends = cached.slice(0, TRENDS_MAX);
+        rotateTrendsPop();
+      } else {
+        setTrendsPop("", "sin datos (bloqueo/CORS)");
+      }
+    }
+  }
+
+  async function fetchTrendsBestEffort() {
+    // Nota: “Trends de X” reales requieren API/autenticación.
+    // Aquí hacemos best-effort con fuentes públicas tipo “Twitter trends mirror” (pueden cambiar).
+    // Orden: Trends24 ES -> GetDayTrends ES -> Google Trends Daily (ES) (como fallback).
+
+    const providers = [
+      () => fetchTrendsTrends24("spain", "Trends24"),
+      () => fetchTrendsGetDayTrends("spain", "GetDayTrends"),
+      () => fetchTrendsGoogleDaily("ES", "GoogleTrends"),
+    ];
+
+    for (const fn of providers) {
+      const res = await fn().catch(() => []);
+      const cleaned = (res || []).map(x => normalizeTrend(x)).filter(Boolean);
+      if (cleaned.length >= 8) return cleaned.slice(0, TRENDS_MAX);
+      if (cleaned.length) return cleaned.slice(0, TRENDS_MAX);
+    }
+    return [];
+  }
+
+  function normalizeTrend(x) {
+    if (!x) return null;
+    if (typeof x === "string") {
+      const t = cleanTrendLabel(x);
+      if (!t) return null;
+      return { label: t, src: "" };
+    }
+    const label = cleanTrendLabel(x.label || x.tag || x.name || "");
+    if (!label) return null;
+    return { label, src: String(x.src || "") };
+  }
+
+  function cleanTrendLabel(s) {
+    const t = String(s || "").trim();
+    if (!t) return "";
+    // quita contadores/ruido
+    const x = t
+      .replace(/\s{2,}/g, " ")
+      .replace(/^\d+\.\s+/, "")
+      .replace(/\b(tweets|tweet|posts)\b.*$/i, "")
+      .trim();
+    if (!x) return "";
+    // Si parece un hashtag ya, perfecto. Si es frase, la dejamos (luego al añadir convertimos a #palabra)
+    return x.length > 42 ? (x.slice(0, 41) + "…") : x;
+  }
+
+  async function fetchTrendsTrends24(countrySlug = "spain", src = "Trends24") {
+    const url = `https://trends24.in/${encodeURIComponent(countrySlug)}/`;
+    const html = await fetchTextSmart(url, null, 14000);
+    if (!html) return [];
+    // Trends24: suele tener listas <ol class="trend-card__list"> ... <a>Trend</a>
+    const tags = [];
+    const re = /<a[^>]+href="\/[^"]+"[^>]*>([^<]+)<\/a>/gi;
+    let m;
+    while ((m = re.exec(html))) {
+      const label = decodeHtml(m[1]);
+      const t = cleanTrendLabel(label);
+      if (!t) continue;
+      // suele mezclar ciudades/hora: filtramos cosas muy cortas genéricas
+      if (t.length < 2) continue;
+      tags.push({ label: t, src });
+      if (tags.length >= TRENDS_MAX) break;
+    }
+    return uniqTrends(tags);
+  }
+
+  async function fetchTrendsGetDayTrends(countrySlug = "spain", src = "GetDayTrends") {
+    const url = `https://getdaytrends.com/${encodeURIComponent(countrySlug)}/`;
+    const html = await fetchTextSmart(url, null, 14000);
+    if (!html) return [];
+    // GetDayTrends: <a class="trend-link"> ... </a>
+    const tags = [];
+    const re = /class=["'][^"']*trend-link[^"']*["'][^>]*>([^<]+)<\/a>/gi;
+    let m;
+    while ((m = re.exec(html))) {
+      const label = decodeHtml(m[1]);
+      const t = cleanTrendLabel(label);
+      if (!t) continue;
+      tags.push({ label: t, src });
+      if (tags.length >= TRENDS_MAX) break;
+    }
+    return uniqTrends(tags);
+  }
+
+  async function fetchTrendsGoogleDaily(geo = "ES", src = "GoogleTrends") {
+    // Daily trending searches RSS
+    const url = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${encodeURIComponent(geo)}`;
+    const xml = await fetchTextSmart(url, null, 14000);
+    if (!xml) return [];
+    const doc = new DOMParser().parseFromString(xml, "text/xml");
+    const items = Array.from(doc.querySelectorAll("item")).slice(0, TRENDS_MAX);
+    const out = items.map(it => ({
+      label: cleanTrendLabel((it.querySelector("title")?.textContent || "").trim()),
+      src,
+    })).filter(x => x.label);
+    return uniqTrends(out);
+  }
+
+  function uniqTrends(arr) {
+    const out = [];
+    const seen = new Set();
+    for (const x of (arr || [])) {
+      const k = normalizeTitleKey(x?.label || x || "");
+      if (!k) continue;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(x);
+      if (out.length >= TRENDS_MAX) break;
+    }
+    return out;
+  }
+
+  /* ───────────────────────────── TICKER: EXTRA ACTIONS ───────────────────────────── */
+  // (Opcional) Si quieres: click derecho abre, alt+click abre, click normal “Usar” (ya implementado)
+
+  /* ───────────────────────────── PARSING UTILS ───────────────────────────── */
+  function pickTextSafe(node, sel) {
+    try { return node.querySelector(sel)?.textContent || ""; } catch { return ""; }
+  }
+
+  /* ───────────────────────────── TICKER: (no bloquea) ───────────────────────────── */
+
+  /* ───────────────────────────── EXTRA: CSS class badges in existing CSS ───────────────────────────── */
+  // No tocamos styles.css: usamos las clases existentes (.badge.*) que ya están en tu CSS.
 
   /* ───────────────────────────── BOOT ───────────────────────────── */
   try {

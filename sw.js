@@ -4,6 +4,7 @@
    ✅ Stale-while-revalidate para imágenes/favicons
    ✅ Limpieza automática de caches antiguos
    ✅ Soporta SKIP_WAITING (la app lo envía) => update instantáneo
+   ✅ Compat con index.html + styles.css actualizados (ticker/popticker no requiere nada extra)
 */
 
 "use strict";
@@ -23,12 +24,23 @@ const CACHE_KEEP_PREFIXES = [
   `${CACHE_PREFIX}-img-`,
 ];
 
+/**
+ * Importante:
+ * - Si algún icon no existe en tu repo, NO rompe: usamos Promise.allSettled.
+ * - Rutas relativas " ./ " funcionan bien en GitHub Pages.
+ */
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./manifest.webmanifest",
+
+  // Icons (si están, se cachean; si no, se ignoran sin romper)
+  "./assets/icons/favicon-32.png",
+  "./assets/icons/apple-touch-icon-152.png",
+  "./assets/icons/apple-touch-icon-167.png",
+  "./assets/icons/apple-touch-icon-180.png",
   "./assets/icons/icon-192.png",
   "./assets/icons/icon-512.png",
   "./assets/icons/icon-192-maskable.png",
@@ -60,12 +72,18 @@ function isFeedLike(reqUrl) {
   const h = u.hostname.toLowerCase();
   const qs = u.search.toLowerCase();
 
+  // proxies / helpers usados por app.js
   if (h.includes("allorigins.win")) return true;
   if (h.includes("r.jina.ai")) return true;
   if (h.includes("translate.googleapis.com")) return true;
+
+  // Google News RSS
   if (h.includes("news.google.com") && p.includes("/rss")) return true;
+
+  // GDELT JSON
   if (h.includes("api.gdeltproject.org")) return true;
 
+  // heurística general RSS/Atom/JSON
   if (p.includes("rss") || p.includes("atom") || p.endsWith(".xml")) return true;
   if (p.endsWith(".json") || qs.includes("format=json") || qs.includes("output=json")) return true;
 
@@ -77,6 +95,7 @@ function isImageLike(reqUrl) {
   const p = u.pathname.toLowerCase();
   const h = u.hostname.toLowerCase();
 
+  // favicons endpoint
   if (h.includes("google.com") && p.includes("/s2/favicons")) return true;
 
   return (
@@ -140,10 +159,24 @@ async function cacheFirst(req, cacheName, timeoutMs = 12000) {
   }
 }
 
+async function precacheShell() {
+  const cache = await caches.open(CACHE_SHELL);
+
+  // "cache: reload" fuerza a traer la versión nueva del server cuando instalas SW
+  const requests = SHELL_ASSETS.map((u) => {
+    try {
+      return new Request(u, { cache: "reload" });
+    } catch {
+      return u;
+    }
+  });
+
+  await Promise.allSettled(requests.map((r) => cache.add(r)));
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
-    const cache = await caches.open(CACHE_SHELL);
-    await Promise.allSettled(SHELL_ASSETS.map((u) => cache.add(u)));
+    await precacheShell();
     self.skipWaiting();
   })());
 });
@@ -154,7 +187,7 @@ self.addEventListener("activate", (event) => {
     const keepExact = new Set([CACHE_SHELL, CACHE_RUNTIME, CACHE_FEEDS, CACHE_IMAGES]);
 
     await Promise.allSettled(keys.map(async (k) => {
-      const isOurs = CACHE_KEEP_PREFIXES.some(pref => k.startsWith(pref));
+      const isOurs = CACHE_KEEP_PREFIXES.some((pref) => k.startsWith(pref));
       if (isOurs && !keepExact.has(k)) await caches.delete(k);
     }));
 
@@ -176,7 +209,7 @@ self.addEventListener("fetch", (event) => {
   const url = req.url;
   const same = isSameOrigin(url);
 
-  // NAVIGATION
+  // NAVIGATION (SPA-ish fallback a index.html)
   if (req.mode === "navigate" || (same && isHtml(req))) {
     event.respondWith((async () => {
       const fresh = await networkFirst(req, CACHE_RUNTIME, 9000);
@@ -190,24 +223,24 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // SHELL
+  // SHELL assets same-origin
   if (same && isAsset(url)) {
     event.respondWith(cacheFirst(req, CACHE_SHELL, 12000));
     return;
   }
 
-  // FEEDS/APIs
+  // FEEDS/APIs (network-first)
   if (isFeedLike(url)) {
     event.respondWith(networkFirst(req, CACHE_FEEDS, 14000));
     return;
   }
 
-  // IMAGES
+  // IMAGES/FAVICONS (SWR)
   if (isImageLike(url)) {
     event.respondWith(staleWhileRevalidate(req, CACHE_IMAGES, 14000));
     return;
   }
 
-  // REST
+  // REST (SWR)
   event.respondWith(staleWhileRevalidate(req, CACHE_RUNTIME, 12000));
 });

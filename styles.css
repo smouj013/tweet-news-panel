@@ -1,25 +1,24 @@
-/* styles.css — News → Tweet Template Panel (tnp-v4.0.1) — X Classic Dark PRO (Timeline + Pills)
+/* styles.css — News → Tweet Template Panel (tnp-v4.0.1) — X Classic Dark PRO + REALTIME TICKERS
    ✅ Look “X” clásico: negro + divisores #2F3336 + hover sutil + azul sobrio
    ✅ Timeline real: items “flat” con separadores (sin tarjetas flotantes)
-   ✅ Mantiene clases/IDs (NO rompe markup)
-   ✅ Rendimiento: sin sombras caras, animaciones mínimas, layout estable, contain donde ayuda
-   ✅ Ajustes PRO: mejor responsive, mejor topbar wrap, mejor “composer”, modal más fino, accesibilidad
+   ✅ Compatible con app.js tnp-v4.0.1 y con el index.html actualizado (ticker + popticker)
+   ✅ Rendimiento: pocas sombras, animaciones mínimas, layout estable, contain/content-visibility donde ayuda
 */
 
 :root{
   /* Core (X-like) */
   --bg: #000000;
-  --surface: #000000;                /* panel base */
-  --surface2: rgba(255,255,255,.03); /* sutil elevación */
-  --border: #2F3336;                 /* X dark divider */
-  --borderSoft: rgba(255,255,255,.08);
+  --surface: #000000;                 /* panel base */
+  --surface2: rgba(255,255,255,03);   /* sutil elevación */
+  --border: #2F3336;                  /* X dark divider */
+  --borderSoft: rgba(255,255,255,08);
 
-  --text: #E7E9EA;                   /* X primary text */
-  --muted: #71767B;                  /* X secondary text */
-  --muted2: rgba(231,233,234,.62);
+  --text: #E7E9EA;                    /* X primary text */
+  --muted: #71767B;                   /* X secondary text */
+  --muted2: rgba(231,233,234,62);
 
   --xBlue: #1D9BF0;
-  --xBlueSoft: rgba(29,155,240,.14);
+  --xBlueSoft: rgba(29,155,240,14);
 
   --good: #00BA7C;
   --warn: #F5A524;
@@ -31,8 +30,9 @@
   --pill: 999px;
 
   /* Sizes */
-  --topbarH: 64px; /* JS puede ajustarlo si implementas ResizeObserver */
-  --tap: rgba(29,155,240,.18);
+  --topbarH: 64px;     /* si tu JS lo recalcula, perfecto */
+  --tickerH: 44px;     /* barra de tickers (desktop). si la ocultas y quieres 0, ajusta esta var */
+  --tap: rgba(29,155,240,18);
 
   /* Layout caps */
   --maxW: 1265px;
@@ -43,10 +43,10 @@
   text-rendering: optimizeLegibility;
 }
 
-*{ box-sizing:border-box; }
-html,body{ height:100%; }
+*{ box-sizing: border-box; }
+html,body{ height: 100%; }
 body{
-  margin:0;
+  margin: 0;
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -54,15 +54,15 @@ body{
 }
 
 .hidden{ display:none !important; }
-.hr{ height:1px; background: var(--borderSoft); margin: 14px 0; }
+.hr{ height: 1px; background: var(--borderSoft); margin: 14px 0; }
 .muted{ color: var(--muted); }
 
 a{ color: var(--xBlue); text-decoration: none; }
-a:hover{ color: rgba(29,155,240,.92); }
+a:hover{ color: rgba(29,155,240,92); }
 
 /* Focus */
 :focus-visible{
-  outline: 2px solid rgba(29,155,240,.55);
+  outline: 2px solid rgba(29,155,240,55);
   outline-offset: 2px;
   border-radius: 12px;
 }
@@ -73,24 +73,24 @@ a:hover{ color: rgba(29,155,240,.92); }
 /* Scrollbars (sutil) */
 *{
   scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,.18) rgba(0,0,0,.35);
+  scrollbar-color: rgba(255,255,255,18) rgba(0,0,0,35);
 }
 *::-webkit-scrollbar{ width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb{
-  background: rgba(255,255,255,.14);
+  background: rgba(255,255,255,14);
   border-radius: 999px;
-  border: 2px solid rgba(0,0,0,.55);
+  border: 2px solid rgba(0,0,0,55);
 }
-*::-webkit-scrollbar-track{ background: rgba(0,0,0,.35); }
+*::-webkit-scrollbar-track{ background: rgba(0,0,0,35); }
 
 /* ───────────────── TOPBAR ───────────────── */
 .topbar{
   position: sticky;
-  top:0;
+  top: 0;
   z-index: 30;
   width: 100%;
   border-bottom: 1px solid var(--border);
-  background: rgba(0,0,0,.92);
+  background: rgba(0,0,0,92);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   padding: 10px 12px;
@@ -129,11 +129,11 @@ a:hover{ color: rgba(29,155,240,.92); }
   width: 12px; height: 12px;
   border-radius: 999px;
   background: var(--xBlue);
-  box-shadow: 0 0 0 4px rgba(29,155,240,.10);
+  box-shadow: 0 0 0 4px rgba(29,155,240,10);
 }
 .brandTitle{
   font-weight: 900;
-  letter-spacing:.2px;
+  letter-spacing: .2px;
   line-height: 1.05;
 }
 .brandSub{
@@ -153,10 +153,10 @@ a:hover{ color: rgba(29,155,240,.92); }
 /* status chip */
 .status{
   border: 1px solid var(--border);
-  background: rgba(255,255,255,.04);
+  background: rgba(255,255,255,04);
   padding: 8px 12px;
   border-radius: var(--pill);
-  color: rgba(231,233,234,.80);
+  color: rgba(231,233,234,80);
   font-size: 12px;
   max-width: 46vw;
   overflow:hidden;
@@ -164,10 +164,133 @@ a:hover{ color: rgba(29,155,240,.92); }
   white-space: nowrap;
 }
 
+/* ───────────────── REALTIME TICKERS (News + Trends + Pop) ───────────────── */
+.tickerBar{
+  position: sticky;
+  top: var(--topbarH);
+  z-index: 25;
+  height: var(--tickerH);
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  padding: 8px 12px;
+  overflow:hidden;
+}
+
+.tickerRow{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.tickerLabel{
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .2px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,12);
+  background: rgba(255,255,255,04);
+  color: rgba(231,233,234,88);
+  white-space: nowrap;
+  user-select: none;
+}
+.tickerLabel.news{
+  border-color: rgba(245,158,11,28);
+  background: rgba(245,158,11,10);
+}
+.tickerLabel.trends{
+  border-color: rgba(29,155,240,28);
+  background: rgba(29,155,240,10);
+}
+
+.tickerViewport{
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow:hidden;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,10);
+  background: rgba(255,255,255,03);
+  height: 30px;
+  display:flex;
+  align-items:center;
+}
+
+.tickerTrack{
+  display:inline-block;
+  white-space: nowrap;
+  padding-left: 12px;
+  padding-right: 12px;
+  color: rgba(231,233,234,88);
+  font-size: 12px;
+  font-weight: 700;
+  will-change: transform;
+  animation: tnp_marquee 24s linear infinite;
+}
+.tickerTrack[data-speed="slow"]{ animation-duration: 34s; }
+.tickerTrack[data-speed="fast"]{ animation-duration: 18s; }
+.tickerTrack[data-nomove="1"]{ animation: none !important; }
+
+@keyframes tnp_marquee{
+  0%{ transform: translateX(0); }
+  100%{ transform: translateX(-55%); }
+}
+
+/* Pop ticker (toast flotante) */
+.popTicker{
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 80;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,12);
+  background: rgba(0,0,0,86);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 10px 12px;
+  color: rgba(231,233,234,92);
+  box-shadow: 0 10px 35px rgba(0,0,0,45);
+  display:flex;
+  gap: 10px;
+  align-items:flex-start;
+}
+.popDot{
+  width: 10px; height: 10px;
+  border-radius: 999px;
+  background: #1D9BF0;
+  box-shadow: 0 0 0 4px rgba(29,155,240,10);
+  margin-top: 4px;
+  flex: 0 0 auto;
+}
+.popBody{ min-width: 0; }
+.popTitle{
+  font-weight: 900;
+  letter-spacing: .12px;
+  margin: 0 0 2px 0;
+  font-size: 12px;
+  color: rgba(231,233,234,88);
+}
+.popText{
+  margin: 0;
+  font-size: 13px;
+  font-weight: 750;
+  color: rgba(231,233,234,94);
+  word-break: break-word;
+}
+
 /* ───────────────── LAYOUT ───────────────── */
 /* X centra contenido y limita ancho */
 .layout{
-  height: calc(100vh - var(--topbarH));
+  height: calc(100vh - var(--topbarH) - var(--tickerH));
   padding: 12px;
   display:grid;
   grid-template-columns: 1fr 1.25fr;
@@ -181,6 +304,12 @@ a:hover{ color: rgba(29,155,240,.92); }
 }
 
 @media (max-width: 980px){
+  .tickerBar{
+    position: static;
+    height: auto;
+    padding: 10px 12px;
+  }
+  .tickerViewport{ height: 32px; }
   .layout{
     grid-template-columns: 1fr;
     height: auto;
@@ -205,7 +334,7 @@ a:hover{ color: rgba(29,155,240,.92); }
 .panelHead{
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,.02);
+  background: rgba(255,255,255,02);
   display:flex;
   align-items:center;
   justify-content: space-between;
@@ -213,10 +342,10 @@ a:hover{ color: rgba(29,155,240,.92); }
   flex-wrap: wrap;
 }
 .panelHead h2{
-  margin:0;
+  margin: 0;
   font-size: 15px;
   font-weight: 900;
-  letter-spacing:.15px;
+  letter-spacing: .15px;
 }
 
 .panelBody{
@@ -229,7 +358,7 @@ a:hover{ color: rgba(29,155,240,.92); }
 .newsTop{
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,.02);
+  background: rgba(255,255,255,02);
 }
 .newsList{
   padding: 0;
@@ -274,24 +403,23 @@ a:hover{ color: rgba(29,155,240,.92); }
 /* Inputs estilo X */
 .input, .select, .textarea{
   border: 1px solid var(--border);
-  background: rgba(255,255,255,.04);
+  background: rgba(255,255,255,04);
   color: var(--text);
   border-radius: 12px;
   padding: 10px 12px;
   outline: none;
 }
-
 .select{ cursor:pointer; }
-.input::placeholder, .textarea::placeholder{ color: rgba(231,233,234,.45); }
+.input::placeholder, .textarea::placeholder{ color: rgba(231,233,234,45); }
 
 .input:focus, .select:focus, .textarea:focus{
-  border-color: rgba(29,155,240,.75);
-  box-shadow: 0 0 0 3px rgba(29,155,240,.12);
-  background: rgba(29,155,240,.06);
+  border-color: rgba(29,155,240,75);
+  box-shadow: 0 0 0 3px rgba(29,155,240,12);
+  background: rgba(29,155,240,06);
 }
 
 .textarea{
-  width:100%;
+  width: 100%;
   resize: vertical;
   min-height: 110px;
   line-height: 1.25;
@@ -313,7 +441,7 @@ input[type="checkbox"]{
 /* ───────────────── BUTTONS ───────────────── */
 .btn{
   border: 1px solid var(--border);
-  background: rgba(255,255,255,.04);
+  background: rgba(255,255,255,04);
   color: var(--text);
   border-radius: var(--pill);
   padding: 9px 12px;
@@ -324,18 +452,18 @@ input[type="checkbox"]{
   user-select: none;
 }
 .btn:hover{
-  border-color: rgba(255,255,255,.18);
-  background: rgba(255,255,255,.06);
+  border-color: rgba(255,255,255,18);
+  background: rgba(255,255,255,06);
 }
 .btn:active{ filter: brightness(.96); }
 
 .btn.primary{
-  border-color: rgba(29,155,240,.85);
+  border-color: rgba(29,155,240,85);
   background: var(--xBlue);
   color: #fff;
 }
 .btn.primary:hover{
-  background: rgba(29,155,240,.92);
+  background: rgba(29,155,240,92);
   border-color: rgba(29,155,240,1);
 }
 
@@ -349,7 +477,7 @@ input[type="checkbox"]{
   margin: 12px 0 0 0;
   border: 1px solid var(--border);
   border-radius: var(--r2);
-  background: rgba(255,255,255,.03);
+  background: rgba(255,255,255,03);
   padding: 12px;
   overflow:auto;
   white-space: pre-wrap;
@@ -365,9 +493,9 @@ input[type="checkbox"]{
   margin-top: 10px;
   padding: 10px 12px;
   border-radius: var(--r2);
-  border: 1px solid rgba(244,33,46,.35);
-  background: rgba(244,33,46,.08);
-  color: rgba(255,230,236,.95);
+  border: 1px solid rgba(244,33,46,35);
+  background: rgba(244,33,46,08);
+  color: rgba(255,230,236,95);
 }
 
 /* ───────────────── NEWS TIMELINE (X-like) ───────────────── */
@@ -390,11 +518,11 @@ input[type="checkbox"]{
   border-top: 1px solid var(--border);
 }
 .newsItem:hover{
-  background: rgba(255,255,255,.03);
+  background: rgba(255,255,255,03);
 }
 
 .newsItem.top{
-  background: rgba(245,158,11,.06);
+  background: rgba(245,158,11,06);
 }
 
 /* Responsive */
@@ -412,7 +540,7 @@ input[type="checkbox"]{
   border-radius: 16px;
   overflow:hidden;
   border: 1px solid var(--border);
-  background: rgba(255,255,255,.04);
+  background: rgba(255,255,255,04);
   cursor:pointer;
 
   /* evita reflow por imágenes */
@@ -421,8 +549,8 @@ input[type="checkbox"]{
 @media (max-width: 520px){ .newsThumbWrap{ width: 96px; } }
 
 .newsThumb{
-  width:100%;
-  height:100%;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   display:block;
 }
@@ -442,7 +570,7 @@ input[type="checkbox"]{
   display:block;
   margin-top: 6px;
   font-weight: 650;
-  color: rgba(231,233,234,.62);
+  color: rgba(231,233,234,62);
   font-size: 12px;
 }
 
@@ -462,29 +590,29 @@ input[type="checkbox"]{
   font-size: 11px;
   padding: 4px 9px;
   border-radius: var(--pill);
-  border: 1px solid rgba(255,255,255,.10);
-  background: rgba(255,255,255,.04);
-  color: rgba(231,233,234,.92);
+  border: 1px solid rgba(255,255,255,10);
+  background: rgba(255,255,255,04);
+  color: rgba(231,233,234,92);
 }
 .badge.ready{
-  border-color: rgba(0,186,124,.30);
-  background: rgba(0,186,124,.10);
+  border-color: rgba(0,186,124,30);
+  background: rgba(0,186,124,10);
 }
 .badge.queue{
-  border-color: rgba(245,158,11,.30);
-  background: rgba(245,158,11,.10);
+  border-color: rgba(245,158,11,30);
+  background: rgba(245,158,11,10);
 }
 .badge.top{
-  border-color: rgba(245,158,11,.38);
-  background: rgba(245,158,11,.12);
+  border-color: rgba(245,158,11,38);
+  background: rgba(245,158,11,12);
 }
 .badge.domain{
-  border-color: rgba(29,155,240,.30);
-  background: rgba(29,155,240,.10);
+  border-color: rgba(29,155,240,30);
+  background: rgba(29,155,240,10);
 }
 .badge.cat{
-  border-color: rgba(255,255,255,.12);
-  background: rgba(255,255,255,.03);
+  border-color: rgba(255,255,255,12);
+  background: rgba(255,255,255,03);
 }
 
 /* Actions row */
@@ -504,8 +632,8 @@ input[type="checkbox"]{
   height: 34px;
   padding: 0 12px;
   border-radius: var(--pill);
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,12);
+  background: rgba(255,255,255,04);
   color: var(--text);
   cursor:pointer;
   font-size: 13px;
@@ -513,8 +641,8 @@ input[type="checkbox"]{
   transition: background .12s ease, border-color .12s ease, filter .12s ease;
 }
 .newsLink:hover{
-  border-color: rgba(29,155,240,.30);
-  background: rgba(29,155,240,.10);
+  border-color: rgba(29,155,240,30);
+  background: rgba(29,155,240,10);
 }
 .newsLink:active{ filter: brightness(.97); }
 
@@ -522,7 +650,7 @@ input[type="checkbox"]{
 .modal{
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.72);
+  background: rgba(0,0,0,72);
   display:flex;
   align-items:center;
   justify-content:center;
@@ -538,7 +666,7 @@ input[type="checkbox"]{
   overflow: hidden;
   border-radius: 18px;
   border: 1px solid var(--border);
-  background: rgba(0,0,0,.92);
+  background: rgba(0,0,0,92);
   display:flex;
   flex-direction: column;
 }
@@ -549,19 +677,19 @@ input[type="checkbox"]{
   justify-content:space-between;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,.02);
+  background: rgba(255,255,255,02);
 }
 .modalHead h3{
-  margin:0;
+  margin: 0;
   font-size: 15px;
-  letter-spacing:.15px;
+  letter-spacing: .15px;
   font-weight: 900;
 }
 
 .modalBody{
   padding: 14px;
   overflow:auto;
-  min-height:0;
+  min-height: 0;
 }
 
 .modalFoot{
@@ -570,7 +698,7 @@ input[type="checkbox"]{
   justify-content:space-between;
   padding: 12px 14px;
   border-top: 1px solid var(--border);
-  background: rgba(255,255,255,.02);
+  background: rgba(255,255,255,02);
 }
 
 /* Feeds list */
@@ -593,7 +721,11 @@ input[type="checkbox"]{
 
 /* ───────────────── A11Y / MOTION ───────────────── */
 @media (prefers-reduced-motion: reduce){
-  *{ transition:none !important; animation:none !important; scroll-behavior:auto !important; }
+  *{
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ───────────────── Small screen tweaks ───────────────── */
@@ -613,15 +745,12 @@ input[type="checkbox"]{
   }
 }
 
-/* ───────────────── Extra: sticky panel heads en scroll (súper útil) ───────────────── */
-/* Mantiene el estilo X (headers pegados) sin romper layout */
+/* ───────────────── Extra: sticky panel heads en scroll ───────────────── */
 .panel .panelHead{
   position: sticky;
   top: 0;
   z-index: 5;
 }
-.panel.right .panelHead{ top: 0; }
-.panel.left .panelHead{ top: 0; }
 
 /* En móvil (layout 1 columna) evita doble sticky “extraño” */
 @media (max-width: 980px){
