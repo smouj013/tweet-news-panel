@@ -23,6 +23,26 @@
   <link rel="stylesheet" href="./styles.css" />
 
   <title>News → Tweet Template Panel</title>
+
+  <!-- Mini CSS local SOLO para banner de reparación (no rompe tu styles.css) -->
+  <style>
+    .bootDiag{
+      position: fixed;
+      inset: auto 14px 14px 14px;
+      z-index: 9999;
+      display: grid;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(8,12,20,0.92);
+      box-shadow: 0 14px 50px rgba(0,0,0,0.55);
+    }
+    .bootDiag__row{ display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+    .bootDiag__title{ font-weight: 900; }
+    .bootDiag__msg{ color: rgba(231,233,234,0.70); font-size: 12px; line-height: 1.35; }
+    .bootDiag .btn{ white-space: nowrap; }
+  </style>
 </head>
 
 <body>
@@ -328,6 +348,175 @@
   <noscript>
     <div class="noscript">Necesitas JavaScript para usar esta app.</div>
   </noscript>
+
+  <!-- Banner de reparación (aparece si la app no “engancha” por caché/SW viejo) -->
+  <div id="bootDiag" class="bootDiag" hidden>
+    <div class="bootDiag__title">⚠️ La app no ha arrancado (probable caché / Service Worker)</div>
+    <div class="bootDiag__msg">
+      Si ves que ningún botón responde o no se refresca nada, suele ser porque el navegador está sirviendo un <b>app.js viejo</b> desde caché.
+      Pulsa <b>Reparar</b> para limpiar caches + desregistrar SW y recargar.
+    </div>
+    <div class="bootDiag__row">
+      <button id="btnRepair" class="btn btn--primary btn--sm" type="button">Reparar (limpiar caché + SW)</button>
+      <button id="btnForceSwUpdate" class="btn btn--sm" type="button">Forzar update SW</button>
+      <button id="btnHideDiag" class="btn btn--sm" type="button">Ocultar</button>
+    </div>
+  </div>
+
+  <!-- BOOTSTRAP: auto-update SW + diagnóstico + “reparar” aunque app.js esté roto -->
+  <script>
+    (function () {
+      "use strict";
+
+      var SW_URL = "./sw.js";
+      var bootDiag = document.getElementById("bootDiag");
+      var statusEl = document.getElementById("status");
+      var repairBtn = document.getElementById("btnRepair");
+      var forceBtn = document.getElementById("btnForceSwUpdate");
+      var hideBtn = document.getElementById("btnHideDiag");
+
+      function setStatusSafe(msg) {
+        try { if (statusEl) statusEl.textContent = msg; } catch {}
+      }
+
+      // 1) Captura errores JS y los muestra en status (cuando el bug “mata” listeners)
+      window.addEventListener("error", function (e) {
+        try {
+          var m = (e && (e.message || (e.error && e.error.message))) ? (e.message || e.error.message) : "Error JS";
+          setStatusSafe("❌ " + m);
+        } catch {}
+      });
+
+      // 2) Auto-update SW robusto (sin depender de app.js)
+      var swReg = null;
+      var swReloading = false;
+
+      async function registerAndUpdateSW() {
+        if (!("serviceWorker" in navigator)) return;
+
+        try {
+          // updateViaCache:none ayuda a evitar que el propio sw.js quede cacheado por HTTP cache
+          swReg = await navigator.serviceWorker.register(SW_URL, { updateViaCache: "none" });
+        } catch (e) {
+          // si falla, no matamos la app
+          return;
+        }
+
+        try { await swReg.update(); } catch {}
+
+        function trySkipWaiting(reg) {
+          try {
+            if (!reg) return;
+            var w = reg.waiting;
+            if (w) w.postMessage({ type: "SKIP_WAITING" });
+          } catch {}
+        }
+
+        // cuando detecta update
+        swReg.addEventListener("updatefound", function () {
+          try {
+            var nw = swReg.installing;
+            if (!nw) return;
+
+            nw.addEventListener("statechange", function () {
+              // cuando se instala uno nuevo y ya hay controller => es update real
+              if (nw.state === "installed" && navigator.serviceWorker.controller) {
+                trySkipWaiting(swReg);
+              }
+            });
+          } catch {}
+        });
+
+        navigator.serviceWorker.addEventListener("controllerchange", function () {
+          if (swReloading) return;
+          swReloading = true;
+          location.reload();
+        });
+
+        // “mantenimiento”: fuerza update check periódico
+        setInterval(function () {
+          try { if (swReg) swReg.update(); } catch {}
+        }, 60 * 1000);
+      }
+
+      registerAndUpdateSW();
+
+      // 3) Diagnóstico: si en 3s no cambió el status típico de app.js -> mostrar banner
+      function shouldShowDiag() {
+        var s = (statusEl && statusEl.textContent) ? statusEl.textContent.trim() : "";
+        // app.js suele poner "TNP listo (...)" cuando ha bindeado listeners
+        if (s.indexOf("TNP listo") !== -1) return false;
+        // si ya hay texto distinto a "Listo" y no es error, probablemente sí arrancó
+        if (s && s !== "Listo" && s.indexOf("❌") === -1) return false;
+        return true;
+      }
+
+      window.addEventListener("load", function () {
+        setTimeout(function () {
+          try {
+            if (bootDiag && shouldShowDiag()) bootDiag.hidden = false;
+          } catch {}
+        }, 3000);
+      });
+
+      // 4) Botones del banner de reparación (funcionan aunque app.js no)
+      async function purgeAllTnpCachesAndSw() {
+        // OJO: esto borra caches (PWA) y puede resetear offline, pero arregla “no se actualiza”
+        try {
+          if ("serviceWorker" in navigator) {
+            var regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map(function (r) { try { return r.unregister(); } catch { return null; } }));
+          }
+        } catch {}
+
+        try {
+          if ("caches" in window) {
+            var keys = await caches.keys();
+            await Promise.all(keys.map(function (k) {
+              // borra caches del proyecto (prefijo tnp-)
+              if (String(k).indexOf("tnp-") === 0) return caches.delete(k);
+              return Promise.resolve(false);
+            }));
+          }
+        } catch {}
+
+        // NO borro localStorage aquí para no cargarte feeds/settings.
+        // Si quieres reset total, usa tu botón “Reset” cuando la app arranque.
+      }
+
+      if (repairBtn) {
+        repairBtn.addEventListener("click", async function () {
+          setStatusSafe("Reparando… (limpiando cachés/SW)");
+          await purgeAllTnpCachesAndSw();
+          location.reload();
+        });
+      }
+
+      if (forceBtn) {
+        forceBtn.addEventListener("click", async function () {
+          setStatusSafe("Forzando update SW…");
+          try {
+            if (swReg) {
+              await swReg.update();
+              // si ya hay uno esperando, le pedimos activar
+              try { if (swReg.waiting) swReg.waiting.postMessage({ type: "SKIP_WAITING" }); } catch {}
+            } else {
+              await registerAndUpdateSW();
+            }
+            setStatusSafe("Update SW solicitado.");
+          } catch {
+            setStatusSafe("Update SW falló.");
+          }
+        });
+      }
+
+      if (hideBtn) {
+        hideBtn.addEventListener("click", function () {
+          if (bootDiag) bootDiag.hidden = true;
+        });
+      }
+    })();
+  </script>
 
   <!-- app.js v4.1.1 (NO module) -->
   <script defer src="./app.js"></script>
