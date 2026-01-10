@@ -1,14 +1,16 @@
 {
   "name": "News → Tweet Template Panel",
   "short_name": "TweetNews",
-  "description": "Panel PRO para extraer noticias (RSS/Atom/JSON), resolver link original, imágenes y generar plantilla lista para X.",
+  "description": "Panel PRO para extraer noticias (RSS/Atom), resolver link original, imágenes y generar plantilla lista para X.",
   "start_url": "./?source=pwa",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
-  "lang": "es",
-  "orientation": "portrait",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "background_color": "#070A12",
+  "theme_color": "#070A12",
+  "lang": "es-ES",
+  "dir": "ltr",
+  "orientation": "any",
   "categories": ["news", "productivity", "utilities"],
   "icons": [
     {
@@ -35,5 +37,7 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "id": "./?app=TweetNews",
+  "prefer_related_applications": false
 }
