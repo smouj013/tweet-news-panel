@@ -1,16 +1,15 @@
 /* app.js — News → Tweet Template Panel (tnp-v4.0.1) — PRO FAST+ (50+ feeds + ES robust + AUTO-UPDATE PWA)
    ✅ Rendimiento PRO:
       - Render estable + firma (evita re-render inútil)
-      - Visible-only para resolve/OG (no bloquea UI)
-      - Traducción ES prioritaria y agresiva (visible-first + retries)
-      - Concurrencias ajustadas + colas dedup + backoff por feed
-      - Batch feeds (auto-refresh por lotes) + “force refresh” con Shift
+      - Visible-only para resolve/OG, pero traducción ES prioritaria
+      - Concurrencias ajustadas y colas dedup
+      - Batch feeds (auto-refresh por lotes) + backoff por feed
    ✅ ES “siempre” (modo por defecto):
-      - Traduce títulos visibles si falta titleEs (sin depender del detector)
-      - Parser robusto del endpoint de Google Translate + fallback AllOrigins
+      - Traduce agresivamente títulos visibles (aunque el detector falle)
+      - Retries + parsing robusto del endpoint de Google Translate
    ✅ Auto-update PWA real:
-      - update() periódica + al volver a la pestaña
-      - si hay SW nuevo -> SKIP_WAITING -> reload 1 vez (guard session)
+      - update() periódica
+      - si hay SW nuevo -> SKIP_WAITING -> reload 1 vez (guard)
    ✅ Mantiene tus IDs/UI + localStorage v4, migra v3→v4
 */
 
@@ -42,11 +41,11 @@
 
   // resolve links (visible-only)
   const RESOLVE_CONCURRENCY = 3;
-  const VISIBLE_RESOLVE_LIMIT = 60;   // se ajusta por showLimit
+  const VISIBLE_RESOLVE_LIMIT = 60;
 
   // translate (prioridad)
-  const TR_CONCURRENCY = 4;           // agresivo pero estable
-  const VISIBLE_TRANSLATE_LIMIT = 80; // se ajusta por showLimit
+  const TR_CONCURRENCY = 4;
+  const VISIBLE_TRANSLATE_LIMIT = 80;
 
   // OG visible-only
   const IMG_CONCURRENCY = 2;
@@ -64,7 +63,7 @@
   const VERSION = "tnp-v4.0.1";
 
   // PWA update checks
-  const SW_UPDATE_CHECK_MS = 5 * 60_000;   // 5 min
+  const SW_UPDATE_CHECK_MS = 5 * 60_000; // 5 min
   const SW_FORCE_RELOAD_GUARD = "tnp_sw_reloaded_once";
 
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
@@ -85,6 +84,7 @@ Fuente:
   const gnTop = (q) => gn(`${q} when:1d`);
   const gnSite = (domain, q="") => gnTop(`site:${domain} ${q}`.trim());
 
+  // GDELT JSON (no siempre “última hora”, pero muy útil)
   const gdeltDoc = (query, max=60) =>
     `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=${encodeURIComponent(String(max))}&sort=HybridRel`;
 
@@ -98,7 +98,7 @@ Fuente:
     { name: "ABC (GN)", url: gnSite("abc.es", "(última hora OR urgente OR breaking)"), enabled: true },
     { name: "20minutos (GN)", url: gnSite("20minutos.es", "(última hora OR urgente OR breaking)"), enabled: true },
     { name: "El Confidencial (GN)", url: gnSite("elconfidencial.com", "(última hora OR urgente OR breaking)"), enabled: true },
-    { name: "El Diario (GN)", url: gnSite("eldiario.es", "(última hora OR urgente OR breaking)"), enabled: true },
+    { name: "eldiario.es (GN)", url: gnSite("eldiario.es", "(última hora OR urgente OR breaking)"), enabled: true },
     { name: "RTVE (GN)", url: gnSite("rtve.es", "(última hora OR urgente OR breaking)"), enabled: true },
     { name: "Europa Press (GN)", url: gnSite("europapress.es", "(última hora OR urgente OR breaking)"), enabled: true },
 
@@ -108,79 +108,48 @@ Fuente:
 
     // ── Economía ES
     { name: "España — Economía (GN)", url: gnTop("IBEX OR inflación OR PIB OR BCE OR tipos OR Euribor OR bolsa España"), enabled: true },
-    { name: "Expansión (GN)", url: gnSite("expansion.com", "(mercados OR bolsa OR empresa OR banca OR ibex)"), enabled: false },
-    { name: "El Economista (GN)", url: gnSite("eleconomista.es", "(mercados OR bolsa OR ibex OR bancos)"), enabled: false },
+    { name: "Expansión (GN)", url: gnSite("expansion.com", "(última hora OR mercados OR bolsa OR ibex OR bce)"), enabled: true },
+    { name: "El Economista (GN)", url: gnSite("eleconomista.es", "(última hora OR bolsa OR ibex OR bce OR euribor)"), enabled: true },
+    { name: "Cinco Días (GN)", url: gnSite("cincodias.elpais.com", "(mercados OR ibex OR bce OR inflación)"), enabled: false },
 
-    // ── Tech ES/Global
-    { name: "Tech — IA (GN)", url: gnTop("OpenAI OR ChatGPT OR Microsoft OR Google OR Meta OR Apple OR Nvidia OR IA"), enabled: true },
-    { name: "Xataka (GN)", url: gnSite("xataka.com", "(IA OR inteligencia artificial OR Apple OR Android OR seguridad)"), enabled: false },
-    { name: "Genbeta (GN)", url: gnSite("genbeta.com", "(seguridad OR IA OR Microsoft OR Google)"), enabled: false },
+    // ── Mundo / Geopolítica
+    { name: "Google News — Mundo (Top)", url: gnTop("última hora mundo OR breaking world OR conflicto OR crisis"), enabled: true },
+    { name: "Reuters (GN)", url: gnSite("reuters.com", "(breaking OR exclusive OR urgent)"), enabled: true },
+    { name: "AP News (GN)", url: gnSite("apnews.com", "(breaking OR latest)"), enabled: false },
+    { name: "BBC (GN)", url: gnSite("bbc.com", "(breaking OR live)"), enabled: false },
+    { name: "Al Jazeera (GN)", url: gnSite("aljazeera.com", "(breaking OR live OR latest)"), enabled: false },
 
-    // ── Mundo (Top)
-    { name: "Google News — Mundo (Top)", url: gnTop("World OR International OR ONU OR UE OR NATO OR G7"), enabled: true },
-    { name: "Reuters — World (GN)", url: gnSite("reuters.com", "world"), enabled: true },
-    { name: "AP — World (GN)", url: gnSite("apnews.com", "world"), enabled: true },
-    { name: "BBC — World (RSS)", url: "https://feeds.bbci.co.uk/news/world/rss.xml", enabled: false },
-    { name: "The Guardian — World (RSS)", url: "https://www.theguardian.com/world/rss", enabled: false },
-    { name: "Al Jazeera (RSS)", url: "https://www.aljazeera.com/xml/rss/all.xml", enabled: false },
-    { name: "DW Español (RSS)", url: "https://rss.dw.com/rdf/rss-es-all", enabled: true },
-    { name: "Euronews (MRSS)", url: "https://www.euronews.com/rss?format=mrss", enabled: true },
+    // ── Guerra / Defensa / OTAN-Ucrania
+    { name: "Ucrania/OTAN (GN)", url: gnTop("OTAN OR NATO OR Ucrania OR Ukraine OR Rusia OR Russia"), enabled: true },
+    { name: "Defense (GN)", url: gnTop("defensa OR missiles OR drones OR military aid OR sanctions"), enabled: false },
 
-    // ── Guerra / Geopolítica
-    { name: "Ucrania/Rusia — Última hora (GN)", url: gnTop("Ucrania OR Rusia OR Putin OR Kiev OR misil OR dron OR ofensiva"), enabled: true },
-    { name: "OTAN/NATO — Última hora (GN)", url: gnTop("OTAN OR NATO OR Article 5 OR alliance OR cumbre"), enabled: true },
-    { name: "Israel/Gaza — Última hora (GN)", url: gnTop("Israel OR Gaza OR Hamas OR ceasefire OR ataque OR bombardeo"), enabled: true },
-
-    // ── Economía global
-    { name: "Mercados — Global (GN)", url: gnTop("stocks OR markets OR inflation OR oil OR gas OR recession OR Fed OR ECB"), enabled: true },
-    { name: "Financial Times (GN)", url: gnSite("ft.com", "(markets OR global economy OR inflation)"), enabled: false },
+    // ── Tech
+    { name: "Tech (GN)", url: gnTop("Apple OR Google OR Microsoft OR OpenAI OR AI OR ciberataque OR cybersecurity"), enabled: true },
+    { name: "The Verge (GN)", url: gnSite("theverge.com", "(breaking OR update OR report)"), enabled: false },
+    { name: "Wired (GN)", url: gnSite("wired.com", "(security OR ai OR breaking)"), enabled: false },
 
     // ── Salud
-    { name: "Salud — Global (GN)", url: gnTop("salud OR OMS OR virus OR brote OR vacuna OR hospital"), enabled: false },
+    { name: "Salud (GN)", url: gnTop("OMS OR WHO OR brote OR vacuna OR alerta sanitaria"), enabled: false },
 
     // ── Deportes
-    { name: "Deportes — Top (GN)", url: gnTop("fútbol OR LaLiga OR Champions OR Real Madrid OR Barcelona OR NBA"), enabled: false },
+    { name: "Deportes (GN)", url: gnTop("Real Madrid OR Barcelona OR LaLiga OR Champions OR fichaje OR lesión"), enabled: false },
 
-    // ── Entretenimiento
-    { name: "Entretenimiento — Top (GN)", url: gnTop("Netflix OR estreno OR serie OR película OR música OR festival"), enabled: false },
-
-    // ── Sucesos / Crimen global
-    { name: "Sucesos — Global (GN)", url: gnTop("tiroteo OR atentado OR detenido OR explosión OR crimen"), enabled: false },
+    // ── Entretenimiento / Cultura
+    { name: "Entretenimiento (GN)", url: gnTop("Netflix OR estreno OR concierto OR festival OR polémica"), enabled: false },
 
     // ── GDELT (JSON)
-    { name: "GDELT — Breaking (JSON)", url: gdeltDoc("breaking OR urgent OR developing", 70), enabled: false },
-    { name: "GDELT — Spain (JSON)", url: gdeltDoc("(Spain OR España) AND (breaking OR urgent OR developing)", 70), enabled: false },
-
-    // ── Más fuentes GN por site: (llegar sobrado a 50)
-    { name: "CNN (GN)", url: gnSite("cnn.com", "world"), enabled: false },
-    { name: "NYTimes (GN)", url: gnSite("nytimes.com", "world"), enabled: false },
-    { name: "Washington Post (GN)", url: gnSite("washingtonpost.com", "world"), enabled: false },
-    { name: "Bloomberg (GN)", url: gnSite("bloomberg.com", "(markets OR economy)"), enabled: false },
-    { name: "Politico (GN)", url: gnSite("politico.com", "(europe OR ukraine OR nato)"), enabled: false },
-    { name: "Le Monde (GN)", url: gnSite("lemonde.fr", "(international OR ukraine OR russie)"), enabled: false },
-    { name: "Der Spiegel (GN)", url: gnSite("spiegel.de", "(international OR ukraine OR russland)"), enabled: false },
-    { name: "France24 (GN)", url: gnSite("france24.com", "(world OR europe)"), enabled: false },
-    { name: "Sky News (GN)", url: gnSite("skynews.com", "(world OR ukraine)"), enabled: false },
-
-    { name: "CNBC (GN)", url: gnSite("cnbc.com", "(markets OR economy)"), enabled: false },
-    { name: "WSJ (GN)", url: gnSite("wsj.com", "(markets OR economy)"), enabled: false },
-    { name: "The Economist (GN)", url: gnSite("economist.com", "(world OR economy)"), enabled: false },
-
-    { name: "Marca (GN)", url: gnSite("marca.com", "(fútbol OR última hora)"), enabled: false },
-    { name: "AS (GN)", url: gnSite("as.com", "(fútbol OR última hora)"), enabled: false },
-
-    { name: "HuffPost ES (GN)", url: gnSite("huffingtonpost.es", "(última hora OR política)"), enabled: false },
-    { name: "La Sexta (GN)", url: gnSite("lasexta.com", "(última hora OR directo)"), enabled: false },
-    { name: "Antena 3 (GN)", url: gnSite("antena3.com", "(última hora OR directo)"), enabled: false },
+    { name: "GDELT — España (Doc)", url: gdeltDoc("Spain OR España", 80), enabled: false },
+    { name: "GDELT — Ukraine (Doc)", url: gdeltDoc("Ukraine OR Ucrania", 80), enabled: false },
+    { name: "GDELT — Economy (Doc)", url: gdeltDoc("inflation OR recession OR ECB OR BCE OR interest rates", 80), enabled: false },
   ];
 
   /* ───────────────────────────── STATE ───────────────────────────── */
   const state = {
     feeds: [],
-    items: [],
-    template: "",
     settings: {},
+    template: "",
     used: new Set(),
+    items: [],
 
     refreshInFlight: false,
     refreshPending: false,
@@ -189,7 +158,6 @@ Fuente:
 
     rerenderQueued: false,
     feedCursor: 0,
-
     lastRenderSig: "",
   };
 
@@ -201,8 +169,8 @@ Fuente:
   const resInFlight = new Map();
   const imgInFlight = new Map();
 
-  const feedFail = new Map();       // url -> { fails, nextAt }
-  const feedTextHash = new Map();   // url -> hash (sesión)
+  const feedFail = new Map();     // url -> { fails, nextAt }
+  const feedTextHash = new Map(); // url -> hash (sesión)
 
   let uiTickTimer = 0;
   let autoRefreshTimer = 0;
@@ -338,12 +306,12 @@ Fuente:
     registerServiceWorker();
   }
 
-  function crashOverlay(err){
+  function crashOverlay(err) {
     console.error(err);
     const div = document.createElement("div");
     div.style.cssText = `
       position:fixed; inset:0; z-index:99999;
-      background:rgba(0,0,0,.88); color:#fff; padding:16px;
+      background:rgba(0,0,0,88); color:#fff; padding:16px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New";
       overflow:auto;
     `;
@@ -361,13 +329,13 @@ Fuente:
   function bindUI() {
     el.btnRefresh.addEventListener("click", (ev) => {
       // shift-click => force + reset backoff
-      const force = !!ev.shiftKey;
-      if (force) {
+      const forceShift = !!ev.shiftKey;
+      if (forceShift) {
         feedFail.clear();
         feedTextHash.clear();
         toast("⚡ Force refresh (shift) · backoff reseteado");
       }
-      refreshAll({ reason: force ? "manual_force" : "manual", force: true });
+      refreshAll({ reason: forceShift ? "manual_force" : "manual", force: true });
     });
 
     el.btnFeeds.addEventListener("click", () => openModal(true));
@@ -531,25 +499,29 @@ Fuente:
       const name = cleanText(el.newFeedName.value || "") || "Feed";
       const url = cleanText(el.newFeedUrl.value || "");
       if (!url) return toast("⚠️ Falta URL.");
+      state.feeds = state.feeds || [];
       state.feeds.push(normalizeFeed({ name, url, enabled: true }));
       el.newFeedName.value = "";
       el.newFeedUrl.value = "";
       renderFeedsModal();
+      toast("➕ Feed añadido (no olvides Guardar).");
     });
 
-    el.btnExportFeeds.addEventListener("click", () => {
-      el.feedsJson.value = JSON.stringify((state.feeds || []).map(normalizeFeed), null, 2);
-      toast("📦 Exportado al textarea.");
+    el.btnExportFeeds.addEventListener("click", async () => {
+      const out = JSON.stringify(state.feeds || [], null, 2);
+      el.feedsJson.value = out;
+      await copyToClipboard(out);
+      toast("📤 Feeds exportados (y copiados).");
     });
 
     el.btnImportFeeds.addEventListener("click", () => {
       const raw = String(el.feedsJson.value || "").trim();
-      if (!raw) return toast("⚠️ Pega JSON primero.");
+      if (!raw) return toast("⚠️ Pega el JSON primero.");
       const j = safeJson(raw);
-      if (!Array.isArray(j)) return toast("❌ JSON inválido (debe ser array).");
+      if (!Array.isArray(j)) return toast("⚠️ JSON inválido (esperaba array).");
       state.feeds = j.map(normalizeFeed).filter(f => f.url);
       renderFeedsModal();
-      toast("✅ Importado. Dale a Guardar.");
+      toast("📥 Feeds importados. Dale a Guardar.");
     });
 
     el.btnRestoreDefaultFeeds.addEventListener("click", () => {
@@ -676,54 +648,49 @@ Fuente:
     const hours = clampNum(el.timeFilter.value, 1, 72);
     const showLimit = clampNum(state.settings.showLimit ?? (el.showLimit ? el.showLimit.value : 10), 10, 50);
     const search = String(el.searchBox.value || "").trim().toLowerCase();
+    const cat = String(state.settings.catFilter || (el.catFilter ? el.catFilter.value : "all") || "all");
+    const sortBy = String(state.settings.sortBy || (el.sortBy ? el.sortBy.value : "recent") || "recent");
 
-    const delay = clampNum(el.delayMin.value, 0, 120);
-    const onlyReady = !!el.optOnlyReady.checked;
-
-    const wantSpanish = state.settings.onlySpanish !== false;
-    const hideUsed = !!state.settings.hideUsed;
-    const sortBy = String(state.settings.sortBy || "recent");
-    const cat = String(state.settings.catFilter || "all");
+    const delayMin = clampNum(state.settings.delayMin ?? (el.delayMin ? el.delayMin.value : 10), 0, 120);
+    const onlyReady = !!(state.settings.onlyReady ?? (el.optOnlyReady ? el.optOnlyReady.checked : false));
+    const hideUsed = !!(state.settings.hideUsed ?? (el.optHideUsed ? el.optHideUsed.checked : false));
 
     const now = Date.now();
     const minMs = now - (hours * 60 * 60 * 1000);
 
-    const filtered = items.filter(it => {
-      if (!it) return false;
-      const ms = Number(it.publishedMs || 0) || 0;
-      if (ms && ms < minMs) return false;
+    // annotate readiness (cheap)
+    for (const it of items) {
+      const ms = Number(it.publishedMs || 0);
+      it._ready = ms ? ((now - ms) >= (delayMin * 60 * 1000)) : false;
+    }
 
-      if (hideUsed && state.used.has(it.id)) return false;
-      if (cat && cat !== "all" && String(it.cat || "all") !== cat) return false;
+    let filtered = items
+      .filter(it => it && Number(it.publishedMs || 0) >= minMs)
+      .filter(it => (cat === "all") ? true : String(it.cat || "all") === cat)
+      .filter(it => !hideUsed || !state.used.has(it.id))
+      .filter(it => !onlyReady || !!it._ready);
 
-      const shownTitle = String(it.titleEs || it.title || "");
-      const hay = it._hay || ((shownTitle + " " + String(it.feed || "")).toLowerCase());
-      it._hay = hay;
-      if (search && !hay.includes(search)) return false;
+    if (search) {
+      filtered = filtered.filter(it => {
+        const hay = it._hay || ((String(it.titleEs || it.title || "") + " " + String(it.feed || "")).toLowerCase());
+        it._hay = hay;
+        return hay.includes(search);
+      });
+    }
 
-      const isReady = ms ? ((now - ms) >= (delay * 60 * 1000)) : false;
-      if (onlyReady && !isReady) return false;
-
-      it._ready = isReady;
-      it._ageMin = ms ? Math.max(0, Math.floor((now - ms) / 60000)) : 0;
-      it.impact = it.impact || calcImpact(it);
-
-      return true;
-    });
-
-    // sort
+    // sorting
     if (sortBy === "impact") {
-      filtered.sort((a, b) => (calcImpact(b) - calcImpact(a)) || (b.publishedMs - a.publishedMs));
-    } else if (sortBy === "source") {
-      filtered.sort((a, b) => String(a.feed).localeCompare(String(b.feed)) || (b.publishedMs - a.publishedMs));
-    } else {
-      filtered.sort((a, b) => {
-        const ai = calcImpact(a), bi = calcImpact(b);
+      filtered.sort((a,b) => {
+        const ai = calcImpact(a);
+        const bi = calcImpact(b);
         const aTop = ai >= 70 ? 1 : 0;
         const bTop = bi >= 70 ? 1 : 0;
         if (bTop !== aTop) return bTop - aTop;
-        return (b.publishedMs - a.publishedMs);
+        if (bi !== ai) return bi - ai;
+        return (Number(b.publishedMs||0) - Number(a.publishedMs||0));
       });
+    } else {
+      filtered.sort((a,b) => (Number(b.publishedMs||0) - Number(a.publishedMs||0)));
     }
 
     const limited = filtered.slice(0, showLimit);
@@ -799,37 +766,37 @@ Fuente:
       meta.appendChild(badge(it._ready ? "ready" : "queue", it._ready ? "LISTO" : "EN COLA"));
       meta.appendChild(badge("domain", domain || "link"));
 
-      const time = document.createElement("span");
-      time.dataset.role = "age";
-      time.textContent = ageLabel(it._ageMin);
-      meta.appendChild(time);
-
-      const src = document.createElement("span");
-      src.textContent = "· " + String(it.feed || "Feed");
-      meta.appendChild(src);
+      const age = document.createElement("span");
+      age.className = "mini muted";
+      age.dataset.role = "age";
+      age.textContent = ageLabel(Math.max(0, Math.floor((Date.now() - Number(it.publishedMs || 0)) / 60000)));
+      meta.appendChild(age);
 
       const actions = document.createElement("div");
       actions.className = "actionsRow";
 
-      const btnUse = linkBtn("Usar", "#");
-      btnUse.addEventListener("click", async (e) => {
-        e.preventDefault();
-        await useItem(it);
-      });
+      const btnUse = document.createElement("button");
+      btnUse.className = "newsLink";
+      btnUse.type = "button";
+      btnUse.textContent = "Usar";
+      btnUse.addEventListener("click", () => useItem(it).catch(() => {}));
 
-      const btnOpen = linkBtn("Abrir", shownUrl || it.link);
-      btnOpen.target = "_blank";
-      btnOpen.rel = "noopener noreferrer";
+      const aOpen = linkBtn("Abrir", shownUrl || it.link || "#");
+      aOpen.target = "_blank";
+      aOpen.rel = "noopener noreferrer";
 
-      const btnMark = linkBtn(state.used.has(it.id) ? "Desmarcar" : "Marcar", "#");
-      btnMark.addEventListener("click", (e) => {
-        e.preventDefault();
+      const btnMark = document.createElement("button");
+      btnMark.className = "newsLink";
+      btnMark.type = "button";
+      const usedNow = state.used.has(it.id);
+      btnMark.textContent = usedNow ? "Desmarcar" : "Marcar";
+      btnMark.addEventListener("click", () => {
         toggleUsed(it.id);
         renderNewsList({ silent: true });
       });
 
       actions.appendChild(btnUse);
-      actions.appendChild(btnOpen);
+      actions.appendChild(aOpen);
       actions.appendChild(btnMark);
 
       body.appendChild(title);
@@ -838,34 +805,46 @@ Fuente:
 
       card.appendChild(thumbWrap);
       card.appendChild(body);
+
       frag.appendChild(card);
 
-      if (visibleForResolve.length < Math.min(VISIBLE_RESOLVE_LIMIT, showLimit)) visibleForResolve.push(it);
-      if (wantSpanish && visibleForTranslate.length < Math.min(VISIBLE_TRANSLATE_LIMIT, showLimit)) visibleForTranslate.push(it);
+      // visible-only queues
+      if (resolveLinks && it.link && !it.linkResolved && (isGoogleNews(it.link) || looksLikeRedirect(it.link))) {
+        visibleForResolve.push(it);
+      }
+      if (state.settings.onlySpanish !== false && it.title && !it.titleEs) {
+        visibleForTranslate.push(it);
+      }
 
-      if (ogObserver && observed < Math.min(OBSERVE_OG_VISIBLE_LIMIT, showLimit)) {
-        const lacks = !(it.image || it.ogImage || readCache(imgCache, imgCacheKey(shownUrl || it.link)));
-        if (lacks && shownUrl && !isGoogleNews(shownUrl)) {
-          ogObserver.observe(card);
-          observed++;
-        }
+      // OG observer (limit)
+      if (ogObserver && observed < OBSERVE_OG_VISIBLE_LIMIT) {
+        observed++;
+        // solo observa si no tenemos imagen buena todavía
+        const hasGood = !!(it.imageOg || (it.image && String(it.image).startsWith("http")));
+        if (!hasGood) ogObserver.observe(thumbWrap);
       }
     }
 
     el.newsList.appendChild(frag);
-    if (silent) el.newsList.scrollTop = prevScroll;
+    el.newsList.scrollTop = prevScroll;
 
-    // (1) Traducción primero (se nota muchísimo)
-    runSoon(() => maybeTranslateVisible(visibleForTranslate).catch(() => {}));
-    // (2) Resolve después
-    runSoon(() => maybeResolveVisible(visibleForResolve).catch(() => {}));
+    // resolve visible (best-effort)
+    if (resolveLinks && visibleForResolve.length) {
+      const cap = Math.min(VISIBLE_RESOLVE_LIMIT, Math.max(20, showLimit * 2));
+      const subset = visibleForResolve.slice(0, cap);
+      runSoon(() => maybeResolveVisible(subset).catch(() => {}));
+    }
 
-    setStatus(`Listo · mostrando ${limited.length}/${filtered.length} · ventana ${hours}h`);
+    // translate visible (prioridad)
+    if (visibleForTranslate.length) {
+      const cap = Math.min(VISIBLE_TRANSLATE_LIMIT, Math.max(20, showLimit * 2));
+      const subset = visibleForTranslate.slice(0, cap);
+      runSoon(() => maybeTranslateVisible(subset).catch(() => {}));
+    }
   }
 
   async function useItem(it) {
     if (!it) return;
-
     const resolveLinks = state.settings.resolveLinks !== false;
     const wantSpanish = state.settings.onlySpanish !== false;
 
@@ -995,14 +974,14 @@ Fuente:
       const results = [];
       await pool(jobs, FEED_CONCURRENCY, async (f) => {
         const out = await fetchOneFeed(f, abort.signal, force, fetchCap).catch(() => {
-          bumpFeedFail(String(f?.url||""));
+          bumpFeedFail(String(f?.url || ""));
           return [];
         });
         if (out && out.length) results.push(...out);
       });
 
       // merge + dedupe
-      const merged = dedupeNormalize([...(state.items || []), ...results]);
+      const merged = dedupeNormalize([ ...(state.items || []), ...results ]);
 
       // purga por ventana
       const fresh = merged
@@ -1049,7 +1028,7 @@ Fuente:
     if (arr.length <= batchSize) return arr.slice();
     const out = [];
     let idx = state.feedCursor % arr.length;
-    for (let i=0; i<batchSize; i++) {
+    for (let i = 0; i < batchSize; i++) {
       out.push(arr[idx]);
       idx = (idx + 1) % arr.length;
     }
@@ -1140,6 +1119,7 @@ Fuente:
 
     const max = Math.min(Math.max(10, cap), 2000);
 
+    // RSS
     const rssItems = doc.querySelectorAll("item");
     if (rssItems && rssItems.length) {
       for (const item of rssItems) {
@@ -1158,6 +1138,7 @@ Fuente:
       return out;
     }
 
+    // Atom
     const entries = doc.querySelectorAll("entry");
     if (entries && entries.length) {
       for (const entry of entries) {
@@ -1177,413 +1158,238 @@ Fuente:
     return out;
   }
 
-  function makeItem({ feed, title, link, publishedMs, image = "" }) {
-    const fixedLink = canonicalizeUrl(link);
-    const fixedTitle = cleanText(title);
-    const cat = detectCategory(fixedTitle, feed);
+  function textOf(root, sel) {
+    try {
+      const n = root.querySelector(sel);
+      return n ? n.textContent : "";
+    } catch {
+      return "";
+    }
+  }
 
-    const id = hashId(fixedLink || (fixedTitle + "|" + feed));
-    const isEs = looksSpanish(fixedTitle);
+  function pickRssGuid(item) {
+    const guid = cleanText(textOf(item, "guid"));
+    if (guid && /^https?:\/\//i.test(guid)) return guid;
+    return "";
+  }
 
+  function pickRssImage(item) {
+    const media = item.querySelector("media\\:content, content, enclosure, media\\:thumbnail, thumbnail");
+    if (media) {
+      const u = media.getAttribute("url") || media.getAttribute("href") || media.getAttribute("src") || "";
+      const clean = canonicalizeUrl(cleanText(u));
+      if (clean) return clean;
+    }
+    // try <image> inside item (some feeds)
+    const imgTag = item.querySelector("image, media\\:image");
+    if (imgTag) {
+      const u = cleanText(imgTag.textContent || imgTag.getAttribute("url") || "");
+      const clean = canonicalizeUrl(u);
+      if (clean) return clean;
+    }
+    return "";
+  }
+
+  function pickAtomLink(entry) {
+    const links = entry.querySelectorAll("link");
+    for (const l of links) {
+      const rel = String(l.getAttribute("rel") || "").toLowerCase();
+      if (!rel || rel === "alternate") {
+        const href = l.getAttribute("href");
+        if (href) return href;
+      }
+    }
+    const fallback = entry.querySelector("link");
+    return fallback ? (fallback.getAttribute("href") || "") : "";
+  }
+
+  function pickAtomImage(entry) {
+    // <media:thumbnail> etc.
+    const media = entry.querySelector("media\\:thumbnail, thumbnail, media\\:content, content");
+    if (media) {
+      const u = media.getAttribute("url") || media.getAttribute("href") || media.getAttribute("src") || "";
+      const clean = canonicalizeUrl(cleanText(u));
+      if (clean) return clean;
+    }
+    // content html
+    const c = cleanText(textOf(entry, "content"));
+    if (c) {
+      const m = c.match(/<img[^>]+src=["']([^"']+)["']/i);
+      if (m && m[1]) return canonicalizeUrl(cleanText(m[1]));
+    }
+    return "";
+  }
+
+  function makeItem({ feed, title, link, publishedMs, image }) {
+    const t = cleanText(title);
+    const l = cleanText(link);
+    const ms = Number(publishedMs || 0) || Date.now();
+    const id = hashId(`${normalizeTitleKey(t)}|${l}|${ms}`);
+    const cat = detectCategory(`${t} ${feed} ${l}`);
     return {
       id,
       feed: String(feed || "Feed"),
-      title: fixedTitle,
-      titleEs: isEs ? fixedTitle : "",
-      link: fixedLink,
+      title: t,
+      titleEs: "",
+      link: l,
       linkResolved: "",
-      publishedMs: Number(publishedMs || Date.now()),
+      publishedMs: ms,
+      image: canonicalizeUrl(image || ""),
+      imageOg: "",
       cat,
-      impact: 0,
-      image: canonicalizeUrl(image),
-      ogImage: "",
-
-      _hay: (fixedTitle + " " + String(feed || "")).toLowerCase(),
+      _hay: "",
+      _ready: false,
     };
   }
 
-  function parseDateMs(s) {
-    const t = String(s || "").trim();
-    if (!t) return 0;
-    const ms = Date.parse(t);
-    if (Number.isFinite(ms)) return ms;
-    try {
-      const u = t.replace(" ", "T");
-      const m2 = Date.parse(u);
-      if (Number.isFinite(m2)) return m2;
-    } catch {}
-    return 0;
-  }
-
-  function pickRssGuid(itemEl) {
-    const g = itemEl.querySelector("guid");
-    const t = g ? (g.textContent || "").trim() : "";
-    if (t && /^https?:\/\//i.test(t)) return t;
-    return "";
-  }
-
-  function pickRssImage(itemEl) {
-    const mc = itemEl.querySelector("media\\:content");
-    const mcu = mc ? (mc.getAttribute("url") || "") : "";
-    if (mcu) return canonicalizeUrl(mcu);
-
-    const mt = itemEl.querySelector("media\\:thumbnail");
-    const mtu = mt ? (mt.getAttribute("url") || "") : "";
-    if (mtu) return canonicalizeUrl(mtu);
-
-    const encs = itemEl.querySelectorAll("enclosure");
-    for (const e of encs) {
-      const type = (e.getAttribute("type") || "").toLowerCase();
-      const url = e.getAttribute("url") || "";
-      if (!url) continue;
-      if (!type || type.startsWith("image/")) return canonicalizeUrl(url);
-    }
-
-    const desc = String(textOf(itemEl, "description"));
-    const ce = String(textOf(itemEl, "content\\:encoded"));
-    const html = (ce && ce.length > desc.length) ? ce : desc;
-    const img = firstImgFromHtml(html);
-    return canonicalizeUrl(img);
-  }
-
-  function pickAtomLink(entryEl) {
-    const linkEl = entryEl.querySelector("link[rel='alternate']") || entryEl.querySelector("link");
-    if (linkEl) {
-      const href = (linkEl.getAttribute("href") || "").trim();
-      if (href) return href;
-    }
-    return cleanText(textOf(entryEl, "link"));
-  }
-
-  function pickAtomImage(entryEl) {
-    const mc = entryEl.querySelector("media\\:content");
-    const mct = mc ? (mc.getAttribute("url") || "") : "";
-    if (mct) return canonicalizeUrl(mct);
-
-    const mt = entryEl.querySelector("media\\:thumbnail");
-    const mtt = mt ? (mt.getAttribute("url") || "") : "";
-    if (mtt) return canonicalizeUrl(mtt);
-
-    const links = entryEl.querySelectorAll("link");
-    for (const l of links) {
-      const rel = (l.getAttribute("rel") || "").toLowerCase();
-      const type = (l.getAttribute("type") || "").toLowerCase();
-      const href = l.getAttribute("href") || "";
-      if (!href) continue;
-      if (rel === "enclosure" && (!type || type.startsWith("image/"))) return canonicalizeUrl(href);
-    }
-
-    const content = String(textOf(entryEl, "content"));
-    const summary = String(textOf(entryEl, "summary"));
-    const html = (content && content.length > summary.length) ? content : summary;
-    const img = firstImgFromHtml(html);
-    return canonicalizeUrl(img);
-  }
-
-  function firstImgFromHtml(html) {
-    const s = String(html || "");
-    if (!s) return "";
-    const m = s.match(/<img[^>]+src=["']([^"']+)["']/i);
-    return m && m[1] ? safeDecode(m[1]) : "";
-  }
-
-  function textOf(root, sel) {
-    const n = root.querySelector(sel);
-    return n ? (n.textContent || "").trim() : "";
-  }
-
-  function dedupeNormalize(items) {
-    const map = new Map();
-    for (const it of (items || [])) {
-      const link = canonicalizeUrl(it?.link || "");
-      if (!link) continue;
-
-      const title = cleanText(it?.title || "");
-      if (!title) continue;
-
-      const feed = String(it?.feed || "Feed");
-      const publishedMs = Number(it?.publishedMs || Date.now());
-
-      const fixed = {
-        ...it,
-        id: it?.id || hashId(link),
-        feed,
-        link,
-        title,
-        publishedMs,
-        cat: it?.cat || detectCategory(title, feed),
-        image: canonicalizeUrl(it?.image || ""),
-        ogImage: canonicalizeUrl(it?.ogImage || ""),
-      };
-
-      const prev = map.get(link);
-      if (prev) {
-        if (!fixed.image && prev.image) fixed.image = prev.image;
-        if (!fixed.ogImage && prev.ogImage) fixed.ogImage = prev.ogImage;
-        if (!fixed.linkResolved && prev.linkResolved) fixed.linkResolved = prev.linkResolved;
-        if (!fixed.titleEs && prev.titleEs) fixed.titleEs = prev.titleEs;
+  function dedupeNormalize(arr) {
+    const map = new Map(); // id -> item
+    for (const it of (arr || [])) {
+      if (!it) continue;
+      const id = it.id || hashId(`${normalizeTitleKey(it.title||"")}|${it.link||""}|${it.publishedMs||0}`);
+      const prev = map.get(id);
+      if (!prev) {
+        map.set(id, it);
+      } else {
+        // merge fields (prefer resolved/img)
+        prev.title = prev.title || it.title;
+        prev.titleEs = prev.titleEs || it.titleEs;
+        prev.feed = prev.feed || it.feed;
+        prev.link = prev.link || it.link;
+        prev.linkResolved = prev.linkResolved || it.linkResolved;
+        prev.publishedMs = Math.max(Number(prev.publishedMs||0), Number(it.publishedMs||0));
+        prev.image = prev.image || it.image;
+        prev.imageOg = prev.imageOg || it.imageOg;
+        prev.cat = prev.cat || it.cat;
       }
-
-      if (!prev || publishedMs > Number(prev.publishedMs || 0)) map.set(link, fixed);
+      map.get(id).id = id;
     }
-
-    // dedupe adicional por título (evita duplicados de distintas URLs)
-    const byTitle = new Map();
-    for (const it of map.values()) {
-      const tkey = normalizeTitleKey(it.title);
-      const prev = byTitle.get(tkey);
-      if (!prev) { byTitle.set(tkey, it); continue; }
-
-      const a = prev, b = it;
-      const aScore = (isGoogleNews(a.link) ? 0 : 1) + (Number(a.publishedMs || 0) / 1e13);
-      const bScore = (isGoogleNews(b.link) ? 0 : 1) + (Number(b.publishedMs || 0) / 1e13);
-      if (bScore > aScore) byTitle.set(tkey, b);
-    }
-
-    const out = Array.from(byTitle.values());
-    for (const it of out) {
-      const shown = String(it.titleEs || it.title || "");
-      it._hay = (shown + " " + String(it.feed || "")).toLowerCase();
-    }
-    return out;
+    return Array.from(map.values());
   }
 
-  function normalizeTitleKey(t) {
-    return String(t || "")
-      .toLowerCase()
-      .replace(/\s+/g, " ")
-      .replace(/[^\p{L}\p{N} ]/gu, "")
-      .trim()
-      .slice(0, 180);
+  function hardTrimAndPurge() {
+    const fetchCap = clampNum(state.settings.fetchCap ?? (el.fetchCap ? el.fetchCap.value : 240), 80, 2000);
+    const keepCap = Math.max(140, Math.min(2400, fetchCap * 2));
+    state.items = (state.items || [])
+      .sort((a,b) => Number(b.publishedMs||0) - Number(a.publishedMs||0))
+      .slice(0, keepCap);
   }
 
-  /* ───────────────────────────── IMPACT ───────────────────────────── */
-  function calcImpact(it) {
-    if (!it) return 0;
-    if (Number.isFinite(it.impact) && it.impact > 0) return it.impact;
-
-    let score = 0;
-    const title = String((it.titleEs || it.title || "")).toLowerCase();
-    const feed = String(it.feed || "").toLowerCase();
-
-    if (/reuters|apnews|associated press|bbc|financial times|ft\.com|bloomberg/.test(feed)) score += 18;
-    if (/elpais|el país|elmundo|la vanguardia|abc|expansión|eleconomista|rtve|europa press/.test(feed)) score += 12;
-
-    const hot = [
-      "última hora","breaking","urgent","en directo","atentado","misil","ataque","explosión",
-      "otan","nato","ucrania","rusia","israel","gaza","trump","biden","sánchez","putin",
-      "dimite","detenido","juicio","sanciones","crisis","apagón","hackeo","ciberataque"
-    ];
-    for (const k of hot) if (title.includes(k)) score += 8;
-
-    if (/presidente|gobierno|elecciones|parlamento|congreso|senado|ue|unión europea|onu/.test(title)) score += 6;
-    if (/inflación|pib|tipos|banco central|bolsa|petróleo|gas|recesión|deuda/.test(title)) score += 6;
-
-    const ageMin = Math.max(0, Math.floor((Date.now() - Number(it.publishedMs || Date.now())) / 60000));
-    if (ageMin <= 10) score += 18;
-    else if (ageMin <= 30) score += 12;
-    else if (ageMin <= 60) score += 8;
-    else if (ageMin <= 180) score += 4;
-
-    score = Math.max(0, Math.min(100, score));
-    it.impact = score;
-    return score;
-  }
-
-  /* ───────────────────────────── CATEGORY ───────────────────────────── */
-  function detectCategory(title, feed) {
-    const t = String(title || "").toLowerCase();
-    const f = String(feed || "").toLowerCase();
-
-    const sp = /(españa|madrid|barcelona|valencia|sevilla|andaluc|catalu|galicia|bilbao|zaragoza)/i;
-    if (sp.test(t) || /españa|rtve|europa press|elpais|elmundo|lavanguardia|abc/.test(f)) return "spain";
-
-    if (/(otan|nato|ucrania|rusia|gaza|israel|misil|ataque|defensa|ejército|dron|bombardeo)/i.test(t)) return "war";
-    if (/(elecciones|presidente|gobierno|parlamento|congreso|senado|partido|ministro|moncloa)/i.test(t)) return "politics";
-    if (/(bolsa|ibex|dow|nasdaq|inflación|pib|banco|tipos|petróleo|gas|mercados|euribor)/i.test(t)) return "economy";
-    if (/(ia|ai|openai|microsoft|google|meta|apple|android|iphone|chip|nvidia|ciber|hack|ciberataque|seguridad)/i.test(t)) return "tech";
-    if (/(asesin|tiroteo|secuestro|narc|policía|detenido|crimen|sucesos|atentado)/i.test(t)) return "crime";
-    if (/(salud|oms|virus|covid|vacuna|hospital|epidemia|brote)/i.test(t)) return "health";
-    if (/(fútbol|liga|champions|nba|nfl|tenis|golf|baloncesto)/i.test(t)) return "sports";
-    if (/(cine|serie|netflix|música|festival|oscar|grammy|estreno)/i.test(t)) return "ent";
-
-    return "world";
-  }
-
-  /* ───────────────────────────── OG OBSERVER ───────────────────────────── */
-  function setupOgObserver() {
-    if (!("IntersectionObserver" in window)) return;
-    ogObserver = new IntersectionObserver(async (entries) => {
-      const visible = entries.filter(e => e.isIntersecting).slice(0, IMG_CONCURRENCY);
-      for (const e of visible) {
-        ogObserver.unobserve(e.target);
-        const card = e.target;
-        const id = card.dataset.id;
-        const it = (state.items || []).find(x => x.id === id);
-        if (!it) continue;
-
-        const got = await maybeFetchOgForItem(it);
-        if (!got) continue;
-
-        const img = card.querySelector("img.newsThumb");
-        if (img && got) img.src = got;
-      }
-    }, { root: el.newsList, threshold: 0.12 });
-  }
-
-  function pickBestThumb(it, articleUrl) {
-    const a = canonicalizeUrl(it?.image || "");
-    if (a) return a;
-    const b = canonicalizeUrl(it?.ogImage || "");
-    if (b) return b;
-    const cached = readCache(imgCache, imgCacheKey(articleUrl));
-    if (cached) return cached;
-    return "";
-  }
-
-  function imgCacheKey(url) {
-    return "img|" + hashId(canonicalizeUrl(url));
-  }
-
-  async function maybeFetchOgForItem(it) {
-    const resolveLinks = state.settings.resolveLinks !== false;
-    const shownUrl = canonicalizeUrl((resolveLinks ? (it.linkResolved || it.link) : it.link) || it.link);
-    if (!shownUrl) return "";
-
-    if (it.image || it.ogImage) return it.image || it.ogImage;
-
-    const ck = imgCacheKey(shownUrl);
-    const cached = readCache(imgCache, ck);
-    if (cached) return cached;
-
-    if (isGoogleNews(shownUrl)) return "";
-    if (imgInFlight.has(ck)) return imgInFlight.get(ck);
-
-    const p = (async () => {
-      const html = await fetchTextWithFallbacks(shownUrl, OG_FETCH_TIMEOUT_MS);
-      const og = pickMeta(html, "property", "og:image") || pickMeta(html, "name", "og:image");
-      const tw = pickMeta(html, "name", "twitter:image") || pickMeta(html, "property", "twitter:image");
-      const img = canonicalizeUrl(absoluteMaybe(og || tw, shownUrl));
-      if (img) {
-        it.ogImage = img;
-        writeCache(imgCache, ck, img, IMG_CACHE_LIMIT, LS_IMG_CACHE);
-        return img;
-      }
-      return "";
-    })().catch(() => "");
-
-    imgInFlight.set(ck, p);
-    const out = await p;
-    imgInFlight.delete(ck);
-    return out || "";
-  }
-
-  function pickMeta(html, attr, val) {
-    const re = new RegExp(`<meta[^>]+${attr}=["']${escapeRe(val)}["'][^>]+content=["']([^"']+)["']`, "i");
-    const m = String(html || "").match(re);
-    return m && m[1] ? safeDecode(m[1]) : "";
-  }
-
-  function absoluteMaybe(img, baseUrl) {
-    const s = String(img || "").trim();
-    if (!s) return "";
-    if (/^https?:\/\//i.test(s)) return s;
-    if (s.startsWith("//")) return "https:" + s;
-    try {
-      const u = new URL(baseUrl);
-      if (s.startsWith("/")) return u.origin + s;
-      return u.origin + "/" + s;
-    } catch { return ""; }
-  }
-
-  function faviconUrl(url) {
-    try {
-      const u = new URL(String(url || ""));
-      return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(u.hostname)}&sz=128`;
-    } catch {
-      return "https://www.google.com/s2/favicons?domain=example.com&sz=128";
-    }
-  }
-
-  /* ───────────────────────────── RESOLVE LINKS (visible-only) ───────────────────────────── */
+  /* ───────────────────────────── RESOLVE LINKS ───────────────────────────── */
   async function maybeResolveVisible(items) {
-    const on = state.settings.resolveLinks !== false;
-    if (!on) return;
+    const resolveLinks = state.settings.resolveLinks !== false;
+    if (!resolveLinks) return;
 
-    const targets = (items || []).filter(it => it && it.link && (!it.linkResolved) && (isGoogleNews(it.link) || looksLikeRedirect(it.link)));
+    const targets = (items || [])
+      .filter(it => it && it.link && !it.linkResolved && (isGoogleNews(it.link) || looksLikeRedirect(it.link)))
+      .slice(0, VISIBLE_RESOLVE_LIMIT);
+
     if (!targets.length) return;
 
-    await pool(targets, RESOLVE_CONCURRENCY, (it) => maybeResolveOne(it));
+    await pool(targets, RESOLVE_CONCURRENCY, async (it) => {
+      await maybeResolveOne(it).catch(() => {});
+    });
+
     renderNewsList({ silent: true });
   }
 
   async function maybeResolveOne(it) {
-    const url = canonicalizeUrl(it.link || "");
-    if (!url) return "";
+    if (!it || !it.link) return;
+    const link = canonicalizeUrl(it.link);
+    if (!link) return;
 
-    const cached = readCache(resolveCache, url);
-    if (cached) { it.linkResolved = cached; return cached; }
+    const key = "res|" + link;
+    const cached = readCache(resolveCache, key);
+    if (cached) {
+      it.linkResolved = cached;
+      return;
+    }
 
-    if (resInFlight.has(url)) return resInFlight.get(url);
+    if (resInFlight.has(key)) {
+      const out = await resInFlight.get(key).catch(() => "");
+      if (out) it.linkResolved = out;
+      return;
+    }
 
     const p = (async () => {
-      let out = "";
-
-      out = extractUrlParam(url);
-      out = canonicalizeUrl(out);
-      out = cleanTracking(out);
-      if (out) return out;
-
-      const html = await fetchTextWithFallbacks(url, 11_000).catch(() => "");
-      if (html) {
-        out = pickCanonical(html) || pickMetaRefresh(html) || pickJsonLdUrl(html) || extractUrlFromHtml(html);
-        out = canonicalizeUrl(out);
-        out = cleanTracking(out);
-        if (out) return out;
+      const resolved = await resolveToRealUrl(link);
+      const clean = canonicalizeUrl(resolved);
+      if (clean) {
+        writeCache(resolveCache, key, clean, RESOLVE_CACHE_LIMIT, LS_RESOLVE_CACHE);
+        return clean;
       }
-
-      out = await tryFollowRedirect(url).catch(() => "");
-      out = canonicalizeUrl(out);
-      out = cleanTracking(out);
-      return out || "";
+      return "";
     })();
 
-    resInFlight.set(url, p);
+    resInFlight.set(key, p);
     const out = await p.catch(() => "");
-    resInFlight.delete(url);
+    resInFlight.delete(key);
 
-    if (out) {
-      it.linkResolved = out;
-      writeCache(resolveCache, url, out, RESOLVE_CACHE_LIMIT, LS_RESOLVE_CACHE);
-    }
-    return out || "";
+    if (out) it.linkResolved = out;
   }
 
-  async function tryFollowRedirect(url) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 10_000);
-    try {
-      const res = await fetch(url, { method: "GET", redirect: "follow", cache: "no-store", signal: ctrl.signal });
-      return res && res.url ? res.url : "";
-    } finally { clearTimeout(t); }
+  async function resolveToRealUrl(url) {
+    const u = String(url || "").trim();
+    if (!u) return "";
+
+    // 1) Si ya trae parámetro url/u/q/etc
+    const directParam = extractUrlParam(u);
+    if (directParam) return directParam;
+
+    // 2) Intentar seguir redirect con fetch (a veces CORS bloquea, pero response.url suele estar)
+    const followed = await tryFollowRedirect(u, 9_000);
+    if (followed && followed !== u) {
+      // si el destino parece redirect, intenta extraer param también
+      const p2 = extractUrlParam(followed);
+      return p2 || followed;
+    }
+
+    // 3) HTML parse (jina/allorigins) para encontrar canonical / meta refresh / json-ld / url=...
+    const html = await fetchTextWithFallbacks(u, 14_000);
+    if (!html) return "";
+
+    const cand =
+      pickCanonical(html) ||
+      pickMetaRefresh(html) ||
+      pickJsonLdUrl(html) ||
+      pickFirstHttpUrlFromHtml(html) ||
+      "";
+
+    const viaParam = extractUrlParam(cand) || extractUrlParam(html);
+    if (viaParam) return viaParam;
+
+    // 4) Si encontramos algo, intenta normalizar y seguir 1 salto
+    const clean = canonicalizeUrl(cand);
+    if (clean && clean !== u) {
+      const followed2 = await tryFollowRedirect(clean, 9_000);
+      return canonicalizeUrl(followed2 || clean);
+    }
+
+    return "";
   }
 
   function pickCanonical(html) {
-    const m = String(html || "").match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i);
-    return m && m[1] ? safeDecode(m[1]) : "";
+    const s = String(html || "");
+    // <link rel="canonical" href="...">
+    const m = s.match(/<link[^>]+rel=["']canonical["'][^>]*>/i);
+    if (m && m[0]) {
+      const u = extractHref(m[0]);
+      if (u) return u;
+    }
+    // og:url
+    const og = pickMeta(s, ["og:url", "twitter:url"]);
+    if (og) return og;
+    return "";
   }
 
   function pickMetaRefresh(html) {
-    const m = String(html || "").match(/http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"']+)["']/i);
-    return m && m[1] ? safeDecode(m[1]) : "";
-  }
-
-  function extractUrlFromHtml(html) {
-    const m = String(html || "").match(/https?:\/\/www\.google\.com\/url\?[^"'<> ]+/i);
-    if (m && m[0]) {
-      const u = extractUrlParam(m[0]);
-      if (u) return u;
-    }
+    const s = String(html || "");
+    // <meta http-equiv="refresh" content="0;url=...">
+    const m = s.match(/<meta[^>]+http-equiv=["']refresh["'][^>]*>/i);
+    if (!m || !m[0]) return "";
+    const content = (m[0].match(/content=["']([^"']+)["']/i) || [])[1] || "";
+    const mm = content.match(/url\s*=\s*([^;]+)/i);
+    if (mm && mm[1]) return cleanText(mm[1]);
     return "";
   }
 
@@ -1592,7 +1398,7 @@ Fuente:
     const blocks = s.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi);
     if (!blocks) return "";
     for (const b of blocks) {
-      const raw = b.replace(/^[\s\S]*?>/,"").replace(/<\/script>[\s\S]*$/,"");
+      const raw = b.replace(/^[\s\S]*?>/, "").replace(/<\/script>[\s\S]*$/, "");
       const j = safeJson(raw);
       const cand =
         j?.url ||
@@ -1602,6 +1408,22 @@ Fuente:
       if (cand) return cleanText(cand);
     }
     return "";
+  }
+
+  function pickFirstHttpUrlFromHtml(html) {
+    const s = String(html || "");
+    // Busca patrones comunes de salida tipo "...?url=https://..."
+    const m = s.match(/https?:\/\/[^"'<> ]+/i);
+    if (m && m[0]) {
+      const u = extractUrlParam(m[0]);
+      if (u) return u;
+    }
+    return "";
+  }
+
+  function extractHref(tag) {
+    const m = String(tag || "").match(/href=["']([^"']+)["']/i);
+    return m && m[1] ? cleanText(m[1]) : "";
   }
 
   function extractUrlParam(s) {
@@ -1625,6 +1447,36 @@ Fuente:
   function looksLikeRedirect(u) {
     const s = String(u || "");
     return /\/url\?|redirect|destination|dest=|target=|u=|url=|r=/i.test(s);
+  }
+
+  function isGoogleNews(u) {
+    try {
+      const x = new URL(String(u || ""));
+      const h = x.hostname.toLowerCase();
+      return h === "news.google.com" || h.endsWith(".news.google.com");
+    } catch {
+      return false;
+    }
+  }
+
+  async function tryFollowRedirect(url, timeoutMs) {
+    const u = String(url || "").trim();
+    if (!u) return "";
+    const ctrl = new AbortController();
+    const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, Math.max(1000, timeoutMs|0));
+    try {
+      const res = await fetch(u, {
+        method: "GET",
+        redirect: "follow",
+        signal: ctrl.signal,
+        // mode cors por defecto; si falla lo intentamos con fallbacks HTML
+      });
+      // aunque no podamos leer body, res.url suele venir
+      const finalUrl = String(res?.url || "");
+      if (finalUrl) return finalUrl;
+    } catch {}
+    finally { clearTimeout(t); }
+    return "";
   }
 
   /* ───────────────────────────── TRANSLATE (ES siempre) ───────────────────────────── */
@@ -1709,13 +1561,180 @@ Fuente:
     return "";
   }
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  function looksSpanishStrong(t) {
+    const s = String(t || "");
+    if (/[¡¿]/.test(s)) return true;
+    const lower = s.toLowerCase();
+    const hits = [
+      " el ", " la ", " los ", " las ", " de ", " del ", " y ", " que ",
+      " para ", " con ", " por ", " una ", " un ", " en "
+    ];
+    let score = 0;
+    for (const w of hits) if (lower.includes(w)) score++;
+    return score >= 3;
+  }
+
+  /* ───────────────────────────── OG / IMAGES ───────────────────────────── */
+  function setupOgObserver() {
+    if (!("IntersectionObserver" in window)) return;
+
+    if (ogObserver) {
+      try { ogObserver.disconnect(); } catch {}
+      ogObserver = null;
+    }
+
+    ogObserver = new IntersectionObserver((entries) => {
+      const visible = entries.filter(e => e && e.isIntersecting).slice(0, 18);
+      for (const e of visible) {
+        try { ogObserver.unobserve(e.target); } catch {}
+        const card = e.target.closest(".newsItem");
+        if (!card) continue;
+        const id = card.dataset.id;
+        const it = (state.items || []).find(x => x && x.id === id);
+        if (!it) continue;
+        const shownUrl = String(card.dataset.url || it.linkResolved || it.link || "");
+        if (!shownUrl) continue;
+
+        // fetch OG only if needed
+        const hasGood = !!(it.imageOg || (it.image && String(it.image).startsWith("http")));
+        if (!hasGood) {
+          maybeFetchOgForItem(it, shownUrl).catch(() => {});
+        }
+      }
+    }, { root: null, threshold: 0.15 });
+
+    // (los nodos se observan en renderNewsList)
+  }
+
+  async function maybeFetchOgForItem(it, shownUrl) {
+    if (!it || !shownUrl) return;
+
+    const key = "img|" + shownUrl;
+    const cached = readCache(imgCache, key);
+    if (cached) {
+      it.imageOg = cached;
+      patchDomThumb(it.id, cached);
+      return;
+    }
+    if (imgInFlight.has(key)) {
+      const out = await imgInFlight.get(key).catch(() => "");
+      if (out) {
+        it.imageOg = out;
+        patchDomThumb(it.id, out);
+      }
+      return;
+    }
+
+    const p = (async () => {
+      const html = await fetchTextWithFallbacks(shownUrl, OG_FETCH_TIMEOUT_MS);
+      if (!html) return "";
+
+      const img =
+        pickMeta(html, ["og:image:secure_url","og:image","twitter:image","twitter:image:src"]) ||
+        pickJsonLdImage(html) ||
+        pickLinkImageSrc(html) ||
+        "";
+
+      const clean = canonicalizeUrl(img);
+      if (clean) {
+        writeCache(imgCache, key, clean, IMG_CACHE_LIMIT, LS_IMG_CACHE);
+        return clean;
+      }
+      return "";
+    })();
+
+    imgInFlight.set(key, p);
+    const out = await p.catch(() => "");
+    imgInFlight.delete(key);
+
+    if (out) {
+      it.imageOg = out;
+      patchDomThumb(it.id, out);
+    }
+  }
+
+  function patchDomThumb(id, url) {
+    try {
+      const card = el.newsList.querySelector(`.newsItem[data-id="${cssEscape(String(id))}"]`);
+      if (!card) return;
+      const img = card.querySelector("img.newsThumb");
+      if (!img) return;
+      // no pisar si ya es mejor
+      if (img.src && img.src.startsWith("http") && img.src.includes("favicons")) {
+        img.src = url;
+      } else if (!img.src || img.src.includes("favicons")) {
+        img.src = url;
+      }
+    } catch {}
+  }
+
+  function pickMeta(html, keys) {
+    const s = String(html || "");
+    for (const k of (keys || [])) {
+      const re = new RegExp(`<meta[^>]+(?:property|name)=["']${escapeRe(k)}["'][^>]*>`, "i");
+      const m = s.match(re);
+      if (m && m[0]) {
+        const c = (m[0].match(/content=["']([^"']+)["']/i) || [])[1] || "";
+        if (c) return cleanText(c);
+      }
+    }
+    return "";
+  }
+
+  function pickLinkImageSrc(html) {
+    const s = String(html || "");
+    const m = s.match(/<link[^>]+rel=["']image_src["'][^>]*>/i);
+    if (m && m[0]) {
+      const u = extractHref(m[0]);
+      if (u) return u;
+    }
+    return "";
+  }
+
+  function pickJsonLdImage(html) {
+    const s = String(html || "");
+    const blocks = s.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi);
+    if (!blocks) return "";
+    for (const b of blocks) {
+      const raw = b.replace(/^[\s\S]*?>/, "").replace(/<\/script>[\s\S]*$/, "");
+      const j = safeJson(raw);
+      const img =
+        j?.image?.url ||
+        j?.image ||
+        (Array.isArray(j?.image) ? (j.image[0]?.url || j.image[0] || "") : "") ||
+        (Array.isArray(j) ? (j.find(x => x?.image)?.image?.url || j.find(x => x?.image)?.image || "") : "");
+      const sImg = (typeof img === "string") ? img : "";
+      if (sImg) return cleanText(sImg);
+    }
+    return "";
+  }
+
+  function pickBestThumb(it, shownUrl) {
+    if (!it) return "";
+    const og = canonicalizeUrl(it.imageOg);
+    if (og) return og;
+
+    const rss = canonicalizeUrl(it.image);
+    if (rss) return rss;
+
+    if (shownUrl) return faviconUrl(shownUrl);
+    return "";
+  }
+
+  function faviconUrl(url) {
+    try {
+      const u = new URL(String(url || ""));
+      return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(u.hostname)}&sz=128`;
+    } catch {
+      return "";
+    }
+  }
 
   /* ───────────────────────────── FEEDS MODAL ───────────────────────────── */
   function renderFeedsModal() {
     el.feedList.innerHTML = "";
-
-    (state.feeds || []).forEach((f, idx) => {
+    const feeds = state.feeds || [];
+    feeds.forEach((f, idx) => {
       const row = document.createElement("div");
       row.className = "feedRow";
 
@@ -1882,210 +1901,88 @@ Fuente:
     try { localStorage.setItem(key, value); } catch {}
   }
 
-  function readCache(cacheObj, key) {
-    const v = cacheObj && cacheObj[key];
-    if (!v) return "";
-    if (typeof v === "string") return v;
-    return String(v?.v || "");
-  }
-
-  function writeCache(cacheObj, key, value, limit, lsKey) {
-    if (!cacheObj || !key || !value) return;
-    cacheObj[key] = { v: String(value), t: Date.now() };
-    pruneCache(cacheObj, limit);
-    safeSetLS(lsKey, JSON.stringify(cacheObj));
-  }
-
-  function pruneCache(cacheObj, limit) {
-    const keys = Object.keys(cacheObj || {});
-    if (keys.length <= limit) return;
-    keys.sort((a,b) => Number((cacheObj[a]?.t)||0) - Number((cacheObj[b]?.t)||0));
-    const kill = keys.length - limit;
-    for (let i=0; i<kill; i++) delete cacheObj[keys[i]];
-  }
-
-  function hardTrimAndPurge() {
-    const hours = clampNum(el.timeFilter.value, 1, 72);
-    const minMs = Date.now() - hours * 60 * 60 * 1000;
-    const fetchCap = clampNum(state.settings.fetchCap ?? 240, 80, 2000);
-    const keepCap = Math.max(140, Math.min(2400, fetchCap * 2));
-
-    state.items = (state.items || [])
-      .filter(it => Number(it?.publishedMs || 0) >= minMs)
-      .sort((a,b) => Number(b.publishedMs||0) - Number(a.publishedMs||0))
-      .slice(0, keepCap);
-  }
-
-  /* ───────────────────────────── FETCH (CORS FALLBACKS) ───────────────────────────── */
+  /* ───────────────────────────── NETWORK HELPERS ───────────────────────────── */
   async function fetchTextWithFallbacks(url, timeoutMs, parentSignal) {
-    // direct
-    try { return await tryFetchText(url, timeoutMs, parentSignal); }
-    catch {}
+    const u = String(url || "").trim();
+    if (!u) return "";
 
-    // AllOrigins raw
+    // 1) Direct
     try {
-      const ao = "https://api.allorigins.win/raw?url=" + encodeURIComponent(url);
-      return await tryFetchText(ao, timeoutMs, parentSignal);
+      const t = await tryFetchText(u, timeoutMs, parentSignal);
+      if (t) return t;
     } catch {}
 
-    // r.jina.ai (proxy)
-    const forced = url.startsWith("http") ? url : ("https://" + url);
+    // 2) AllOrigins raw
     try {
-      const viaJina = await tryFetchText("https://r.jina.ai/" + forced, timeoutMs, parentSignal);
-      return stripToPayload(viaJina);
+      const ao = "https://api.allorigins.win/raw?url=" + encodeURIComponent(u);
+      const t = await tryFetchText(ao, timeoutMs, parentSignal);
+      if (t) return t;
     } catch {}
 
-    const viaJina2 = await tryFetchText("https://r.jina.ai/" + url, timeoutMs, parentSignal);
-    return stripToPayload(viaJina2);
+    // 3) jina.ai (muy útil para CORS)
+    try {
+      const j = "https://r.jina.ai/http://" + u.replace(/^https?:\/\//i, "");
+      const t = await tryFetchText(j, timeoutMs, parentSignal);
+      if (t) return t;
+    } catch {}
+
+    return "";
   }
 
   async function tryFetchText(url, timeoutMs, parentSignal) {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-
-    const onAbort = () => { try { ctrl.abort(); } catch {} };
-    if (parentSignal) {
-      if (parentSignal.aborted) onAbort();
-      else parentSignal.addEventListener("abort", onAbort, { once: true });
-    }
-
+    const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, Math.max(1000, timeoutMs|0));
     try {
-      const res = await fetch(url, {
-        method: "GET",
-        signal: ctrl.signal,
-        cache: "no-store",
-        headers: { "accept": "text/html,application/xml,application/rss+xml,application/atom+xml,application/json;q=0.9,*/*;q=0.8" }
-      });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      return await res.text();
+      const signal = mergeAbortSignals(parentSignal, ctrl.signal);
+      const res = await fetch(url, { method: "GET", signal, redirect: "follow" });
+      // algunos endpoints devuelven no-200 pero con body útil
+      const text = await res.text().catch(() => "");
+      return String(text || "");
     } finally {
       clearTimeout(t);
-      if (parentSignal && parentSignal.removeEventListener) {
-        try { parentSignal.removeEventListener("abort", onAbort); } catch {}
+    }
+  }
+
+  function mergeAbortSignals(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    // Si AbortSignal.any existe
+    if (typeof AbortSignal !== "undefined" && AbortSignal.any) {
+      try { return AbortSignal.any([a, b]); } catch {}
+    }
+    // fallback simple: si uno aborta, aborta el otro controller en fetch; aquí devolvemos b
+    // (direct fetch usa b; pero parent se controla en llamador con abort global)
+    return b;
+  }
+
+  /* ───────────────────────────── CACHE HELPERS ───────────────────────────── */
+  function readCache(obj, key) {
+    try {
+      const v = obj && obj[key];
+      if (!v) return "";
+      // estructura: { v, t }
+      if (typeof v === "string") return v;
+      if (v && typeof v === "object" && v.v) return String(v.v);
+    } catch {}
+    return "";
+  }
+
+  function writeCache(obj, key, value, limit, persistKey) {
+    if (!obj || !key) return;
+    try {
+      obj[key] = { v: String(value || ""), t: Date.now() };
+      // trim LRU-ish
+      const keys = Object.keys(obj);
+      if (keys.length > limit) {
+        keys.sort((a,b) => Number(obj[a]?.t||0) - Number(obj[b]?.t||0));
+        const kill = keys.slice(0, Math.max(10, keys.length - limit));
+        for (const k of kill) delete obj[k];
       }
-    }
+      safeSetLS(persistKey, JSON.stringify(obj));
+    } catch {}
   }
 
-  function stripToPayload(s) {
-    const t = String(s || "");
-    const looks = /^\s*(<\?xml|<rss|<feed|<!doctype|<html|\{|\[)/i.test(t);
-    if (looks) return t;
-    const i = t.search(/(<\?xml|<rss|<feed|<!doctype|<html|\{|\[)/i);
-    return i >= 0 ? t.slice(i) : t;
-  }
-
-  function safeJson(txt) {
-    try {
-      const t = String(txt || "").trim();
-      if (!t) return null;
-      if (!(t.startsWith("{") || t.startsWith("["))) return null;
-      return JSON.parse(t);
-    } catch { return null; }
-  }
-
-  /* ───────────────────────────── HELPERS ───────────────────────────── */
-  function cleanText(s) {
-    // limpia tags + entidades básicas + espacios
-    return String(s || "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&quot;/g, "\"")
-      .replace(/&#39;/g, "'")
-      .trim();
-  }
-
-  function safeDecode(s) {
-    try { return decodeURIComponent(String(s || "")); } catch { return String(s || ""); }
-  }
-
-  function canonicalizeUrl(u) {
-    const s = String(u || "").trim();
-    if (!s) return "";
-
-    if (s.startsWith("//")) return canonicalizeUrl("https:" + s);
-
-    if (!/^https?:\/\//i.test(s) && /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s)) {
-      return canonicalizeUrl("https://" + s);
-    }
-
-    try {
-      const url = new URL(s);
-      url.hash = "";
-
-      [...url.searchParams.keys()].forEach(k => {
-        if (/^utm_/i.test(k)) url.searchParams.delete(k);
-      });
-      ["fbclid", "gclid", "dclid", "gbraid", "wbraid", "igshid", "mc_cid", "mc_eid", "mkt_tok", "ref", "ref_src"]
-        .forEach(k => url.searchParams.delete(k));
-
-      let out = url.toString();
-      if (out.endsWith("/") && !/https?:\/\/[^/]+\/$/.test(out)) out = out.slice(0, -1);
-      return out;
-    } catch {
-      return s;
-    }
-  }
-
-  function cleanTracking(u) {
-    return canonicalizeUrl(u);
-  }
-
-  function isGoogleNews(u) {
-    try { return new URL(u).hostname.includes("news.google.com"); }
-    catch { return false; }
-  }
-
-  function getDomain(u) {
-    try { return new URL(u).hostname.replace(/^www\./, ""); }
-    catch { return ""; }
-  }
-
-  function looksSpanish(t) {
-    const s = String(t || "").toLowerCase();
-    if (!s) return false;
-    const hits =
-      (s.match(/[áéíóúñ]/g) || []).length +
-      (s.match(/\b(el|la|los|las|de|del|y|en|para|con|por|una|un)\b/g) || []).length;
-    return hits >= 2;
-  }
-
-  function looksSpanishStrong(t) {
-    const s = String(t || "").toLowerCase();
-    if (!s) return false;
-    const hits =
-      (s.match(/[áéíóúñ]/g) || []).length +
-      (s.match(/\b(el|la|los|las|de|del|y|en|para|con|por|una|un|que|se|su|sus)\b/g) || []).length;
-    return hits >= 4;
-  }
-
-  function hashId(s) {
-    return "id_" + fastHash(String(s || ""));
-  }
-
-  function fastHash(str) {
-    let h = 5381;
-    for (let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
-    return (h >>> 0).toString(16);
-  }
-
-  function escapeHtml(s) {
-    return String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-
-  function escapeRe(s) {
-    return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  function clampNum(v, min, max) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return min;
-    return Math.min(max, Math.max(min, n));
-  }
-
+  /* ───────────────────────────── SMALL UTILS ───────────────────────────── */
   function debounce(fn, ms) {
     let t = 0;
     return (...args) => {
@@ -2095,130 +1992,282 @@ Fuente:
   }
 
   function runSoon(fn) {
-    if ("requestIdleCallback" in window) {
-      window.requestIdleCallback(() => fn(), { timeout: 700 });
-    } else {
-      setTimeout(fn, 0);
+    try { setTimeout(fn, 0); } catch {}
+  }
+
+  function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+  }
+
+  function clampNum(v, min, max) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return min;
+    return Math.max(min, Math.min(max, n));
+  }
+
+  function cleanText(s) {
+    return String(s || "").replace(/\s+/g, " ").trim();
+  }
+
+  function canonicalizeUrl(u) {
+    const s = cleanText(u);
+    if (!s) return "";
+    if (s.startsWith("//")) return "https:" + s;
+    if (!/^https?:\/\//i.test(s)) return s; // dejamos tal cual si no es URL (evita romper)
+    try {
+      const x = new URL(s);
+      // limpia tracking simple
+      ["utm_source","utm_medium","utm_campaign","utm_term","utm_content","fbclid","gclid","mc_cid","mc_eid"].forEach(k => x.searchParams.delete(k));
+      return x.toString();
+    } catch {
+      return s;
     }
   }
 
-  function pool(items, concurrency, worker) {
-    return new Promise((resolve) => {
-      const arr = (items || []).slice();
-      if (!arr.length) return resolve();
-      let active = 0;
-
-      const next = () => {
-        if (!arr.length && active === 0) return resolve();
-        while (active < concurrency && arr.length) {
-          const it = arr.shift();
-          active++;
-          Promise.resolve()
-            .then(() => worker(it))
-            .catch(() => {})
-            .finally(() => { active--; next(); });
-        }
-      };
-      next();
-    });
+  function getDomain(u) {
+    try {
+      const x = new URL(String(u || ""));
+      return x.hostname.replace(/^www\./i, "");
+    } catch {
+      return "";
+    }
   }
 
-  function twCharCount(text) {
-    // Para el panel, el conteo humano (len) es suficiente.
-    // (X luego acorta URLs con t.co)
-    return String(text || "").length;
+  function safeJson(text) {
+    try { return JSON.parse(String(text || "")); } catch { return null; }
   }
 
-  function smartTrimHeadline(h, maxLen) {
-    const s = String(h || "").trim();
-    if (s.length <= maxLen) return s;
-    const cut = s.slice(0, maxLen);
-    const lastSpace = cut.lastIndexOf(" ");
-    return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim() + "…";
+  function safeDecode(s) {
+    try { return decodeURIComponent(String(s || "")); } catch { return String(s || ""); }
+  }
+
+  function escapeHtml(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function escapeRe(s) {
+    return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function cssEscape(s) {
+    // minimal escape for attribute selector usage
+    return String(s || "").replace(/"/g, '\\"');
+  }
+
+  function fastHash(s) {
+    const str = String(s || "");
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+    }
+    // uint32
+    return (h >>> 0).toString(16);
+  }
+
+  function hashId(s) {
+    return fastHash(s);
+  }
+
+  function parseDateMs(s) {
+    const t = String(s || "").trim();
+    if (!t) return 0;
+    const ms = Date.parse(t);
+    if (Number.isFinite(ms) && ms > 0) return ms;
+    // ISO-like already covered; try unix seconds
+    const n = Number(t);
+    if (Number.isFinite(n)) {
+      if (n > 10_000_000_000) return n; // ms
+      if (n > 1_000_000_000) return n * 1000; // sec
+    }
+    return 0;
+  }
+
+  function normalizeTitleKey(t) {
+    return String(t || "")
+      .toLowerCase()
+      .replace(/https?:\/\/\S+/g, "")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function detectCategory(text) {
+    const s = normalizeTitleKey(text);
+    const has = (re) => re.test(s);
+
+    if (has(/\b(otannato|ucrania|ukraine|rusia|russia|misil|dron|drone|guerra|war|sanction|sancion)\b/i)) return "war";
+    if (has(/\b(pedro sanchez|moncloa|congreso|senado|eleccion|gobierno|ministro|parlamento|pp|psoe|vox)\b/i)) return "politics";
+    if (has(/\b(ibex|bce|ecb|inflacion|pib|euribor|bolsa|mercado|tipo(s)? de interes|interest rate|recesion)\b/i)) return "economy";
+    if (has(/\b(openai|ia|ai|ciber|hack|malware|microsoft|google|apple|meta|amazon)\b/i)) return "tech";
+    if (has(/\b(crimen|detenido|policia|juzgado|juicio|suceso|asesin|robo|fraude)\b/i)) return "crime";
+    if (has(/\b(oms|who|vacuna|brote|salud|virus|hospital)\b/i)) return "health";
+    if (has(/\b(real madrid|barcelona|laliga|champions|gol|fichaje|lesion)\b/i)) return "sports";
+    if (has(/\b(netflix|serie|pelicula|concierto|festival|musica|actor|actriz)\b/i)) return "ent";
+    return "all";
+  }
+
+  function calcImpact(it) {
+    // heurístico rápido: fuente + keywords + frescura
+    const now = Date.now();
+    const ageMin = Math.max(0, Math.floor((now - Number(it?.publishedMs || 0)) / 60000));
+    const title = String(it?.titleEs || it?.title || "").toLowerCase();
+    const feed = String(it?.feed || "").toLowerCase();
+    const link = String(it?.linkResolved || it?.link || "").toLowerCase();
+
+    let score = 0;
+
+    // frescura
+    if (ageMin <= 10) score += 35;
+    else if (ageMin <= 30) score += 25;
+    else if (ageMin <= 90) score += 15;
+    else score += 5;
+
+    // fuentes fuertes
+    if (feed.includes("reuters") || link.includes("reuters.com")) score += 22;
+    if (feed.includes("europa press") || link.includes("europapress.es")) score += 14;
+    if (feed.includes("rtve") || link.includes("rtve.es")) score += 10;
+    if (feed.includes("google news")) score += 6;
+
+    // keywords
+    const hot = [
+      "última hora","urgente","breaking","explosión","atentado","tiroteo","dimite","dimisión",
+      "sanciones","misil","dron","ofensiva","bombardeo","muertos","heridos","detenido",
+      "juicio","tribunal","nato","otan","ucrania","rusia","bce","inflación","ibex"
+    ];
+    for (const k of hot) if (title.includes(k)) score += 6;
+
+    return Math.max(0, Math.min(100, score));
   }
 
   function genHashtags(headline) {
-    const s = String(headline || "")
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N} ]/gu, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!s) return "";
+    const h = normalizeTitleKey(headline);
+    if (!h) return "";
 
-    const stop = new Set(["de","del","la","las","el","los","y","o","en","por","para","con","un","una","unos","unas","a","al","que","se","su","sus","es"]);
-    const words = s.split(" ").filter(w => w.length >= 4 && !stop.has(w));
-    const top = words.slice(0, 4).map(w => "#" + w.replace(/ñ/g,"n"));
-    return top.join(" ");
+    const stop = new Set([
+      "el","la","los","las","de","del","y","en","a","un","una","unos","unas","que","por","para","con","sin",
+      "al","se","su","sus","como","más","menos","sobre","tras","ante","entre","desde","hasta","hoy","ayer"
+    ]);
+
+    const words = h.split(" ").filter(w => w && w.length >= 4 && !stop.has(w));
+    if (!words.length) return "";
+
+    // prefer “nombres” por simple heurística (frecuencia)
+    const freq = new Map();
+    for (const w of words) freq.set(w, (freq.get(w) || 0) + 1);
+
+    const top = Array.from(freq.entries())
+      .sort((a,b) => b[1] - a[1])
+      .map(x => x[0])
+      .slice(0, 4);
+
+    const tags = top.map(w => "#" + w.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean).slice(0, 3);
+    return tags.join(" ");
+  }
+
+  function smartTrimHeadline(s, maxLen) {
+    const t = cleanText(s);
+    if (t.length <= maxLen) return t;
+    const cut = t.slice(0, Math.max(0, maxLen - 1));
+    // intenta cortar por palabra
+    const lastSpace = cut.lastIndexOf(" ");
+    const base = (lastSpace > 18) ? cut.slice(0, lastSpace) : cut;
+    return base.trimEnd() + "…";
+  }
+
+  // Twitter/X count approximation: URLs cuentan como 23
+  function twCharCount(text) {
+    const s = String(text || "");
+    if (!s) return 0;
+    const urlRe = /https?:\/\/\S+/gi;
+    let count = 0;
+    let lastIndex = 0;
+    let m;
+    while ((m = urlRe.exec(s)) !== null) {
+      count += (m.index - lastIndex);
+      count += 23;
+      lastIndex = m.index + m[0].length;
+    }
+    count += (s.length - lastIndex);
+    return count;
   }
 
   async function copyToClipboard(text) {
     const t = String(text || "");
     if (!t) return;
-    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(t);
+    try {
+      await navigator.clipboard.writeText(t);
+      return;
+    } catch {}
+    // fallback
     const ta = document.createElement("textarea");
     ta.value = t;
+    ta.setAttribute("readonly", "");
     ta.style.position = "fixed";
     ta.style.left = "-9999px";
     document.body.appendChild(ta);
     ta.select();
-    document.execCommand("copy");
+    try { document.execCommand("copy"); } catch {}
     document.body.removeChild(ta);
   }
 
-  /* ───────────────────────────── PWA SW (AUTO-UPDATE) ───────────────────────────── */
+  /* ───────────────────────────── PWA / SERVICE WORKER ───────────────────────────── */
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
 
-    window.addEventListener("load", async () => {
-      try {
-        swReg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+    // 1) register
+    navigator.serviceWorker.register("./sw.js")
+      .then((reg) => {
+        swReg = reg;
 
-        // si ya hay waiting al cargar (update previo)
-        try { swReg.waiting?.postMessage({ type: "SKIP_WAITING" }); } catch {}
-
-        // check update now
-        try { await swReg.update(); } catch {}
-
-        // periodic update checks
+        // 2) periodic update checks
         if (swUpdateTimer) clearInterval(swUpdateTimer);
         swUpdateTimer = setInterval(() => {
-          try { swReg?.update?.(); } catch {}
+          try { swReg.update(); } catch {}
         }, SW_UPDATE_CHECK_MS);
 
-        swReg.addEventListener("updatefound", () => {
-          const nw = swReg.installing;
-          if (!nw) return;
-          nw.addEventListener("statechange", () => {
-            if (nw.state === "installed" && navigator.serviceWorker.controller) {
-              try { swReg.waiting?.postMessage({ type: "SKIP_WAITING" }); } catch {}
-              toast("⬆️ Actualización lista…");
-            }
-          });
-        });
-
+        // 3) reload once when controller changes (new SW activated)
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           try {
             const already = sessionStorage.getItem(SW_FORCE_RELOAD_GUARD);
             if (already) return;
             sessionStorage.setItem(SW_FORCE_RELOAD_GUARD, "1");
-          } catch {}
-          toast("♻️ Actualizando…");
-          setTimeout(() => location.reload(), 350);
+            location.reload();
+          } catch {
+            location.reload();
+          }
         });
 
-      } catch (e) {
-        console.warn("SW register failed:", e);
-      }
-    });
+        // 4) if waiting, ask it to activate
+        if (reg.waiting) {
+          try { reg.waiting.postMessage({ type: "SKIP_WAITING" }); } catch {}
+        }
+
+        // 5) listen for updates
+        reg.addEventListener("updatefound", () => {
+          const nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener("statechange", () => {
+            if (nw.state === "installed") {
+              // if new worker installed and there is already a controller => update available
+              if (navigator.serviceWorker.controller) {
+                try { reg.waiting?.postMessage({ type: "SKIP_WAITING" }); } catch {}
+              }
+            }
+          });
+        });
+      })
+      .catch(() => {});
   }
 
   /* ───────────────────────────── BOOT ───────────────────────────── */
   try {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", init, { once: true });
-    } else {
-      init();
-    }
+    init();
   } catch (e) {
     crashOverlay(e);
   }
