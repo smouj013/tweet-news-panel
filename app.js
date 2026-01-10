@@ -1,11 +1,12 @@
 /* app.js — TNP v4.1.1 — DIRECT RSS + HARDENED (NO Google por defecto)
    ✅ Compat 100% con tu index.html (IDs + modal + ticker + X mock + botones)
-   ✅ FIX: “no refresca / no actualiza” → mantenimiento SW sin duplicar registro + auto-reload guardado
-   ✅ FIX: refresh manual ahora ABORTA el refresh anterior (no se queda “colgado”)
-   ✅ Anti-cache: fetch no-store + headers no-cache + cache-bust en PROXIES (evita resultados viejos)
-   ✅ RSS/Atom: mejor extracción de imágenes (media/enclosure + <img> en description/content)
-   ✅ OG best-effort REAL (HTML vía proxies) + caché local
-   ✅ Backoff por feed (evita martilleo) + batch configurable
+   ✅ FIX CRÍTICO: localStorage con "null" / JSON corrupto => nunca rompe (adiós liveUrl null)
+   ✅ FIX: “no refresca / no actualiza” => self-heal al detectar build nuevo (limpia caches tnp-* + reload guard)
+   ✅ FIX: refresh manual ABORTA el refresh anterior (no se queda colgado)
+   ✅ Anti-cache: fetch no-store + headers no-cache + cache-bust en PROXIES
+   ✅ RSS/Atom: extracción de imágenes mejorada (media/enclosure + <img>)
+   ✅ OG best-effort (HTML vía proxies) + caché local
+   ✅ Backoff por feed + batch configurable
    ✅ Vista previa estilo X + conteo tipo X (URLs=23)
 */
 
@@ -13,6 +14,10 @@
   "use strict";
 
   const APP_VERSION = "tnp-v4.1.1";
+
+  // OJO: no es “versión”, es build-id para auto-heal de caches aunque no cambies APP_VERSION
+  // Puedes cambiar este string cuando publiques cambios, sin tocar el resto.
+  const BUILD_ID = "2026-01-10a";
 
   /* ───────────────────────────── STORAGE ───────────────────────────── */
   const LS_FEEDS    = "tnp_feeds_v4";
@@ -22,6 +27,8 @@
 
   const LS_RESOLVE_CACHE = "tnp_resolve_cache_v4";
   const LS_OG_CACHE      = "tnp_og_cache_v4";
+
+  const LS_BUILD_ID = "tnp_build_id_v4";
 
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
   const DEFAULT_TEMPLATE =
@@ -43,8 +50,17 @@ Fuente:
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
-  function safeJsonParse(s, fallback){
-    try { return JSON.parse(s); } catch { return fallback; }
+  function safeParseJSON(raw) {
+    if (raw == null) return undefined; // null/undefined
+    try { return JSON.parse(raw); } catch { return undefined; }
+  }
+
+  function asObject(v, fallback = {}) {
+    return (v && typeof v === "object" && !Array.isArray(v)) ? v : fallback;
+  }
+
+  function asArray(v, fallback = []) {
+    return Array.isArray(v) ? v : fallback;
   }
 
   function normSpace(s){
@@ -213,8 +229,6 @@ Fuente:
     { name:"Google News — World (Top) [OFF]", url:"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", enabled:false, cat:"world" },
   ];
 
-  // Packs OFF para tener “100+” sin matar rendimiento por defecto.
-  // Puedes activar los que quieras desde Feeds.
   const GOOGLE_NEWS_SEARCH_PACK = (() => {
     const mk = (label, q, cat, hl="es", gl="ES", ceid="ES:es") => ({
       name: `Google News — ${label} [OFF]`,
@@ -249,7 +263,6 @@ Fuente:
       mk("Cine/TV", "cine series estreno", "ent"),
     ];
 
-    // multiplicamos por “regiones” (OFF) para llegar a 100+ sin manualidad infinita
     const regions = [
       { hl:"es", gl:"ES", ceid:"ES:es", tag:"ES" },
       { hl:"es", gl:"MX", ceid:"MX:es", tag:"MX" },
@@ -370,7 +383,9 @@ Fuente:
 
   /* ───────────────────────────── SETTINGS ───────────────────────────── */
   function loadSettings(){
-    const s = safeJsonParse(localStorage.getItem(LS_SETTINGS), {});
+    const raw = safeParseJSON(localStorage.getItem(LS_SETTINGS));
+    const s = asObject(raw, {}); // <-- FIX: si raw es null, array, string... => {}
+
     s.liveUrl = s.liveUrl || "https://twitch.tv/globaleyetv";
 
     s.delayMin = (typeof s.delayMin === "number") ? s.delayMin : 0;
@@ -395,7 +410,7 @@ Fuente:
     return s;
   }
   function saveSettings(s){
-    localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
+    localStorage.setItem(LS_SETTINGS, JSON.stringify(asObject(s, {})));
   }
   const settings = loadSettings();
 
@@ -404,7 +419,7 @@ Fuente:
     return (t && t.trim()) ? t : DEFAULT_TEMPLATE;
   }
   function saveTemplate(t){
-    localStorage.setItem(LS_TEMPLATE, t);
+    localStorage.setItem(LS_TEMPLATE, String(t || DEFAULT_TEMPLATE));
   }
 
   /* ───────────────────────────── STATE ───────────────────────────── */
@@ -434,30 +449,29 @@ Fuente:
 
     // SW
     swReg: null,
-    swReloading: false,
   };
 
   function loadUsed(){
-    const arr = safeJsonParse(localStorage.getItem(LS_USED), []);
-    state.used = new Set(Array.isArray(arr) ? arr : []);
+    const raw = safeParseJSON(localStorage.getItem(LS_USED));
+    const arr = asArray(raw, []);
+    state.used = new Set(arr.filter(x => typeof x === "string").slice(0, 5000));
   }
   function saveUsed(){
     localStorage.setItem(LS_USED, JSON.stringify(Array.from(state.used).slice(0, 5000)));
   }
 
   function loadCaches(){
-    const rc = safeJsonParse(localStorage.getItem(LS_RESOLVE_CACHE), {});
-    if (rc && typeof rc === "object"){
-      for (const [k,v] of Object.entries(rc)){
-        if (typeof v === "string") state.resolveCache.set(k, v);
-      }
+    const rcRaw = safeParseJSON(localStorage.getItem(LS_RESOLVE_CACHE));
+    const rc = asObject(rcRaw, {});
+    for (const [k,v] of Object.entries(rc)){
+      if (typeof v === "string") state.resolveCache.set(k, v);
     }
-    const og = safeJsonParse(localStorage.getItem(LS_OG_CACHE), {});
-    if (og && typeof og === "object"){
-      for (const [k,v] of Object.entries(og)){
-        if (v && typeof v === "object") state.ogCache.set(k, v);
-        if (v === null) state.ogCache.set(k, null);
-      }
+
+    const ogRaw = safeParseJSON(localStorage.getItem(LS_OG_CACHE));
+    const og = asObject(ogRaw, {});
+    for (const [k,v] of Object.entries(og)){
+      if (v && typeof v === "object") state.ogCache.set(k, v);
+      if (v === null) state.ogCache.set(k, null);
     }
   }
 
@@ -490,9 +504,9 @@ Fuente:
   }
 
   function loadFeeds(){
-    const saved = safeJsonParse(localStorage.getItem(LS_FEEDS), null);
+    const raw = safeParseJSON(localStorage.getItem(LS_FEEDS));
+    const saved = asArray(raw, null);
 
-    // FIX: si faltan o están vacíos -> guardamos defaults siempre
     if (Array.isArray(saved)){
       const cleaned = saved.map(normalizeFeed).filter(Boolean);
       if (cleaned.length){
@@ -509,7 +523,7 @@ Fuente:
     localStorage.setItem(LS_FEEDS, JSON.stringify(state.feeds));
   }
 
-  /* ───────────────────────────── MODAL (FIX .hidden + [hidden]) ───────────────────────────── */
+  /* ───────────────────────────── MODAL ───────────────────────────── */
   function setModalOpen(open){
     if (!els.modal) return;
     els.modal.classList.toggle("hidden", !open);
@@ -593,7 +607,7 @@ Fuente:
 
     return {
       signal: ctrl.signal,
-      cancel: () => { clearTimeout(t); ctrl.abort("cancel"); }
+      cancel: () => { clearTimeout(t); try{ ctrl.abort("cancel"); }catch{} }
     };
   }
 
@@ -607,14 +621,13 @@ Fuente:
   }
 
   function bustProxy(url){
-    // Evita proxies sirviendo HTML/XML viejo
     try{
       const u = new URL(url);
-      u.searchParams.set("__tnp", `${APP_VERSION}_${nowMs().toString(36)}`);
+      u.searchParams.set("__tnp", `${APP_VERSION}_${BUILD_ID}_${nowMs().toString(36)}`);
       return u.toString();
     }catch{
       const sep = url.includes("?") ? "&" : "?";
-      return url + sep + "__tnp=" + encodeURIComponent(`${APP_VERSION}_${nowMs().toString(36)}`);
+      return url + sep + "__tnp=" + encodeURIComponent(`${APP_VERSION}_${BUILD_ID}_${nowMs().toString(36)}`);
     }
   }
 
@@ -634,18 +647,12 @@ Fuente:
   }
 
   async function fetchTextSmart(url, signal){
-    // 1) directo
     try { return await fetchText(url, signal); } catch {}
 
     const enc = encodeURIComponent(url);
 
-    // 2) allorigins raw (cache-bust)
     try { return await fetchText(bustProxy(`https://api.allorigins.win/raw?url=${enc}`), signal); } catch {}
-
-    // 3) codetabs (cache-bust)
     try { return await fetchText(bustProxy(`https://api.codetabs.com/v1/proxy?quest=${enc}`), signal); } catch {}
-
-    // 4) thingproxy (cache-bust “por query”)
     try { return await fetchText(bustProxy(`https://thingproxy.freeboard.io/fetch/${url}`), signal); } catch {}
 
     throw new Error("fetch_failed");
@@ -695,7 +702,6 @@ Fuente:
   }
 
   function pickImageFromNode(node, baseUrl){
-    // media:content, media:thumbnail, enclosure, atom link rel=enclosure, description/content img
     const mc = node.querySelector("media\\:content, content[url]");
     if (mc && mc.getAttribute("url")) return cleanUrl(absolutizeUrl(mc.getAttribute("url"), baseUrl));
 
@@ -1106,7 +1112,6 @@ Fuente:
       .replaceAll("{{SOURCE_URL}}", sourceUrl)
       .replaceAll("{{HASHTAGS}}", tags);
 
-    // si el toggle de fuente está OFF, limpiamos bloque “Fuente:” (si el user usa tu template estándar)
     if (els.optIncludeSource && !els.optIncludeSource.checked){
       out = out
         .replace(/\n?Fuente:\s*\n\s*https?:\/\/[^\s]+/i, "")
@@ -1299,11 +1304,9 @@ Fuente:
 
   /* ───────────────────────────── REFRESH LOOP ───────────────────────────── */
   async function refreshAll({ force=false, user=false } = {}){
-    // si el user hace refresh mientras hay uno en curso: abort y reinicia (no se queda muerto)
     if (state.refreshInFlight){
       if (!user) return;
       try{ state.refreshAbort?.abort("user_refresh"); }catch{}
-      // dejamos que el finally del refresh viejo se ejecute, pero protegemos con refreshSeq
     }
 
     const mySeq = ++state.refreshSeq;
@@ -1375,7 +1378,6 @@ Fuente:
       state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
       if (signal.aborted || mySeq !== state.refreshSeq) throw new Error("Abort");
 
-      // dedup por link (limpia tracking y normaliza)
       const seen = new Set();
       const dedup = [];
       for (const it of allItems){
@@ -1395,7 +1397,6 @@ Fuente:
       clean.sort((a,b) => b.dateMs - a.dateMs);
       state.items = clean.slice(0, cap);
 
-      // resolve links (limitado)
       if (els.optResolveLinks?.checked){
         const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 80);
         await mapLimit(need, 6, async (it) => {
@@ -1403,7 +1404,6 @@ Fuente:
         });
       }
 
-      // OG images (solo si no hay RSS img)
       const needImg = state.items
         .filter(it => !it.img && (it.resolvedUrl || it.link))
         .slice(0, 80);
@@ -1443,12 +1443,12 @@ Fuente:
 
     const sec = clamp(Number(els.refreshSec?.value || settings.refreshSec || 60), 20, 600);
     state.autoTimer = setInterval(() => {
-      if (document.hidden) return; // no martillear en background
+      if (document.hidden) return;
       refreshAll({ force:false, user:false }).catch(()=>{});
     }, sec * 1000);
   }
 
-  /* ───────────────────────────── SW UPDATE + RESET (SIN duplicar bootstrap) ───────────────────────────── */
+  /* ───────────────────────────── SW MAINTENANCE + SELF-HEAL ───────────────────────────── */
   async function attachSwMaintenance(){
     if (!("serviceWorker" in navigator)) return;
 
@@ -1458,8 +1458,7 @@ Fuente:
       state.swReg = null;
     }
 
-    // Si por lo que sea no hay registro, intentamos registrar “suave”
-    // (pero tu bootstrap ya lo hace — esto es solo backup)
+    // Backup: si no hay registro (por lo que sea), intenta registrar suave
     if (!state.swReg){
       try{
         state.swReg = await navigator.serviceWorker.register("./sw.js", { updateViaCache:"none" });
@@ -1468,7 +1467,7 @@ Fuente:
       }
     }
 
-    // Auto-reload guard (evita bucles)
+    // Guard anti-bucle reload
     if (!window.__TNP_SW_GUARD__){
       window.__TNP_SW_GUARD__ = { reloading:false };
       navigator.serviceWorker.addEventListener("controllerchange", () => {
@@ -1478,7 +1477,7 @@ Fuente:
       });
     }
 
-    // Mantenimiento: pedir update periódico
+    // Mantenimiento: update periódico
     setInterval(async () => {
       try{
         if (state.swReg) await state.swReg.update();
@@ -1487,6 +1486,42 @@ Fuente:
         }
       }catch{}
     }, 60 * 1000);
+  }
+
+  async function requestClearTnpCaches(){
+    // 1) pide al SW limpiar caches propios
+    try{
+      if (navigator.serviceWorker?.controller){
+        navigator.serviceWorker.controller.postMessage({ type:"CLEAR_CACHES" });
+      }
+    }catch{}
+
+    // 2) además: intentamos borrar caches tnp-* desde la página (por si SW no escucha)
+    try{
+      if ("caches" in window){
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => (String(k).startsWith("tnp-") ? caches.delete(k) : Promise.resolve(false))));
+      }
+    }catch{}
+  }
+
+  async function selfHealIfBuildChanged(){
+    // Si cambia BUILD_ID, forzamos limpieza de caches para evitar servir shell viejo.
+    const prev = localStorage.getItem(LS_BUILD_ID);
+    const cur = `${APP_VERSION}:${BUILD_ID}`;
+    if (prev === cur) return;
+
+    localStorage.setItem(LS_BUILD_ID, cur);
+    setStatus("Aplicando actualización… (limpiando caché)");
+    await requestClearTnpCaches();
+
+    // reload 1 vez
+    try{
+      if (!window.__TNP_SELF_HEAL__){
+        window.__TNP_SELF_HEAL__ = true;
+        setTimeout(() => location.reload(), 250);
+      }
+    }catch{}
   }
 
   async function forceUpdateNow(){
@@ -1517,9 +1552,9 @@ Fuente:
       localStorage.removeItem(LS_USED);
       localStorage.removeItem(LS_RESOLVE_CACHE);
       localStorage.removeItem(LS_OG_CACHE);
+      localStorage.removeItem(LS_BUILD_ID);
     }catch{}
 
-    // Borra TODOS los caches del origin (esto arregla el “me sirve app viejo” si el SW cachea raro)
     try{
       if ("caches" in window){
         const keys = await caches.keys();
@@ -1527,7 +1562,6 @@ Fuente:
       }
     }catch{}
 
-    // Desregistra TODOS los SW del origin
     try{
       if ("serviceWorker" in navigator){
         const regs = await navigator.serviceWorker.getRegistrations();
@@ -1540,7 +1574,7 @@ Fuente:
 
   /* ───────────────────────────── UI BIND ───────────────────────────── */
   function bindUI(){
-    hideBootDiag(); // si arrancó app.js, ocultamos el banner
+    hideBootDiag();
 
     if (els.liveUrl) els.liveUrl.value = settings.liveUrl;
     if (els.template) els.template.value = loadTemplate();
@@ -1637,12 +1671,13 @@ Fuente:
     els.btnImportFeeds?.addEventListener("click", () => {
       if (!els.feedsJson) return;
       const raw = els.feedsJson.value;
-      const parsed = safeJsonParse(raw, null);
-      if (!Array.isArray(parsed)) {
+      const parsed = safeParseJSON(raw);
+      const arr = asArray(parsed, null);
+      if (!Array.isArray(arr)) {
         setStatus("Import: JSON inválido (debe ser array).");
         return;
       }
-      const cleaned = parsed.map(normalizeFeed).filter(Boolean);
+      const cleaned = arr.map(normalizeFeed).filter(Boolean);
       if (!cleaned.length){
         setStatus("Import: no hay feeds válidos.");
         return;
@@ -1725,12 +1760,10 @@ Fuente:
 
     els.searchBox?.addEventListener("input", () => applyFilters());
 
-    // pausa/reanuda auto refresh según visibilidad
     document.addEventListener("visibilitychange", () => {
       if (!els.optAutoRefresh?.checked) return;
       if (!document.hidden){
         startAuto();
-        // refresco suave al volver (si llevas rato fuera)
         refreshAll({ force:false, user:false }).catch(()=>{});
       }
     });
@@ -1745,7 +1778,6 @@ Fuente:
       return;
     }
 
-    // crash guards visibles
     window.addEventListener("error", (e) => {
       try{
         const m = (e && (e.message || (e.error && e.error.message))) ? (e.message || e.error.message) : "Error JS";
@@ -1769,11 +1801,11 @@ Fuente:
     updatePreview();
 
     await attachSwMaintenance();
+    await selfHealIfBuildChanged();
 
     applyFilters();
     startAuto();
 
-    // primer refresh en FORCE para romper “cache viejo” de feeds/proxies
     refreshAll({ force:true, user:false }).catch(()=>{});
   }
 
