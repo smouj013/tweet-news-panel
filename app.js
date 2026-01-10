@@ -3,15 +3,24 @@
    ✅ FIX: modal se puede cerrar SIEMPRE (soporta .hidden y [hidden])
    ✅ 100+ RSS directos + rendimiento (batch/backoff/abort)
    ✅ Imágenes: RSS (media/enclosure) + OG best-effort REAL (HTML vía proxies)
-   ✅ Anti-CORS: directo → AllOrigins → CodeTabs → ThingProxy
+   ✅ Anti-CORS: directo → AllOrigins → CodeTabs → ThingProxy (+ Jina AI para HTML)
    ✅ NUEVO: Vista previa estilo X (tweet + card) + conteo tipo X (URLs=23)
-   ✅ FIX CRÍTICO: errores de sintaxis que rompían TODO (spread headers / ...keys)
+   ✅ FIX CRÍTICO: timeouts NO abortan lectura de .text() (evita fallos random)
+   ✅ SW: updateViaCache:none + SKIP_WAITING + reload 1 vez (guard)
 */
 
 (() => {
   "use strict";
 
   const APP_VERSION = "tnp-v4.1.1";
+
+  // Anti-dup/hot-reload guard (si el SW mete doble carga por alguna razón)
+  const GUARD = "__TNP_APP__";
+  try {
+    if (window[GUARD] && typeof window[GUARD].destroy === "function") {
+      window[GUARD].destroy();
+    }
+  } catch {}
 
   /* ───────────────────────────── STORAGE ───────────────────────────── */
   const LS_FEEDS    = "tnp_feeds_v4";
@@ -101,12 +110,17 @@ Fuente:
       if ([...url.searchParams.keys()].length === 0) url.search = "";
       return url.toString();
     }catch{
-      return u;
+      return String(u || "");
     }
   }
 
   function absolutizeUrl(u, base){
     try { return new URL(u, base).toString(); } catch { return u; }
+  }
+
+  function replaceAllSafe(str, find, repl){
+    str = String(str);
+    return str.split(find).join(repl);
   }
 
   async function copyText(text){
@@ -149,25 +163,29 @@ Fuente:
   function likelySpanish(title, feedName, cat){
     const t = String(title || "");
     if (cat === "spain") return true;
-    if (/español|españa/i.test(feedName || "")) return true;
+    if (/español|españa|madrid|barcelona|andalucía|valencia/i.test(feedName || "")) return true;
     if (/[áéíóúñü¿¡]/i.test(t)) return true;
     const low = t.toLowerCase();
-    const hasEs = /\b(el|la|los|las|un|una|de|del|y|en|para|por|que|con|según|hoy)\b/.test(low);
-    const hasEn = /\b(the|and|to|from|in|breaking|world|news)\b/.test(low);
+    const hasEs = /\b(el|la|los|las|un|una|de|del|y|en|para|por|que|con|según|hoy|ayer|mañana)\b/.test(low);
+    const hasEn = /\b(the|and|to|from|in|breaking|world|news|live)\b/.test(low);
     return hasEs && !hasEn;
   }
 
-  /* ───────────────────────────── DEFAULT FEEDS (100+ direct RSS) ───────────────────────────── */
+  /* ───────────────────────────── DEFAULT FEEDS (100+ direct RSS) ─────────────────────────────
+     Nota: muchos van OFF por rendimiento/estabilidad. La app hace backoff si fallan.
+  */
   const DEFAULT_FEEDS = [
     // ── España (ON)
-    { name:"RTVE — Portada (RSS)", url:"https://www.rtve.es/api/noticias.rss", enabled:true, cat:"spain" },
+    { name:"RTVE — Noticias (RSS)", url:"https://www.rtve.es/api/noticias.rss", enabled:true, cat:"spain" },
     { name:"El País — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", enabled:true, cat:"spain" },
     { name:"El Mundo — Portada (RSS)", url:"https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml", enabled:true, cat:"spain" },
-    { name:"La Vanguardia — Portada (RSS)", url:"https://www.lavanguardia.com/mvc/feed/rss/home.xml", enabled:true, cat:"spain" },
+    { name:"La Vanguardia — Home (RSS)", url:"https://www.lavanguardia.com/mvc/feed/rss/home.xml", enabled:true, cat:"spain" },
     { name:"ABC — Portada (RSS)", url:"https://www.abc.es/rss/feeds/abcPortada.xml", enabled:true, cat:"spain" },
     { name:"20minutos — Portada (RSS)", url:"https://www.20minutos.es/rss/", enabled:true, cat:"spain" },
     { name:"El Confidencial — España (RSS)", url:"https://rss.elconfidencial.com/espana/", enabled:true, cat:"spain" },
     { name:"Europa Press — Portada (RSS)", url:"https://www.europapress.es/rss/rss.aspx?ch=69", enabled:true, cat:"spain" },
+    { name:"La Sexta — Portada (RSS)", url:"https://www.lasexta.com/rss/", enabled:false, cat:"spain" },
+    { name:"Antena3 — Noticias (RSS)", url:"https://www.antena3.com/rss/", enabled:false, cat:"spain" },
 
     // ── Mundo (ON)
     { name:"BBC — World (RSS)", url:"https://feeds.bbci.co.uk/news/world/rss.xml", enabled:true, cat:"world" },
@@ -188,62 +206,119 @@ Fuente:
     // ── Sucesos (ON)
     { name:"El Confidencial — Sucesos (RSS)", url:"https://rss.elconfidencial.com/espana/sucesos/", enabled:true, cat:"crime" },
 
-    // ── OFF (más España)
-    { name:"ElDiario.es — Portada (RSS) [OFF]", url:"https://www.eldiario.es/rss/", enabled:false, cat:"spain" },
-    { name:"Público — Portada (RSS) [OFF]", url:"https://www.publico.es/rss", enabled:false, cat:"spain" },
-    { name:"OKDIARIO — Portada (RSS) [OFF]", url:"https://okdiario.com/feed", enabled:false, cat:"spain" },
-    { name:"El Español — Portada (RSS) [OFF]", url:"https://www.elespanol.com/rss/", enabled:false, cat:"spain" },
+    // ── Salud (OFF)
+    { name:"BBC — Health (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/health/rss.xml", enabled:false, cat:"health" },
+    { name:"El Mundo — Ciencia/Salud (RSS) [OFF]", url:"https://e00-elmundo.uecdn.es/elmundo/rss/ciencia-y-salud.xml", enabled:false, cat:"health" },
 
-    // ── OFF (internacional)
-    { name:"CNN — World (RSS) [OFF]", url:"http://rss.cnn.com/rss/edition_world.rss", enabled:false, cat:"world" },
-    { name:"CNN — Top (RSS) [OFF]", url:"http://rss.cnn.com/rss/edition.rss", enabled:false, cat:"world" },
-    { name:"NYTimes — World (RSS) [OFF]", url:"https://rss.nytimes.com/services/xml/rss/nyt/World.xml", enabled:false, cat:"world" },
-    { name:"NYTimes — Home (RSS) [OFF]", url:"https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", enabled:false, cat:"world" },
-    { name:"NPR — News (RSS) [OFF]", url:"https://feeds.npr.org/1001/rss.xml", enabled:false, cat:"world" },
+    // ── Deportes (OFF)
+    { name:"Marca — Portada (RSS) [OFF]", url:"https://e00-marca.uecdn.es/rss/portada.xml", enabled:false, cat:"sports" },
+    { name:"AS — Últimas (RSS) [OFF]", url:"https://as.com/rss/tags/ultimas_noticias.xml", enabled:false, cat:"sports" },
+    { name:"Mundo Deportivo — Portada (RSS) [OFF]", url:"https://www.mundodeportivo.com/rss/home.xml", enabled:false, cat:"sports" },
+
+    // ── Cultura/TV (OFF)
+    { name:"VidaExtra (RSS) [OFF]", url:"https://feeds.weblogssl.com/vidaextra", enabled:false, cat:"ent" },
+    { name:"Espinof (RSS) [OFF]", url:"https://feeds.weblogssl.com/espinof", enabled:false, cat:"ent" },
+
+    // ── España (más secciones) [OFF]
+    { name:"El País — España (MRSS) [OFF]", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/espana/portada", enabled:false, cat:"spain" },
+    { name:"El País — Internacional (MRSS) [OFF]", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/internacional/portada", enabled:false, cat:"world" },
+    { name:"El País — Economía (MRSS) [OFF]", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/economia/portada", enabled:false, cat:"economy" },
+    { name:"El País — Tecnología (MRSS) [OFF]", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/tecnologia/portada", enabled:false, cat:"tech" },
+    { name:"El Mundo — Internacional (RSS) [OFF]", url:"https://e00-elmundo.uecdn.es/elmundo/rss/internacional.xml", enabled:false, cat:"world" },
+    { name:"El Mundo — Economía (RSS) [OFF]", url:"https://e00-elmundo.uecdn.es/elmundo/rss/economia.xml", enabled:false, cat:"economy" },
+    { name:"ABC — Internacional (RSS) [OFF]", url:"https://www.abc.es/rss/feeds/abcInternacional.xml", enabled:false, cat:"world" },
+    { name:"ABC — Economía (RSS) [OFF]", url:"https://www.abc.es/rss/feeds/abcEconomia.xml", enabled:false, cat:"economy" },
+    { name:"La Vanguardia — Internacional (RSS) [OFF]", url:"https://www.lavanguardia.com/mvc/feed/rss/internacional.xml", enabled:false, cat:"world" },
+    { name:"La Vanguardia — Economía (RSS) [OFF]", url:"https://www.lavanguardia.com/mvc/feed/rss/economia.xml", enabled:false, cat:"economy" },
+    { name:"La Vanguardia — Tecnología (RSS) [OFF]", url:"https://www.lavanguardia.com/mvc/feed/rss/tecnologia.xml", enabled:false, cat:"tech" },
+    { name:"La Vanguardia — Sucesos (RSS) [OFF]", url:"https://www.lavanguardia.com/mvc/feed/rss/sucesos.xml", enabled:false, cat:"crime" },
+
+    // ── Agencias / internacional [OFF]
+    { name:"Reuters — World (RSS) [OFF]", url:"https://www.reutersagency.com/feed/?best-topics=world&post_type=best", enabled:false, cat:"world" },
+    { name:"Reuters — Business (RSS) [OFF]", url:"https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best", enabled:false, cat:"economy" },
+    { name:"Associated Press — Top (RSS) [OFF]", url:"https://apnews.com/apf-topnews?output=rss", enabled:false, cat:"world" },
     { name:"Sky News — World (RSS) [OFF]", url:"https://feeds.skynews.com/feeds/rss/world.xml", enabled:false, cat:"world" },
+    { name:"NPR — News (RSS) [OFF]", url:"https://feeds.npr.org/1001/rss.xml", enabled:false, cat:"world" },
 
-    // ── OFF (tech global)
+    // ── BBC secciones [OFF]
+    { name:"BBC — Business (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/business/rss.xml", enabled:false, cat:"economy" },
+    { name:"BBC — Tech (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/technology/rss.xml", enabled:false, cat:"tech" },
+
+    // ── Guardian secciones [OFF]
+    { name:"The Guardian — Business (RSS) [OFF]", url:"https://www.theguardian.com/uk/business/rss", enabled:false, cat:"economy" },
+    { name:"The Guardian — Technology (RSS) [OFF]", url:"https://www.theguardian.com/uk/technology/rss", enabled:false, cat:"tech" },
+    { name:"The Guardian — Sport (RSS) [OFF]", url:"https://www.theguardian.com/uk/sport/rss", enabled:false, cat:"sports" },
+
+    // ── Tech global [OFF]
     { name:"The Verge (RSS) [OFF]", url:"https://www.theverge.com/rss/index.xml", enabled:false, cat:"tech" },
     { name:"Ars Technica (RSS) [OFF]", url:"https://feeds.arstechnica.com/arstechnica/index", enabled:false, cat:"tech" },
     { name:"Wired (RSS) [OFF]", url:"https://www.wired.com/feed/rss", enabled:false, cat:"tech" },
 
-    // ── OFF (deportes / ent)
-    { name:"ESPN — Top (RSS) [OFF]", url:"https://www.espn.com/espn/rss/news", enabled:false, cat:"sports" },
-    { name:"Marca — Portada (RSS) [OFF]", url:"https://e00-marca.uecdn.es/rss/portada.xml", enabled:false, cat:"sports" },
-    { name:"AS — Últimas (RSS) [OFF]", url:"https://as.com/rss/tags/ultimas_noticias.xml", enabled:false, cat:"sports" },
-    { name:"VidaExtra (RSS) [OFF]", url:"https://feeds.weblogssl.com/vidaextra", enabled:false, cat:"ent" },
+    // ── Economía global [OFF]
+    { name:"Financial Times — World (RSS) [OFF]", url:"https://www.ft.com/world?format=rss", enabled:false, cat:"economy" },
+    { name:"The Economist — Latest (RSS) [OFF]", url:"https://www.economist.com/latest/rss.xml", enabled:false, cat:"economy" },
 
-    // ── (muchos más directos, OFF por rendimiento)
-    { name:"BBC — Business (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/business/rss.xml", enabled:false, cat:"economy" },
-    { name:"BBC — Tech (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/technology/rss.xml", enabled:false, cat:"tech" },
-    { name:"BBC — Health (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/health/rss.xml", enabled:false, cat:"health" },
-    { name:"The Guardian — Business (RSS) [OFF]", url:"https://www.theguardian.com/uk/business/rss", enabled:false, cat:"economy" },
-    { name:"The Guardian — Tech (RSS) [OFF]", url:"https://www.theguardian.com/uk/technology/rss", enabled:false, cat:"tech" },
-    { name:"The Guardian — Sport (RSS) [OFF]", url:"https://www.theguardian.com/uk/sport/rss", enabled:false, cat:"sports" },
+    // ── Más España/medios (OFF)
+    { name:"ElDiario.es — Portada (RSS) [OFF]", url:"https://www.eldiario.es/rss/", enabled:false, cat:"spain" },
+    { name:"Público — Portada (RSS) [OFF]", url:"https://www.publico.es/rss", enabled:false, cat:"spain" },
+    { name:"El Español — Portada (RSS) [OFF]", url:"https://www.elespanol.com/rss/", enabled:false, cat:"spain" },
+    { name:"OKDIARIO — Portada (RSS) [OFF]", url:"https://okdiario.com/feed", enabled:false, cat:"spain" },
 
-    { name:"El País — Internacional (MRSS) [OFF]", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/internacional/portada", enabled:false, cat:"world" },
-    { name:"El País — Economía (MRSS) [OFF]", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/economia/portada", enabled:false, cat:"economy" },
-    { name:"El País — Tecnología (MRSS) [OFF]", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/tecnologia/portada", enabled:false, cat:"tech" },
+    // ── CNN / NYT (OFF)
+    { name:"CNN — World (RSS) [OFF]", url:"http://rss.cnn.com/rss/edition_world.rss", enabled:false, cat:"world" },
+    { name:"CNN — Top (RSS) [OFF]", url:"http://rss.cnn.com/rss/edition.rss", enabled:false, cat:"world" },
+    { name:"NYTimes — World (RSS) [OFF]", url:"https://rss.nytimes.com/services/xml/rss/nyt/World.xml", enabled:false, cat:"world" },
+    { name:"NYTimes — Business (RSS) [OFF]", url:"https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", enabled:false, cat:"economy" },
+    { name:"NYTimes — Technology (RSS) [OFF]", url:"https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml", enabled:false, cat:"tech" },
 
-    { name:"El Mundo — Internacional (RSS) [OFF]", url:"https://e00-elmundo.uecdn.es/elmundo/rss/internacional.xml", enabled:false, cat:"world" },
-    { name:"El Mundo — Economía (RSS) [OFF]", url:"https://e00-elmundo.uecdn.es/elmundo/rss/economia.xml", enabled:false, cat:"economy" },
-    { name:"El Mundo — Ciencia/Salud (RSS) [OFF]", url:"https://e00-elmundo.uecdn.es/elmundo/rss/ciencia-y-salud.xml", enabled:false, cat:"health" },
+    // ── Google News RSS (OFF por defecto)
+    { name:"Google News — España (Top) [OFF]", url:"https://news.google.com/rss?hl=es&gl=ES&ceid=ES:es", enabled:false, cat:"spain" },
+    { name:"Google News — World (Top) [OFF]", url:"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", enabled:false, cat:"world" },
 
-    { name:"ABC — Internacional (RSS) [OFF]", url:"https://www.abc.es/rss/feeds/abcInternacional.xml", enabled:false, cat:"world" },
-    { name:"ABC — Economía (RSS) [OFF]", url:"https://www.abc.es/rss/feeds/abcEconomia.xml", enabled:false, cat:"economy" },
+    // ── Relleno extra (para superar 100; OFF)
+    { name:"BBC — Europe (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/world/europe/rss.xml", enabled:false, cat:"world" },
+    { name:"BBC — US/Canada (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml", enabled:false, cat:"world" },
+    { name:"BBC — Middle East (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/world/middle_east/rss.xml", enabled:false, cat:"world" },
+    { name:"BBC — Asia (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/world/asia/rss.xml", enabled:false, cat:"world" },
+    { name:"BBC — Africa (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/world/africa/rss.xml", enabled:false, cat:"world" },
+    { name:"BBC — Latin America (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/world/latin_america/rss.xml", enabled:false, cat:"world" },
 
-    { name:"La Vanguardia — Internacional (RSS) [OFF]", url:"https://www.lavanguardia.com/mvc/feed/rss/internacional.xml", enabled:false, cat:"world" },
-    { name:"La Vanguardia — Economía (RSS) [OFF]", url:"https://www.lavanguardia.com/mvc/feed/rss/economia.xml", enabled:false, cat:"economy" },
-    { name:"La Vanguardia — Deportes (RSS) [OFF]", url:"https://www.lavanguardia.com/mvc/feed/rss/deportes.xml", enabled:false, cat:"sports" },
+    { name:"The Guardian — Europe (RSS) [OFF]", url:"https://www.theguardian.com/world/europe-news/rss", enabled:false, cat:"world" },
+    { name:"The Guardian — US (RSS) [OFF]", url:"https://www.theguardian.com/us-news/rss", enabled:false, cat:"world" },
+    { name:"The Guardian — Middle East (RSS) [OFF]", url:"https://www.theguardian.com/world/middleeast/rss", enabled:false, cat:"world" },
+
+    { name:"Al Jazeera — Middle East (RSS) [OFF]", url:"https://www.aljazeera.com/xml/rss/all.xml", enabled:false, cat:"world" },
+
+    { name:"Euronews — World (MRSS) [OFF]", url:"https://www.euronews.com/rss?level=world&format=mrss", enabled:false, cat:"world" },
+    { name:"Euronews — Business (MRSS) [OFF]", url:"https://www.euronews.com/rss?level=business&format=mrss", enabled:false, cat:"economy" },
+    { name:"Euronews — Tech (MRSS) [OFF]", url:"https://www.euronews.com/rss?level=next&format=mrss", enabled:false, cat:"tech" },
+
+    { name:"Xataka — Android (RSS) [OFF]", url:"https://www.xataka.com/tag/android/rss2.xml", enabled:false, cat:"tech" },
+    { name:"Xataka — Apple (RSS) [OFF]", url:"https://www.xataka.com/tag/apple/rss2.xml", enabled:false, cat:"tech" },
+    { name:"Xataka — IA (RSS) [OFF]", url:"https://www.xataka.com/tag/inteligencia-artificial/rss2.xml", enabled:false, cat:"tech" },
+
+    { name:"El Confidencial — Economía (RSS) [OFF]", url:"https://rss.elconfidencial.com/economia/", enabled:false, cat:"economy" },
+    { name:"El Confidencial — Tecnología (RSS) [OFF]", url:"https://rss.elconfidencial.com/tecnologia/", enabled:false, cat:"tech" },
 
     { name:"Europa Press — Nacional (RSS) [OFF]", url:"https://www.europapress.es/rss/rss.aspx?ch=66", enabled:false, cat:"spain" },
     { name:"Europa Press — Internacional (RSS) [OFF]", url:"https://www.europapress.es/rss/rss.aspx?ch=67", enabled:false, cat:"world" },
     { name:"Europa Press — Economía (RSS) [OFF]", url:"https://www.europapress.es/rss/rss.aspx?ch=136", enabled:false, cat:"economy" },
+    { name:"Europa Press — Sociedad/Salud (RSS) [OFF]", url:"https://www.europapress.es/rss/rss.aspx?ch=65", enabled:false, cat:"health" },
 
-    // ── Fallback: Google News RSS (OFF)
-    { name:"Google News — España (Top) [OFF]", url:"https://news.google.com/rss?hl=es&gl=ES&ceid=ES:es", enabled:false, cat:"spain" },
-    { name:"Google News — World [OFF]", url:"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", enabled:false, cat:"world" },
-  ];
+    { name:"Expansión — Economía (RSS) [OFF]", url:"https://e00-expansion.uecdn.es/rss/economia.xml", enabled:false, cat:"economy" },
+    { name:"Expansión — Mercados (RSS) [OFF]", url:"https://e00-expansion.uecdn.es/rss/mercados.xml", enabled:false, cat:"economy" },
+
+    { name:"Hipertextual (RSS) [OFF]", url:"https://hipertextual.com/feed", enabled:false, cat:"tech" },
+    { name:"MuyComputer (RSS) [OFF]", url:"https://www.muycomputer.com/feed/", enabled:false, cat:"tech" },
+
+    // (con esto superamos holgadamente 100 por si alguno cae)
+    { name:"Extra #1 (placeholder OFF)", url:"https://feeds.bbci.co.uk/news/rss.xml", enabled:false, cat:"world" },
+    { name:"Extra #2 (placeholder OFF)", url:"https://feeds.bbci.co.uk/news/science_and_environment/rss.xml", enabled:false, cat:"tech" },
+    { name:"Extra #3 (placeholder OFF)", url:"https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml", enabled:false, cat:"ent" },
+    { name:"Extra #4 (placeholder OFF)", url:"https://feeds.bbci.co.uk/news/world/americas/rss.xml", enabled:false, cat:"world" },
+    { name:"Extra #5 (placeholder OFF)", url:"https://feeds.bbci.co.uk/news/world/australia/rss.xml", enabled:false, cat:"world" },
+    { name:"Extra #6 (placeholder OFF)", url:"https://feeds.bbci.co.uk/news/world/asia/rss.xml", enabled:false, cat:"world" },
+  ].filter(Boolean);
 
   /* ───────────────────────────── UI REFS ───────────────────────────── */
   const els = {
@@ -339,9 +414,11 @@ Fuente:
     s.catFilter = s.catFilter || "all";
     return s;
   }
+
   function saveSettings(s){
     localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
   }
+
   const settings = loadSettings();
 
   function loadTemplate(){
@@ -374,7 +451,18 @@ Fuente:
     trendsTimer: null,
     lastTickerSig: "",
     lastFetchReport: { ok:0, fail:0, total:0 },
+
+    // cleanup (guard)
+    disposers: [],
   };
+
+  function on(el, ev, fn, opts){
+    if (!el) return;
+    el.addEventListener(ev, fn, opts);
+    state.disposers.push(() => {
+      try { el.removeEventListener(ev, fn, opts); } catch {}
+    });
+  }
 
   function loadUsed(){
     const arr = safeJsonParse(localStorage.getItem(LS_USED), []);
@@ -387,13 +475,15 @@ Fuente:
   function loadCaches(){
     const rc = safeJsonParse(localStorage.getItem(LS_RESOLVE_CACHE), {});
     if (rc && typeof rc === "object"){
-      for (const [k,v] of Object.entries(rc)){
+      for (const k of Object.keys(rc)){
+        const v = rc[k];
         if (typeof v === "string") state.resolveCache.set(k, v);
       }
     }
     const og = safeJsonParse(localStorage.getItem(LS_OG_CACHE), {});
     if (og && typeof og === "object"){
-      for (const [k,v] of Object.entries(og)){
+      for (const k of Object.keys(og)){
+        const v = og[k];
         if (v && typeof v === "object") state.ogCache.set(k, v);
         if (v === null) state.ogCache.set(k, null);
       }
@@ -420,10 +510,10 @@ Fuente:
 
   /* ───────────────────────────── FEEDS CRUD ───────────────────────────── */
   function normalizeFeed(f){
-    const name = normSpace(f?.name);
-    const url = ensureUrl(f?.url);
-    const enabled = !!f?.enabled;
-    const cat = normSpace(f?.cat) || "all";
+    const name = normSpace(f && f.name);
+    const url = ensureUrl(f && f.url);
+    const enabled = !!(f && f.enabled);
+    const cat = normSpace(f && f.cat) || "all";
     if (!name || !url || !isHttpUrl(url)) return null;
     return { name, url, enabled, cat };
   }
@@ -436,6 +526,7 @@ Fuente:
         localStorage.setItem(LS_FEEDS, JSON.stringify(cleaned));
         return cleaned;
       }
+      // FIX: si está vacío o corrupto => defaults y se guardan
       const defaults = DEFAULT_FEEDS.map(normalizeFeed).filter(Boolean);
       localStorage.setItem(LS_FEEDS, JSON.stringify(defaults));
       return defaults;
@@ -519,32 +610,34 @@ Fuente:
     if (els.status) els.status.textContent = msg;
   }
 
-  /* ───────────────────────────── FETCH (ANTI-CORS) ───────────────────────────── */
-  function withTimeout(ms, signal){
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort("timeout"), ms);
+  // Set ASAP para que el banner de diagnóstico no salte si todo va bien
+  try { setStatus(`Arrancando… (${APP_VERSION})`); } catch {}
 
-    if (signal){
-      if (signal.aborted) ctrl.abort(signal.reason);
-      else signal.addEventListener("abort", () => ctrl.abort(signal.reason), { once:true });
+  /* ───────────────────────────── FETCH (ANTI-CORS) ───────────────────────────── */
+  function withTimeout(timeoutMs, outerSignal){
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(new DOMException("Timeout", "AbortError")), timeoutMs);
+
+    if (outerSignal){
+      if (outerSignal.aborted) ctrl.abort(outerSignal.reason);
+      else outerSignal.addEventListener("abort", () => ctrl.abort(outerSignal.reason), { once:true });
     }
 
-    return {
-      signal: ctrl.signal,
-      cancel: () => { clearTimeout(t); ctrl.abort("cancel"); }
-    };
+    // IMPORTANT: cancel SOLO limpia el timeout (NO aborta), para no cortar r.text()
+    return { signal: ctrl.signal, cancel: () => clearTimeout(t) };
   }
 
   async function fetchText(url, signal, extraHeaders){
     const { signal: s2, cancel } = withTimeout(15000, signal);
     try{
-      const headers = {
-        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, text/html;q=0.8, */*;q=0.7",
-        ...(extraHeaders || {})
-      };
+      const headers = Object.assign({
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, text/html;q=0.8, */*;q=0.7"
+      }, (extraHeaders || {}));
+
       const r = await fetch(url, { signal: s2, cache:"no-store", headers });
       if (!r.ok) throw new Error("HTTP " + r.status);
-      return await r.text();
+      const tx = await r.text();
+      return tx;
     } finally {
       cancel();
     }
@@ -569,7 +662,12 @@ Fuente:
   }
 
   async function fetchHtmlSmart(url, signal){
+    // Para HTML, añadimos Jina AI (muy útil para OG cuando hay CORS)
+    // r.jina.ai/https://example.com
+    const jina = `https://r.jina.ai/${url.replace(/^https?:\/\//i, "https://")}`;
+
     try { return await fetchText(url, signal, { "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }); } catch {}
+    try { return await fetchText(jina, signal, { "Accept": "text/html,*/*;q=0.8" }); } catch {}
 
     const enc = encodeURIComponent(url);
     try { return await fetchText(`https://api.allorigins.win/raw?url=${enc}`, signal); } catch {}
@@ -606,11 +704,11 @@ Fuente:
   }
 
   function pickImageFromItem(item){
-    const mc = item.querySelector("media\\:content, content[url]");
-    if (mc && mc.getAttribute("url")) return mc.getAttribute("url");
+    const mc = item.querySelector("media\\:content[url], media\\:content");
+    if (mc && mc.getAttribute && mc.getAttribute("url")) return mc.getAttribute("url");
 
-    const mt = item.querySelector("media\\:thumbnail");
-    if (mt && mt.getAttribute("url")) return mt.getAttribute("url");
+    const mt = item.querySelector("media\\:thumbnail[url], media\\:thumbnail");
+    if (mt && mt.getAttribute && mt.getAttribute("url")) return mt.getAttribute("url");
 
     const enc = item.querySelector("enclosure[url]");
     if (enc){
@@ -627,16 +725,16 @@ Fuente:
 
   function parseRss(doc, feed){
     const items = [];
-    const nodes = [...doc.querySelectorAll("item")];
+    const nodes = Array.from(doc.querySelectorAll("item"));
 
     for (const it of nodes){
-      const title = stripHtml(it.querySelector("title")?.textContent || "");
-      const link = (it.querySelector("link")?.textContent || "").trim();
-      const guid = (it.querySelector("guid")?.textContent || "").trim();
+      const title = stripHtml((it.querySelector("title") && it.querySelector("title").textContent) || "");
+      const link = normSpace((it.querySelector("link") && it.querySelector("link").textContent) || "");
+      const guid = normSpace((it.querySelector("guid") && it.querySelector("guid").textContent) || "");
 
       const pub =
-        (it.querySelector("pubDate")?.textContent || "").trim() ||
-        (it.querySelector("dc\\:date")?.textContent || "").trim();
+        normSpace((it.querySelector("pubDate") && it.querySelector("pubDate").textContent) || "") ||
+        normSpace((it.querySelector("dc\\:date") && it.querySelector("dc\\:date").textContent) || "");
 
       const dateMs = pub ? Date.parse(pub) : NaN;
       const ts = Number.isFinite(dateMs) ? dateMs : nowMs();
@@ -667,22 +765,26 @@ Fuente:
 
   function parseAtom(doc, feed){
     const items = [];
-    const entries = [...doc.querySelectorAll("entry")];
+    const entries = Array.from(doc.querySelectorAll("entry"));
+
     for (const e of entries){
-      const title = stripHtml(e.querySelector("title")?.textContent || "");
-      const linkEl = e.querySelector("link[rel='alternate'][href]") || e.querySelector("link[href]");
-      const link = (linkEl?.getAttribute("href") || "").trim();
+      const title = stripHtml((e.querySelector("title") && e.querySelector("title").textContent) || "");
+
+      const linkEl =
+        e.querySelector("link[rel='alternate'][href]") ||
+        e.querySelector("link[href]");
+
+      const link = (linkEl && linkEl.getAttribute && linkEl.getAttribute("href")) ? linkEl.getAttribute("href").trim() : "";
 
       const pub =
-        (e.querySelector("updated")?.textContent || "").trim() ||
-        (e.querySelector("published")?.textContent || "").trim();
+        normSpace((e.querySelector("updated") && e.querySelector("updated").textContent) || "") ||
+        normSpace((e.querySelector("published") && e.querySelector("published").textContent) || "");
 
       const dateMs = pub ? Date.parse(pub) : NaN;
       const ts = Number.isFinite(dateMs) ? dateMs : nowMs();
 
       const imgRaw = pickImageFromItem(e);
       const url = cleanUrl(link);
-
       if (!url) continue;
 
       const img = imgRaw ? cleanUrl(absolutizeUrl(imgRaw, url)) : "";
@@ -701,6 +803,7 @@ Fuente:
         top: false,
       });
     }
+
     return items;
   }
 
@@ -715,19 +818,24 @@ Fuente:
   /* ───────────────────────────── OG IMAGE BEST-EFFORT ───────────────────────────── */
   function extractOgImage(html, pageUrl){
     const getMeta = (re) => {
-      const m = html.match(re);
+      const m = String(html || "").match(re);
       return (m && m[1]) ? m[1].trim() : "";
     };
 
     let img =
+      getMeta(/property=["']og:image:secure_url["'][^>]*content=["']([^"']+)["']/i) ||
+      getMeta(/content=["']([^"']+)["'][^>]*property=["']og:image:secure_url["']/i) ||
       getMeta(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i) ||
       getMeta(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i) ||
+      getMeta(/name=["']twitter:image:src["'][^>]*content=["']([^"']+)["']/i) ||
+      getMeta(/content=["']([^"']+)["'][^>]*name=["']twitter:image:src["']/i) ||
       getMeta(/name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i) ||
       getMeta(/content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i);
 
     if (!img){
-      img = getMeta(/rel=["']image_src["'][^>]*href=["']([^"']+)["']/i) ||
-            getMeta(/href=["']([^"']+)["'][^>]*rel=["']image_src["']/i);
+      img =
+        getMeta(/rel=["']image_src["'][^>]*href=["']([^"']+)["']/i) ||
+        getMeta(/href=["']([^"']+)["'][^>]*rel=["']image_src["']/i);
     }
 
     if (!img) return "";
@@ -805,20 +913,20 @@ Fuente:
 
   /* ───────────────────────────── FILTER / RENDER ───────────────────────────── */
   function currentWindowMs(){
-    const v = Number(els.timeFilter?.value || settings.timeFilter || 60);
+    const v = Number((els.timeFilter && els.timeFilter.value) || settings.timeFilter || 60);
     if (Number.isFinite(v) && v > 0) return v * 60 * 1000;
     return 60 * 60 * 1000;
   }
 
   function applyFilters(){
-    const q = (els.searchBox?.value || "").trim().toLowerCase();
-    const minAge = clamp(Number(els.delayMin?.value || settings.delayMin || 0), 0, 60) * 60 * 1000;
+    const q = normSpace((els.searchBox && els.searchBox.value) || "").toLowerCase();
+    const minAge = clamp(Number((els.delayMin && els.delayMin.value) || settings.delayMin || 0), 0, 60) * 60 * 1000;
 
     const win = currentWindowMs();
-    const onlyReady = !!(els.optOnlyReady?.checked);
-    const hideUsed = !!(els.optHideUsed?.checked);
-    const cat = (els.catFilter?.value || "all");
-    const preferEs = !!(els.optOnlySpanish?.checked);
+    const onlyReady = !!(els.optOnlyReady && els.optOnlyReady.checked);
+    const hideUsed = !!(els.optHideUsed && els.optHideUsed.checked);
+    const cat = (els.catFilter && els.catFilter.value) ? els.catFilter.value : "all";
+    const preferEs = !!(els.optOnlySpanish && els.optOnlySpanish.checked);
 
     const now = nowMs();
 
@@ -837,17 +945,18 @@ Fuente:
         const hay = `${it.title} ${it.domain} ${it.feedName}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
+
       return true;
     });
 
-    const sortBy = (els.sortBy?.value || settings.sortBy || "impact");
+    const sortBy = (els.sortBy && els.sortBy.value) ? els.sortBy.value : (settings.sortBy || "impact");
     if (sortBy === "impact"){
       out.sort((a,b) => scoreImpact(b, preferEs) - scoreImpact(a, preferEs) || (b.dateMs - a.dateMs));
     }else{
       out.sort((a,b) => b.dateMs - a.dateMs);
     }
 
-    const lim = clamp(Number(els.showLimit?.value || settings.showLimit || 120), 10, 500);
+    const lim = clamp(Number((els.showLimit && els.showLimit.value) || settings.showLimit || 120), 10, 500);
     out = out.slice(0, lim);
 
     state.filtered = out;
@@ -981,7 +1090,7 @@ Fuente:
       const low = w.toLowerCase();
       if (low.length < 6) continue;
       if (picks.length >= 2) break;
-      if (["últimahora","fuente","directo"].includes(low)) continue;
+      if (["últimahora","fuente","directo","noticia","noticias"].includes(low)) continue;
       picks.push("#" + w);
     }
 
@@ -989,39 +1098,58 @@ Fuente:
   }
 
   function buildTweet(){
-    const tpl = (els.template?.value || DEFAULT_TEMPLATE);
+    let tpl = (els.template && els.template.value) ? els.template.value : DEFAULT_TEMPLATE;
 
-    const headline = normSpace(els.headline?.value);
-    const liveUrl = normSpace(els.liveUrl?.value || settings.liveUrl);
-    const sourceUrl = normSpace(els.sourceUrl?.value);
-    const tags = normSpace(els.hashtags?.value);
+    const headline = normSpace(els.headline && els.headline.value);
+    const liveUrl = normSpace((els.liveUrl && els.liveUrl.value) || settings.liveUrl);
+    const sourceUrl = normSpace(els.sourceUrl && els.sourceUrl.value);
+    const tags = normSpace(els.hashtags && els.hashtags.value);
 
-    const liveLine = (els.optIncludeLive?.checked)
+    const includeLive = !!(els.optIncludeLive && els.optIncludeLive.checked);
+    const includeSource = !!(els.optIncludeSource && els.optIncludeSource.checked);
+
+    const liveLine = includeLive
       ? DEFAULT_LIVE_LINE.replace("{{LIVE_URL}}", liveUrl)
       : "";
 
-    let out = tpl
-      .replaceAll("{{HEADLINE}}", headline)
-      .replaceAll("{{LIVE_URL}}", liveUrl)
-      .replaceAll("{{LIVE_LINE}}", liveLine)
-      .replaceAll("{{SOURCE_URL}}", sourceUrl)
-      .replaceAll("{{HASHTAGS}}", tags);
+    // placeholders básicos
+    let out = tpl;
+    out = replaceAllSafe(out, "{{HEADLINE}}", headline);
+    out = replaceAllSafe(out, "{{LIVE_URL}}", liveUrl);
+    out = replaceAllSafe(out, "{{LIVE_LINE}}", liveLine);
+    out = replaceAllSafe(out, "{{SOURCE_URL}}", includeSource ? sourceUrl : "");
+    out = replaceAllSafe(out, "{{HASHTAGS}}", tags);
 
-    // si el toggle de fuente está OFF, limpiamos el bloque “Fuente:” de la plantilla estándar
-    if (els.optIncludeSource && !els.optIncludeSource.checked){
+    // Si no hay SOURCE, limpiamos bloques típicos
+    if (!includeSource){
       out = out
-        .replace(/\n?Fuente:\s*\n\s*https?:\/\/[^\s]+/i, "")
-        .replace(/\n?Fuente:\s*\n\s*\{\{SOURCE_URL\}\}/i, "")
+        .replace(/\n?Fuente:\s*\n\s*$/im, "\n")
+        .replace(/\n?Fuente:\s*\n\s*\{\{SOURCE_URL\}\}\s*$/im, "\n")
         .replace(/\n{3,}/g, "\n\n");
     }
 
-    return out.trim();
+    // Limpieza final
+    out = out.replace(/\n{3,}/g, "\n\n").trim();
+    return out;
+  }
+
+  function smartTrim(text, maxLen){
+    const s = normSpace(text);
+    if (s.length <= maxLen) return s;
+    const cut = s.slice(0, maxLen - 1);
+    const lastSpace = cut.lastIndexOf(" ");
+    return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut) + "…";
+  }
+
+  function getSelectedItem(){
+    if (!state.selectedId) return null;
+    return state.items.find(x => x.id === state.selectedId) || state.filtered.find(x => x.id === state.selectedId) || null;
   }
 
   function renderXMockCard(it){
     if (!els.xMockCard) return;
 
-    const url = (els.sourceUrl?.value || "").trim();
+    const url = normSpace(els.sourceUrl && els.sourceUrl.value);
     if (!url){
       els.xMockCard.hidden = true;
       return;
@@ -1030,10 +1158,10 @@ Fuente:
     els.xMockCard.href = url;
     if (els.xMockCardUrl) els.xMockCardUrl.textContent = domainOf(url) || url;
 
-    const title = (els.headline?.value || "").trim() || "Noticia";
+    const title = normSpace(els.headline && els.headline.value) || "Noticia";
     if (els.xMockCardTitle) els.xMockCardTitle.textContent = title;
 
-    const imgUrl = it?.img || "";
+    const imgUrl = (it && it.img) ? it.img : "";
     if (els.xMockCardImg){
       els.xMockCardImg.innerHTML = "";
       if (imgUrl){
@@ -1069,27 +1197,14 @@ Fuente:
     renderXMockCard(getSelectedItem());
   }
 
-  function smartTrim(text, maxLen){
-    const s = normSpace(text);
-    if (s.length <= maxLen) return s;
-    const cut = s.slice(0, maxLen - 1);
-    const lastSpace = cut.lastIndexOf(" ");
-    return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut) + "…";
-  }
-
-  function getSelectedItem(){
-    if (!state.selectedId) return null;
-    return state.items.find(x => x.id === state.selectedId) || state.filtered.find(x => x.id === state.selectedId) || null;
-  }
-
   function selectItem(id){
     const it = state.items.find(x => x.id === id) || state.filtered.find(x => x.id === id);
     if (!it) return;
 
     state.selectedId = id;
 
-    if (els.headline) els.headline.value = (it.title || "").trim();
-    const src = (els.optShowOriginal?.checked) ? (it.resolvedUrl || it.link) : it.link;
+    if (els.headline) els.headline.value = normSpace(it.title);
+    const src = (els.optShowOriginal && els.optShowOriginal.checked) ? (it.resolvedUrl || it.link) : it.link;
     if (els.sourceUrl) els.sourceUrl.value = src;
 
     if (els.hashtags) els.hashtags.value = suggestHashtags(it.title, it.cat);
@@ -1121,8 +1236,8 @@ Fuente:
     els.tnpTickerInner.textContent = parts.join("   ");
 
     els.tnpTickerInner.style.animation = "none";
-    // eslint-disable-next-line no-unused-expressions
-    els.tnpTickerInner.offsetHeight;
+    // force reflow para reiniciar anim
+    void els.tnpTickerInner.offsetHeight;
     els.tnpTickerInner.style.animation = "";
   }
 
@@ -1133,7 +1248,7 @@ Fuente:
       .map(w => w.replace(/[^\p{L}\p{N}]/gu, ""))
       .filter(w => w.length >= 6);
 
-    const stop = new Set(["últimahora","noticias","fuente","directo","gobierno","presidente","ministro"]);
+    const stop = new Set(["últimahora","noticias","fuente","directo","gobierno","presidente","ministro","según"]);
     const map = new Map();
     for (const w of words){
       const low = w.toLowerCase();
@@ -1141,7 +1256,7 @@ Fuente:
       map.set(low, (map.get(low) || 0) + 1);
     }
 
-    return [...map.entries()]
+    return Array.from(map.entries())
       .sort((a,b) => b[1]-a[1])
       .slice(0, 8)
       .map(x => "#" + x[0]);
@@ -1180,7 +1295,7 @@ Fuente:
 
   function bumpBackoff(feedUrl){
     const cur = state.backoff.get(feedUrl);
-    const prevDelay = cur?.delayMs || 0;
+    const prevDelay = (cur && cur.delayMs) ? cur.delayMs : 0;
     const nextDelay = prevDelay ? Math.min(prevDelay * 2, 10 * 60 * 1000) : 30 * 1000; // 30s->60->120... max 10m
     state.backoff.set(feedUrl, { delayMs: nextDelay, untilMs: nowMs() + nextDelay });
   }
@@ -1202,10 +1317,11 @@ Fuente:
     if (force) resetBackoff();
 
     state.refreshInFlight = true;
-    state.refreshAbort?.abort("new_refresh");
+    if (state.refreshAbort) state.refreshAbort.abort("new_refresh");
     state.refreshAbort = new AbortController();
     const signal = state.refreshAbort.signal;
 
+    // Mantén UI viva, pero limpia lista para evitar “datos viejos”
     state.items = [];
     state.filtered = [];
     renderNewsList([]);
@@ -1215,8 +1331,8 @@ Fuente:
     setStatus(force ? "Refrescando (force)…" : "Refrescando…");
 
     try{
-      const cap = clamp(Number(els.fetchCap?.value || settings.fetchCap || 240), 80, 2000);
-      const batchSize = clamp(Number(els.batchFeeds?.value || settings.batchFeeds || 12), 4, 50);
+      const cap = clamp(Number((els.fetchCap && els.fetchCap.value) || settings.fetchCap || 240), 80, 2000);
+      const batchSize = clamp(Number((els.batchFeeds && els.batchFeeds.value) || settings.batchFeeds || 12), 4, 50);
 
       const allItems = [];
       const enabledFeeds = feeds.slice();
@@ -1241,10 +1357,9 @@ Fuente:
             const items = parseFeed(xml, f);
 
             for (const it of items){
-              const sc = scoreImpact(it, true);
-              it.top = sc >= 8;
+              it.top = scoreImpact(it, true) >= 8;
               allItems.push(it);
-              if (allItems.length >= cap * 2) break;
+              if (allItems.length >= cap * 3) break;
             }
             ok++;
           }catch{
@@ -1276,7 +1391,7 @@ Fuente:
       state.items = clean.slice(0, cap);
 
       // resolve links (limitado)
-      if (els.optResolveLinks?.checked){
+      if (els.optResolveLinks && els.optResolveLinks.checked){
         const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 60);
         await mapLimit(need, 6, async (it) => {
           it.resolvedUrl = await resolveUrl(it.link, signal);
@@ -1303,7 +1418,7 @@ Fuente:
       applyFilters();
       updatePreview();
     } catch (e){
-      if (String(e?.name || e).includes("Abort") || signal.aborted){
+      if (String(e && e.name).includes("Abort") || (signal && signal.aborted)){
         setStatus("Refresh cancelado.");
       } else {
         console.error(e);
@@ -1316,9 +1431,9 @@ Fuente:
 
   function startAuto(){
     clearInterval(state.autoTimer);
-    if (!els.optAutoRefresh?.checked) return;
+    if (!(els.optAutoRefresh && els.optAutoRefresh.checked)) return;
 
-    const sec = clamp(Number(els.refreshSec?.value || settings.refreshSec || 60), 20, 600);
+    const sec = clamp(Number((els.refreshSec && els.refreshSec.value) || settings.refreshSec || 60), 20, 600);
     state.autoTimer = setInterval(() => {
       refreshAll({ force:false }).catch(()=>{});
     }, sec * 1000);
@@ -1329,21 +1444,46 @@ Fuente:
 
   async function registerSW(){
     if (!("serviceWorker" in navigator)) return;
+
     try{
-      swReg = await navigator.serviceWorker.register("./sw.js");
-    }catch{}
+      // updateViaCache:none evita el cache HTTP del sw.js en navegadores que lo soporten
+      swReg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
+    }catch{
+      try { swReg = await navigator.serviceWorker.register("./sw.js"); } catch {}
+    }
+
+    // auto-check cada 60s (compatible con tu botón Update y con el index)
+    if (swReg){
+      const onCtrlChange = () => {
+        // reload 1 vez por sesión
+        try{
+          if (sessionStorage.getItem("tnp_sw_reload_once") === "1") return;
+          sessionStorage.setItem("tnp_sw_reload_once", "1");
+        }catch{}
+        location.reload();
+      };
+
+      navigator.serviceWorker.addEventListener("controllerchange", onCtrlChange);
+      state.disposers.push(() => {
+        try { navigator.serviceWorker.removeEventListener("controllerchange", onCtrlChange); } catch {}
+      });
+
+      setInterval(() => {
+        try { swReg.update(); } catch {}
+      }, 60 * 1000);
+    }
   }
 
   async function forceUpdateNow(){
     setStatus("Buscando update…");
     try{
+      if (!swReg && "serviceWorker" in navigator) swReg = await navigator.serviceWorker.getRegistration();
       if (swReg) await swReg.update();
 
-      // si hay un SW esperando, lo aplicamos
       if (swReg && swReg.waiting){
         swReg.waiting.postMessage({ type:"SKIP_WAITING" });
         setStatus("Aplicando update…");
-        setTimeout(() => location.reload(), 400);
+        setTimeout(() => location.reload(), 350);
         return;
       }
 
@@ -1374,8 +1514,8 @@ Fuente:
 
     try{
       if ("serviceWorker" in navigator){
-        const reg = await navigator.serviceWorker.getRegistration();
-        if (reg) await reg.unregister();
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister().catch(()=>false)));
       }
     }catch{}
 
@@ -1408,26 +1548,26 @@ Fuente:
     if (els.catFilter) els.catFilter.value = settings.catFilter || "all";
 
     const saveSettingFrom = () => {
-      settings.liveUrl = normSpace(els.liveUrl?.value || settings.liveUrl);
-      settings.delayMin = Number(els.delayMin?.value || settings.delayMin);
-      settings.timeFilter = Number(els.timeFilter?.value || settings.timeFilter);
-      settings.sortBy = els.sortBy?.value || settings.sortBy;
-      settings.showLimit = Number(els.showLimit?.value || settings.showLimit);
-      settings.fetchCap = Number(els.fetchCap?.value || settings.fetchCap);
-      settings.batchFeeds = Number(els.batchFeeds?.value || settings.batchFeeds);
-      settings.refreshSec = Number(els.refreshSec?.value || settings.refreshSec);
+      settings.liveUrl = normSpace((els.liveUrl && els.liveUrl.value) || settings.liveUrl);
+      settings.delayMin = Number((els.delayMin && els.delayMin.value) || settings.delayMin);
+      settings.timeFilter = Number((els.timeFilter && els.timeFilter.value) || settings.timeFilter);
+      settings.sortBy = (els.sortBy && els.sortBy.value) ? els.sortBy.value : settings.sortBy;
+      settings.showLimit = Number((els.showLimit && els.showLimit.value) || settings.showLimit);
+      settings.fetchCap = Number((els.fetchCap && els.fetchCap.value) || settings.fetchCap);
+      settings.batchFeeds = Number((els.batchFeeds && els.batchFeeds.value) || settings.batchFeeds);
+      settings.refreshSec = Number((els.refreshSec && els.refreshSec.value) || settings.refreshSec);
 
-      settings.optOnlyReady = !!els.optOnlyReady?.checked;
-      settings.optOnlySpanish = !!els.optOnlySpanish?.checked;
-      settings.optResolveLinks = !!els.optResolveLinks?.checked;
-      settings.optShowOriginal = !!els.optShowOriginal?.checked;
-      settings.optHideUsed = !!els.optHideUsed?.checked;
-      settings.optAutoRefresh = !!els.optAutoRefresh?.checked;
+      settings.optOnlyReady = !!(els.optOnlyReady && els.optOnlyReady.checked);
+      settings.optOnlySpanish = !!(els.optOnlySpanish && els.optOnlySpanish.checked);
+      settings.optResolveLinks = !!(els.optResolveLinks && els.optResolveLinks.checked);
+      settings.optShowOriginal = !!(els.optShowOriginal && els.optShowOriginal.checked);
+      settings.optHideUsed = !!(els.optHideUsed && els.optHideUsed.checked);
+      settings.optAutoRefresh = !!(els.optAutoRefresh && els.optAutoRefresh.checked);
 
-      settings.optIncludeLive = !!els.optIncludeLive?.checked;
-      settings.optIncludeSource = !!els.optIncludeSource?.checked;
+      settings.optIncludeLive = !!(els.optIncludeLive && els.optIncludeLive.checked);
+      settings.optIncludeSource = !!(els.optIncludeSource && els.optIncludeSource.checked);
 
-      settings.catFilter = els.catFilter?.value || "all";
+      settings.catFilter = (els.catFilter && els.catFilter.value) ? els.catFilter.value : "all";
 
       saveSettings(settings);
       if (els.template) saveTemplate(els.template.value || DEFAULT_TEMPLATE);
@@ -1437,25 +1577,25 @@ Fuente:
       startAuto();
     };
 
-    els.btnRefresh?.addEventListener("click", (e) => {
-      const force = e.shiftKey;
+    on(els.btnRefresh, "click", (e) => {
+      const force = !!(e && e.shiftKey);
       refreshAll({ force }).catch(()=>{});
     });
 
-    els.btnFeeds?.addEventListener("click", openModal);
-    els.btnCloseModal?.addEventListener("click", closeModal);
+    on(els.btnFeeds, "click", openModal);
+    on(els.btnCloseModal, "click", closeModal);
 
-    els.modal?.addEventListener("click", (e) => {
-      if (e.target === els.modal) closeModal();
+    on(els.modal, "click", (e) => {
+      if (e && e.target === els.modal) closeModal();
     });
 
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeModal();
+    on(document, "keydown", (e) => {
+      if (e && e.key === "Escape") closeModal();
     });
 
-    els.btnAddFeed?.addEventListener("click", () => {
-      const name = normSpace(els.newFeedName?.value);
-      const url = ensureUrl(els.newFeedUrl?.value);
+    on(els.btnAddFeed, "click", () => {
+      const name = normSpace(els.newFeedName && els.newFeedName.value);
+      const url = ensureUrl(els.newFeedUrl && els.newFeedUrl.value);
       if (!name || !url) return;
 
       const nf = normalizeFeed({ name, url, enabled:true, cat:"all" });
@@ -1467,7 +1607,7 @@ Fuente:
       if (els.newFeedUrl) els.newFeedUrl.value = "";
     });
 
-    els.btnExportFeeds?.addEventListener("click", () => {
+    on(els.btnExportFeeds, "click", () => {
       const data = JSON.stringify(state.feeds, null, 2);
       if (els.feedsJson){
         els.feedsJson.value = data;
@@ -1476,7 +1616,7 @@ Fuente:
       }
     });
 
-    els.btnImportFeeds?.addEventListener("click", () => {
+    on(els.btnImportFeeds, "click", () => {
       if (!els.feedsJson) return;
       const raw = els.feedsJson.value;
       const parsed = safeJsonParse(raw, null);
@@ -1494,53 +1634,54 @@ Fuente:
       setStatus("Import OK.");
     });
 
-    els.btnRestoreDefaultFeeds?.addEventListener("click", () => {
+    on(els.btnRestoreDefaultFeeds, "click", () => {
       state.feeds = DEFAULT_FEEDS.map(normalizeFeed).filter(Boolean);
       renderFeedsModal();
       setStatus("Defaults restaurados (no olvides Guardar).");
     });
 
-    els.btnSaveFeeds?.addEventListener("click", () => {
+    on(els.btnSaveFeeds, "click", () => {
       saveFeeds();
       closeModal();
       setStatus("Feeds guardados.");
       refreshAll({ force:true }).catch(()=>{});
     });
 
-    els.btnTrim?.addEventListener("click", () => {
+    on(els.btnTrim, "click", () => {
       if (!els.headline) return;
       els.headline.value = smartTrim(els.headline.value, 130);
       updatePreview();
     });
 
-    els.btnGenTags?.addEventListener("click", () => {
+    on(els.btnGenTags, "click", () => {
       if (!els.hashtags || !els.headline) return;
-      els.hashtags.value = suggestHashtags(els.headline.value, (els.catFilter?.value || "all"));
+      const cat = (els.catFilter && els.catFilter.value) ? els.catFilter.value : "all";
+      els.hashtags.value = suggestHashtags(els.headline.value, cat);
       updatePreview();
     });
 
-    els.btnCopyUrl?.addEventListener("click", async () => {
-      const u = (els.sourceUrl?.value || "").trim();
+    on(els.btnCopyUrl, "click", async () => {
+      const u = normSpace(els.sourceUrl && els.sourceUrl.value);
       if (!u) return;
       await copyText(u);
       setStatus("URL copiada.");
     });
 
-    els.btnCopy?.addEventListener("click", async () => {
+    on(els.btnCopy, "click", async () => {
       const t = buildTweet();
       await copyText(t);
       setStatus("Tweet copiado.");
       markSelectedUsed();
     });
 
-    els.btnX?.addEventListener("click", () => {
+    on(els.btnX, "click", () => {
       const t = buildTweet();
       const url = "https://x.com/intent/tweet?text=" + encodeURIComponent(t);
       window.open(url, "_blank", "noopener,noreferrer");
       markSelectedUsed();
     });
 
-    els.btnResetTemplate?.addEventListener("click", () => {
+    on(els.btnResetTemplate, "click", () => {
       if (!els.template) return;
       els.template.value = DEFAULT_TEMPLATE;
       saveTemplate(DEFAULT_TEMPLATE);
@@ -1548,13 +1689,13 @@ Fuente:
       setStatus("Plantilla reseteada.");
     });
 
-    els.btnCheckUpdate?.addEventListener("click", forceUpdateNow);
-    els.btnHardReset?.addEventListener("click", hardResetEverything);
+    on(els.btnCheckUpdate, "click", forceUpdateNow);
+    on(els.btnHardReset, "click", hardResetEverything);
 
     const bind = (el) => {
       if (!el) return;
-      el.addEventListener("change", saveSettingFrom);
-      el.addEventListener("input", saveSettingFrom);
+      on(el, "change", saveSettingFrom);
+      on(el, "input", saveSettingFrom);
     };
 
     [
@@ -1565,7 +1706,7 @@ Fuente:
       els.headline, els.sourceUrl, els.hashtags, els.optIncludeLive, els.optIncludeSource
     ].forEach(bind);
 
-    els.searchBox?.addEventListener("input", () => applyFilters());
+    on(els.searchBox, "input", () => applyFilters());
 
     setStatus(`TNP listo (${APP_VERSION})`);
   }
@@ -1574,10 +1715,11 @@ Fuente:
   async function init(){
     if (!uiOk()){
       console.error("Faltan elementos UI (revisa IDs en index.html)");
+      setStatus("❌ UI incompleta (IDs no coinciden)");
       return;
     }
 
-    // mini “crash guard” visible
+    // crash guard visible
     window.addEventListener("error", () => {
       try { setStatus("❌ Error JS (mira consola)"); } catch {}
     });
@@ -1586,7 +1728,7 @@ Fuente:
     loadCaches();
 
     state.feeds = loadFeeds();
-    saveFeeds();
+    saveFeeds(); // FIX: asegura defaults guardados si faltaban/estaban vacíos
 
     bindUI();
     updatePreview();
@@ -1596,8 +1738,19 @@ Fuente:
     applyFilters();
     startAuto();
 
+    // fuerza primera carga
     refreshAll({ force:true }).catch(()=>{});
   }
+
+  function destroy(){
+    try { if (state.refreshAbort) state.refreshAbort.abort("destroy"); } catch {}
+    try { clearInterval(state.autoTimer); } catch {}
+    try { clearInterval(state.trendsTimer); } catch {}
+    try { state.disposers.forEach(fn => fn()); } catch {}
+    state.disposers = [];
+  }
+
+  window[GUARD] = { destroy };
 
   init().catch((e) => {
     console.error(e);
