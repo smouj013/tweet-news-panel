@@ -1,7 +1,8 @@
 /* app.js — News → Tweet Template Panel (tnp-v4.0.1) — PRO + REALTIME TICKERS (NewsTicker + X-Trends PopTicker)
-   ✅ NUEVO: NEWS TICKER (scroll) con noticias más relevantes (impacto + frescura) en tiempo real
-   ✅ NUEVO: TRENDS/Hashtags PopTicker (estilo X) con tendencias actuales (best-effort) desde fuentes públicas
+   ✅ NEWS TICKER (scroll) con noticias más relevantes (impacto + frescura) en tiempo real
+   ✅ TRENDS/Hashtags PopTicker (estilo X) con tendencias actuales (best-effort) desde fuentes públicas
    ✅ 0 cambios en index.html: el ticker se crea/inserta por JS (compat total con tus IDs/clases)
+   ✅ VISUAL HOMOGÉNEO: el CSS inyectado es mínimo y “no pisa” tu styles.css (y usa tus variables)
    ✅ Mantiene: feeds 50+, batch refresh, backoff, resolver links, OG images, ES auto, PWA update checks
 */
 
@@ -201,6 +202,7 @@ Fuente:
   };
 
   function grabEls() {
+    // top controls
     el.timeFilter = must("#timeFilter");
     el.showLimit = q("#showLimit");
     el.fetchCap = q("#fetchCap");
@@ -209,6 +211,7 @@ Fuente:
     el.btnRefresh = must("#btnRefresh");
     el.btnFeeds = must("#btnFeeds");
 
+    // composer
     el.charCount = must("#charCount");
     el.btnTrim = must("#btnTrim");
     el.btnGenTags = must("#btnGenTags");
@@ -229,6 +232,7 @@ Fuente:
 
     el.status = must("#status");
 
+    // filters
     el.delayMin = must("#delayMin");
     el.optOnlyReady = must("#optOnlyReady");
     el.optOnlySpanish = must("#optOnlySpanish");
@@ -242,6 +246,7 @@ Fuente:
     el.catFilter = q("#catFilter");
     el.batchFeeds = q("#batchFeeds");
 
+    // list
     el.newsList = must("#newsList");
 
     // modal
@@ -261,11 +266,21 @@ Fuente:
   /* ───────────────────────────── INIT ───────────────────────────── */
   function init() {
     grabEls();
-    injectTickerCss();
+
+    // 1) CSS ticker: minimal + compatible (no “mezcla rara”)
+    //    Si tu styles.css ya define .tnpTicker*, esto no lo pisa; es sólo fallback.
+    injectTickerCssFallback();
+
+    // 2) Insert tickers in DOM (sin tocar index)
     ensureTickers();
+
+    // 3) altura topbar para sticky ticker
     syncTopbarHeight();
+
+    // 4) OG observer
     setupOgObserver();
 
+    // load persisted
     state.template = loadTemplate();
     state.feeds = loadFeeds();
     state.settings = loadSettings();
@@ -302,7 +317,7 @@ Fuente:
     renderFeedsModal();
     updatePreview();
 
-    // primer render “vacío” para que el layout esté estable antes de meter items
+    // primer render “vacío” (layout estable)
     renderNewsList({ silent: true });
     updateNewsTicker(true);
 
@@ -324,7 +339,7 @@ Fuente:
     const div = document.createElement("div");
     div.style.cssText = `
       position:fixed; inset:0; z-index:99999;
-      background:rgba(0,0,0,88); color:#fff; padding:16px;
+      background:rgba(0,0,0,0.88); color:#fff; padding:16px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New";
       overflow:auto;
     `;
@@ -353,7 +368,14 @@ Fuente:
 
     el.btnFeeds.addEventListener("click", () => openModal(true));
     el.btnCloseModal.addEventListener("click", () => openModal(false));
-    el.modal.addEventListener("click", (e) => { if (e.target === el.modal) openModal(false); });
+
+    // close modal on backdrop click
+    el.modal.addEventListener("click", (e) => {
+      const t = e.target;
+      if (!t) return;
+      if (t.classList && t.classList.contains("modalBackdrop")) return openModal(false);
+      if (t.dataset && t.dataset.close === "1") return openModal(false);
+    });
 
     el.timeFilter.addEventListener("change", () => {
       renderNewsList({ silent: true, hardPurge: true });
@@ -567,8 +589,10 @@ Fuente:
         if (document.visibilityState === "visible") {
           updateDynamicLabels();
           updateNewsTicker(true);
+
           // SW update check al volver
           try { swReg?.update?.(); } catch {}
+
           const auto = state.settings.autoRefresh !== false;
           if (auto) refreshAll({ reason: "visible", force: false });
 
@@ -685,7 +709,7 @@ Fuente:
     const now = Date.now();
     const minMs = now - (hours * 60 * 60 * 1000);
 
-    // annotate readiness (cheap)
+    // annotate readiness
     for (const it of items) {
       const ms = Number(it.publishedMs || 0);
       it._ready = ms ? ((now - ms) >= (delayMin * 60 * 1000)) : false;
@@ -747,10 +771,11 @@ Fuente:
       const domain = shownUrl ? getDomain(shownUrl) : "";
 
       const top = calcImpact(it) >= 70;
-      const origNeeded = !!(state.settings.showOriginal !== false) && !!it.titleEs && it.titleEs !== it.title;
+      const showOriginal = state.settings.showOriginal !== false;
+      const origNeeded = showOriginal && !!it.titleEs && it.titleEs !== it.title;
 
       const card = document.createElement("div");
-      card.className = "newsItem" + (top ? " top" : "");
+      card.className = "newsItem" + (top ? " top" : "") + (state.used.has(it.id) ? " used" : "");
       card.dataset.id = it.id;
       card.dataset.url = shownUrl || it.link || "";
       card.dataset.link = it.link || "";
@@ -780,18 +805,19 @@ Fuente:
       title.textContent = it.titleEs || it.title || "—";
 
       if (origNeeded) {
-        const orig = document.createElement("span");
-        orig.className = "orig";
-        orig.textContent = it.title || "";
-        title.appendChild(orig);
+        const orig = document.createElement("div");
+        orig.className = "newsMeta"; // reutiliza estilo muted
+        orig.style.marginTop = "6px";
+        orig.style.opacity = "0.9";
+        orig.textContent = "Original: " + String(it.title || "");
+        body.appendChild(orig);
       }
 
       const meta = document.createElement("div");
       meta.className = "newsMeta";
 
       meta.appendChild(badge("cat", it.cat || "all"));
-      if (top) meta.appendChild(badge("top", "🔥 TOP"));
-
+      if (top) meta.appendChild(badge("hot", "🔥 TOP"));
       meta.appendChild(badge(it._ready ? "ready" : "queue", it._ready ? "LISTO" : "EN COLA"));
       meta.appendChild(badge("domain", domain || "link"));
 
@@ -805,7 +831,7 @@ Fuente:
       actions.className = "actionsRow";
 
       const btnUse = document.createElement("button");
-      btnUse.className = "newsLink";
+      btnUse.className = "newsLink primary";
       btnUse.type = "button";
       btnUse.textContent = "Usar";
       btnUse.addEventListener("click", () => useItem(it).catch(() => {}));
@@ -849,7 +875,7 @@ Fuente:
       // OG observer (limit)
       if (ogObserver && observed < OBSERVE_OG_VISIBLE_LIMIT) {
         observed++;
-        // solo observa si no tenemos imagen buena todavía
+        // observa si no tenemos imagen buena
         const hasGood = !!(it.imageOg || (it.image && String(it.image).startsWith("http")));
         if (!hasGood) ogObserver.observe(thumbWrap);
       }
@@ -858,14 +884,14 @@ Fuente:
     el.newsList.appendChild(frag);
     el.newsList.scrollTop = prevScroll;
 
-    // resolve visible (best-effort)
+    // resolve visible
     if (resolveLinks && visibleForResolve.length) {
       const cap = Math.min(VISIBLE_RESOLVE_LIMIT, Math.max(20, showLimit * 2));
       const subset = visibleForResolve.slice(0, cap);
       runSoon(() => maybeResolveVisible(subset).catch(() => {}));
     }
 
-    // translate visible (prioridad)
+    // translate visible
     if (visibleForTranslate.length) {
       const cap = Math.min(VISIBLE_TRANSLATE_LIMIT, Math.max(20, showLimit * 2));
       const subset = visibleForTranslate.slice(0, cap);
@@ -899,7 +925,7 @@ Fuente:
     updatePreview();
     toast("✅ Cargado en plantilla.");
 
-    // tip: si hay trends visibles, intenta sugerir hashtags ligeros si el campo está vacío
+    // Sugerir hashtags si vacío
     if (!String(el.hashtags.value || "").trim()) {
       const h = genHashtags(headline);
       if (h) el.hashtags.value = h;
@@ -925,7 +951,6 @@ Fuente:
       }
     });
 
-    // ticker también “respira” (sin recalcular fuerte)
     tickTickerTimers();
   }
 
@@ -999,7 +1024,7 @@ Fuente:
       const fetchCap = clampNum(state.settings.fetchCap ?? (el.fetchCap ? el.fetchCap.value : 240), 80, 2000);
       const keepCap = Math.max(140, Math.min(2400, fetchCap * 2));
 
-      // batch: auto rota, manual/force refresca todos
+      // batch
       const batch = clampNum(state.settings.batchFeeds ?? (el.batchFeeds ? el.batchFeeds.value : 12), 4, 50);
 
       const jobsAll = enabled.filter(f => {
@@ -1039,7 +1064,7 @@ Fuente:
       renderNewsList({ silent: true });
       updateNewsTicker(true);
 
-      // trends: refresca “best-effort” en cada refresh manual/boot (no martillar)
+      // trends: refresca en boot / manual
       if (reason === "boot" || reason.startsWith("manual")) {
         requestTrendsRefresh({ reason: "news_refresh" }).catch(() => {});
       }
@@ -1082,15 +1107,13 @@ Fuente:
     const url = cleanText(feed?.url || "");
     if (!url) return [];
 
-    // de-dup “texto igual” en sesión (ahorra parse)
-    const text = await fetchTextSmart(url, signal, 14000);
+    // de-dup “texto igual” en sesión
+    const text = await fetchTextSmart(url, signal, 14_000);
     if (!text) return [];
 
-    const h = hashId(text.slice(0, 8000)); // hash parcial
+    const h = hashId(text.slice(0, 8000));
     const prevHash = feedTextHash.get(url);
-    if (!force && prevHash && prevHash === h) {
-      return []; // no cambios
-    }
+    if (!force && prevHash && prevHash === h) return [];
     feedTextHash.set(url, h);
 
     // JSON?
@@ -1103,11 +1126,11 @@ Fuente:
     return parseXmlFeed(text, feed?.name || "Feed").slice(0, fetchCap);
   }
 
-  async function fetchTextSmart(url, signal, timeoutMs = 12000) {
+  async function fetchTextSmart(url, signal, timeoutMs = 12_000) {
     const u = String(url || "").trim();
     if (!u) return "";
 
-    // 1) try direct
+    // 1) direct
     const direct = await fetchText(u, { signal, timeoutMs }).catch(() => "");
     if (direct) return direct;
 
@@ -1122,7 +1145,7 @@ Fuente:
     return viaJina || "";
   }
 
-  async function fetchText(url, { signal, timeoutMs = 12000 } = {}) {
+  async function fetchText(url, { signal, timeoutMs = 12_000 } = {}) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     const sig = mergeSignals(signal, ctrl.signal);
@@ -1144,8 +1167,7 @@ Fuente:
     if ("AbortSignal" in window && AbortSignal.any) {
       try { return AbortSignal.any([a, b]); } catch {}
     }
-    // fallback: si uno aborta, el fetch aborta por el otro de todos modos si se usa ese signal
-    // aquí devolvemos b para garantizar timeout
+    // fallback: devolvemos b para garantizar timeout
     return b;
   }
 
@@ -1173,7 +1195,7 @@ Fuente:
         const img =
           pickAttr(it, "enclosure", "url") ||
           pickAttr(it, "media\\:content", "url") ||
-          pickText(it, "media\\:thumbnail") ||
+          pickAttr(it, "media\\:thumbnail", "url") ||
           "";
 
         const cat = detectCategory(title + " " + feedName);
@@ -1239,8 +1261,8 @@ Fuente:
     // GDELT doc
     if (j && j.articles && Array.isArray(j.articles)) {
       for (const a of j.articles) {
-        const title = cleanText(a?.title || a?.seendate || "");
-        const link = canonicalizeUrl(a?.url || a?.sourceCountry || "");
+        const title = cleanText(a?.title || "");
+        const link = canonicalizeUrl(a?.url || "");
         const publishedMs = parseDateMs(a?.seendate) || parseDateMs(a?.date) || Date.now();
         const img = canonicalizeUrl(a?.image || a?.socialimage || "");
         const cat = detectCategory(title + " " + name);
@@ -1393,24 +1415,23 @@ Fuente:
     const u = canonicalizeUrl(url);
     if (!u) return "";
 
-    // 1) simple HEAD/GET follow (a veces bloquea)
+    // 1) follow redirect (best-effort)
     const direct = await tryFollowRedirect(u);
-    if (direct) return direct;
+    if (direct && !isGoogleNews(direct)) return direct;
 
-    // 2) allorigins raw: parse HTML
-    const html = await fetchTextSmart(u, null, 12000);
+    // 2) allorigins/html parse
+    const html = await fetchTextSmart(u, null, 12_000);
     if (html) {
       const fromMeta = pickMetaRefresh(html);
       if (fromMeta) return fromMeta;
 
-      // google news: busca href “https://…”
       const gn = pickFirstHttpUrl(html, u);
       if (gn) return gn;
     }
 
-    // 3) r.jina.ai (otra forma de obtener HTML)
+    // 3) r.jina.ai
     const jina = `https://r.jina.ai/http://${u.replace(/^https?:\/\//i, "")}`;
-    const html2 = await fetchText(jina, { timeoutMs: 12000 }).catch(() => "");
+    const html2 = await fetchText(jina, { timeoutMs: 12_000 }).catch(() => "");
     if (html2) {
       const fromMeta2 = pickMetaRefresh(html2);
       if (fromMeta2) return fromMeta2;
@@ -1418,7 +1439,7 @@ Fuente:
       if (gn2) return gn2;
     }
 
-    return "";
+    return direct || "";
   }
 
   async function tryFollowRedirect(url) {
@@ -1428,8 +1449,7 @@ Fuente:
       const res = await fetch(url, { method: "GET", redirect: "follow", cache: "no-store", signal: ctrl.signal });
       clearTimeout(t);
       if (!res) return "";
-      const finalUrl = res.url || "";
-      return canonicalizeUrl(finalUrl);
+      return canonicalizeUrl(res.url || "");
     } catch {
       return "";
     }
@@ -1437,10 +1457,8 @@ Fuente:
 
   function pickMetaRefresh(html) {
     const s = String(html || "");
-    // <meta http-equiv="refresh" content="0;url=...">
     const m = s.match(/http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"']+)["']/i);
     if (m && m[1]) return canonicalizeUrl(decodeHtml(m[1]));
-    // content="0; URL='...'"
     const m2 = s.match(/content=["'][^"']*url=['"]?([^"']+)['"]?["']/i);
     if (m2 && m2[1]) return canonicalizeUrl(decodeHtml(m2[1]));
     return "";
@@ -1448,17 +1466,14 @@ Fuente:
 
   function pickFirstHttpUrl(html, fallbackBase) {
     const s = String(html || "");
-    // intenta priorizar dominios “no google”
     const urls = s.match(/https?:\/\/[^\s"'<>]+/g) || [];
     const clean = urls
       .map(u => canonicalizeUrl(u))
       .filter(Boolean)
       .filter(u => !/news\.google\.com|accounts\.google\.com|google\.com\/s2\/favicons/i.test(u));
 
-    // si venimos de GN, a veces el primer “real” está aquí
     if (clean.length) return clean[0];
 
-    // fallback: si hay algo, devuelve lo primero que no sea el mismo
     const all = urls.map(u => canonicalizeUrl(u)).filter(Boolean);
     const base = canonicalizeUrl(fallbackBase);
     for (const u of all) {
@@ -1498,12 +1513,10 @@ Fuente:
     if (trInFlight.has(key)) return await trInFlight.get(key).catch(() => "");
 
     const p = (async () => {
-      // translate.googleapis.com translate_a/single
       const url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=" + encodeURIComponent(t);
-      const raw = await fetchTextSmart(url, null, 12000);
+      const raw = await fetchTextSmart(url, null, 12_000);
       if (!raw) return "";
       const j = safeJson(raw);
-      // formato típico: [[["texto","orig",...],...],...]
       const out = Array.isArray(j) ? String(((j[0] || [])[0] || [])[0] || "") : "";
       const es = cleanText(out) || "";
       if (es) writeCache(trCache, key, es, TR_CACHE_LIMIT, LS_TR_CACHE);
@@ -1540,7 +1553,6 @@ Fuente:
         }).catch(() => {});
       }
 
-      // unobserve para no repetir
       for (const e of entries) if (e.isIntersecting) ogObserver.unobserve(e.target);
     }, { root: null, threshold: 0.15 });
   }
@@ -1645,28 +1657,25 @@ Fuente:
       const row = document.createElement("div");
       row.className = "feedRow";
 
-      const togWrap = document.createElement("div");
-      togWrap.className = "feedToggle";
       const tog = document.createElement("input");
       tog.type = "checkbox";
       tog.checked = f.enabled !== false;
       tog.addEventListener("change", () => { f.enabled = !!tog.checked; });
-      togWrap.appendChild(tog);
 
       const nameInput = document.createElement("input");
-      nameInput.className = "input";
+      nameInput.className = "ctl";
       nameInput.value = f.name || "";
       nameInput.placeholder = "Nombre";
       nameInput.addEventListener("input", () => { f.name = nameInput.value; });
 
       const urlInput = document.createElement("input");
-      urlInput.className = "input";
+      urlInput.className = "ctl";
       urlInput.value = f.url || "";
       urlInput.placeholder = "URL RSS/Atom o JSON";
       urlInput.addEventListener("input", () => { f.url = urlInput.value; });
 
       const del = document.createElement("button");
-      del.className = "btn";
+      del.className = "btn ghost";
       del.type = "button";
       del.textContent = "Borrar";
       del.addEventListener("click", () => {
@@ -1674,7 +1683,7 @@ Fuente:
         renderFeedsModal();
       });
 
-      row.appendChild(togWrap);
+      row.appendChild(tog);
       row.appendChild(nameInput);
       row.appendChild(urlInput);
       row.appendChild(del);
@@ -1695,7 +1704,6 @@ Fuente:
   function loadTemplate() {
     const t = String(localStorage.getItem(LS_TEMPLATE) || "");
     if (t) return t;
-    // migrate v3
     const v3 = String(localStorage.getItem(LS_TEMPLATE_V3) || "");
     if (v3) {
       localStorage.setItem(LS_TEMPLATE, v3);
@@ -1750,7 +1758,6 @@ Fuente:
     if (want) state.used.add(key);
     else state.used.delete(key);
 
-    // persist
     try {
       const arr = Array.from(state.used).slice(0, 4000);
       localStorage.setItem(LS_USED, JSON.stringify(arr));
@@ -1801,7 +1808,6 @@ Fuente:
 
       const keys = Object.keys(cacheObj);
       if (keys.length > limit) {
-        // purge oldest
         keys.sort((a, b) => Number(cacheObj[a]?.t || 0) - Number(cacheObj[b]?.t || 0));
         const drop = keys.slice(0, Math.max(20, keys.length - limit));
         drop.forEach(k => { delete cacheObj[k]; });
@@ -1819,9 +1825,7 @@ Fuente:
   }
 
   function cleanText(s) {
-    return String(s || "")
-      .replace(/\s+/g, " ")
-      .trim();
+    return String(s || "").replace(/\s+/g, " ").trim();
   }
 
   function looksJson(text) {
@@ -1832,13 +1836,9 @@ Fuente:
   function canonicalizeUrl(u) {
     const s = String(u || "").trim();
     if (!s) return "";
-    // arregla entidades
     const d = decodeHtml(s);
-    // quita comillas
     const x = d.replace(/^["']|["']$/g, "").trim();
-    // basic
     if (!/^https?:\/\//i.test(x)) return x.startsWith("www.") ? ("https://" + x) : x;
-    // limpia tracking obvio
     try {
       const url = new URL(x);
       ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"].forEach(p => url.searchParams.delete(p));
@@ -1857,7 +1857,6 @@ Fuente:
     if (!t) return 0;
     const ms = Date.parse(t);
     if (Number.isFinite(ms) && ms > 0) return ms;
-    // algunos feeds usan ISO sin TZ
     const ms2 = Date.parse(t.replace(" ", "T"));
     if (Number.isFinite(ms2) && ms2 > 0) return ms2;
     return 0;
@@ -1997,7 +1996,6 @@ Fuente:
   function smartTrimHeadline(s, maxLen = 120) {
     const t = cleanText(s || "");
     if (t.length <= maxLen) return t;
-    // corta por palabra
     const slice = t.slice(0, maxLen + 1);
     const cut = slice.lastIndexOf(" ");
     const out = (cut > 30 ? slice.slice(0, cut) : t.slice(0, maxLen)).trim();
@@ -2005,8 +2003,6 @@ Fuente:
   }
 
   function twCharCount(text) {
-    // simplificación aceptable: cuenta normal; X real tiene reglas de URL,
-    // pero en la práctica tu panel ya ajusta manualmente.
     return String(text || "").length;
   }
 
@@ -2061,7 +2057,6 @@ Fuente:
       await navigator.clipboard.writeText(t);
       return;
     }
-    // fallback
     const ta = document.createElement("textarea");
     ta.value = t;
     ta.style.position = "fixed";
@@ -2116,119 +2111,30 @@ Fuente:
   }
 
   /* ───────────────────────────── TICKERS (NEWS + TRENDS) ───────────────────────────── */
-  function injectTickerCss() {
+
+  // IMPORTANT: visual homogéneo:
+  // - Este CSS es SOLO fallback. Si tu styles.css ya tiene .tnpTicker*, manda tu CSS.
+  // - Usamos tus variables: --border y --blue.
+  function injectTickerCssFallback() {
     if (document.getElementById("tnpTickerCSS")) return;
+
+    // Si detectamos que el styles.css ya define tnpTickerBar (por ejemplo por overrides), evitamos inyectar mucho.
+    // Aun así, metemos solo keyframes + básicos mínimos para que no “rompa” en caso de ausencia.
     const css = document.createElement("style");
     css.id = "tnpTickerCSS";
     css.textContent = `
-      /* ── TNP TICKERS ── */
-      .tnpTickerBar{
-        width:100%;
-        border-top: 1px solid var(--border);
-        background: rgba(255,255,255,.02);
-        display:flex;
-        align-items:center;
-        gap: 10px;
-        padding: 8px 12px;
-        overflow:hidden;
-        user-select:none;
-      }
-      .tnpTickerLabel{
-        font-size: 12px;
-        color: rgba(231,233,234,.78);
-        font-weight: 900;
-        letter-spacing:.2px;
-        display:flex;
-        align-items:center;
-        gap: 8px;
-        white-space:nowrap;
-        flex: 0 0 auto;
-      }
-      .tnpTickerDot{
-        width:8px;height:8px;border-radius:999px;
-        background: var(--xBlue);
-        box-shadow: 0 0 0 4px rgba(29,155,240,.10);
-      }
-      .tnpTickerTrack{
-        position:relative;
-        overflow:hidden;
-        flex: 1 1 auto;
-        min-width: 0;
-      }
-      .tnpTickerInner{
-        display:inline-flex;
-        align-items:center;
-        gap: 14px;
-        white-space:nowrap;
-        will-change: transform;
-        animation: tnpMarquee 28s linear infinite;
-      }
-      .tnpTickerBar:hover .tnpTickerInner{ animation-play-state: paused; }
+      /* ── TNP TICKERS (fallback minimal, homogéneo con styles.css) ── */
       @keyframes tnpMarquee {
         0% { transform: translateX(0); }
         100% { transform: translateX(-50%); }
       }
-      .tnpTickerItem{
-        display:inline-flex;
-        align-items:center;
-        gap: 8px;
-        font-size: 13px;
-        color: rgba(231,233,234,.92);
-        padding: 6px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,.12);
-        background: rgba(255,255,255,.03);
-        cursor: pointer;
-        transition: background .12s ease, border-color .12s ease;
+      .tnpTickerInner{
+        will-change: transform;
+        animation: tnpMarquee 28s linear infinite;
       }
-      .tnpTickerItem:hover{
-        border-color: rgba(29,155,240,.55);
-        background: rgba(29,155,240,.10);
-      }
-      .tnpTickerPill{
-        font-size: 11px;
-        color: rgba(231,233,234,.78);
-        border: 1px solid rgba(255,255,255,.14);
-        padding: 3px 8px;
-        border-radius: 999px;
-        background: rgba(0,0,0,.28);
-      }
-      .tnpPop{
-        flex: 0 0 auto;
-        display:flex;
-        align-items:center;
-        gap: 8px;
-      }
-      .tnpPopChip{
-        display:inline-flex;
-        align-items:center;
-        gap: 8px;
-        padding: 7px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,.14);
-        background: rgba(255,255,255,.03);
-        color: rgba(231,233,234,.92);
-        cursor:pointer;
-        max-width: 44vw;
-        overflow:hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .tnpPopChip:hover{
-        border-color: rgba(29,155,240,.55);
-        background: rgba(29,155,240,.10);
-      }
-      .tnpPopTag{
-        color: rgba(29,155,240,.95);
-        font-weight: 900;
-      }
-      .tnpPopMeta{
-        font-size: 11px;
-        color: rgba(231,233,234,.68);
-      }
-      @media (max-width: 980px){
-        .tnpPopChip{ max-width: 78vw; }
-        .tnpTickerInner{ animation-duration: 34s; }
+      .tnpTickerBar:hover .tnpTickerInner{ animation-play-state: paused; }
+      .tnpTickerDot{
+        background: var(--blue, #1d9bf0);
       }
     `;
     document.head.appendChild(css);
@@ -2240,13 +2146,6 @@ Fuente:
     const topbar = document.querySelector(".topbar");
     if (!topbar) return;
 
-    // Insert a ticker bar UNDER the topbar content (still inside header)
-    // Estructura:
-    // <header .topbar>
-    //   ... (ya existe)
-    // </header>
-    // <div .tnpTickerBar> ... </div>
-    // (Lo metemos justo después del header para no romper flex del topbar)
     const existing = document.getElementById("tnpTickerBar");
     if (existing) {
       state.ticker.ready = true;
@@ -2285,7 +2184,6 @@ Fuente:
     popChip.addEventListener("click", () => {
       const tag = String(popChip.dataset.tag || "").trim();
       if (!tag) return;
-      // añade al input hashtags sin romper lo que ya hay
       const cur = String(el.hashtags.value || "").trim();
       const add = tag.startsWith("#") ? tag : ("#" + tag.replace(/\s+/g, ""));
       const next = mergeHashtags(cur, add);
@@ -2300,7 +2198,7 @@ Fuente:
     bar.appendChild(track);
     bar.appendChild(pop);
 
-    // Insert after header
+    // Insert after header (no rompe layout del header)
     topbar.insertAdjacentElement("afterend", bar);
 
     state.ticker.ready = true;
@@ -2311,7 +2209,6 @@ Fuente:
     if (!a) return String(cur || "").trim();
     const set = new Set(String(cur || "").split(/\s+/g).map(x => x.trim()).filter(Boolean));
     set.add(a);
-    // deja máximo 6 tags para no explotar
     return Array.from(set).slice(0, 6).join(" ");
   }
 
@@ -2321,7 +2218,6 @@ Fuente:
     const resolveLinks = state.settings.resolveLinks !== false;
     const wantSpanish = state.settings.onlySpanish !== false;
 
-    // coge candidatos: más impacto, frescos, y que estén en ventana
     const hours = clampNum(el.timeFilter.value, 1, 72);
     const minMs = Date.now() - (hours * 60 * 60 * 1000);
 
@@ -2372,7 +2268,6 @@ Fuente:
       return btn;
     };
 
-    // Si no hay items aún, muestra placeholder suave
     if (!state.ticker.news.length) {
       const ph = document.createElement("span");
       ph.className = "tnpTickerItem";
@@ -2383,31 +2278,25 @@ Fuente:
       return;
     }
 
-    // Para el marquee: duplicar contenido para que el -50% funcione
+    // Duplicar para marquee
     const fragA = document.createDocumentFragment();
     const fragB = document.createDocumentFragment();
 
-    for (const it of state.ticker.news) {
-      fragA.appendChild(buildItemEl(it));
-    }
-    for (const it of state.ticker.news) {
-      fragB.appendChild(buildItemEl(it));
-    }
+    for (const it of state.ticker.news) fragA.appendChild(buildItemEl(it));
+    for (const it of state.ticker.news) fragB.appendChild(buildItemEl(it));
 
     inner.appendChild(fragA);
-    // separador invisible
     const sep = document.createElement("span");
     sep.style.width = "16px";
     inner.appendChild(sep);
     inner.appendChild(fragB);
 
-    // Ajusta duración según cantidad (más items => más lento)
     const dur = Math.max(18, Math.min(42, 18 + state.ticker.news.length * 1.8));
     inner.style.animationDuration = `${dur}s`;
   }
 
   function tickTickerTimers() {
-    // (placeholder: si quieres lógica extra por tiempo, aquí)
+    // aquí podrías meter micro-lógica por tiempo (no hace falta)
   }
 
   /* ───────────────────────────── TRENDS (best-effort) ───────────────────────────── */
@@ -2415,15 +2304,9 @@ Fuente:
     if (state.ticker.trendsPopTimer) clearInterval(state.ticker.trendsPopTimer);
     if (state.ticker.trendsRefreshTimer) clearInterval(state.ticker.trendsRefreshTimer);
 
-    state.ticker.trendsPopTimer = setInterval(() => {
-      rotateTrendsPop();
-    }, TRENDS_POP_INTERVAL_MS);
+    state.ticker.trendsPopTimer = setInterval(() => rotateTrendsPop(), TRENDS_POP_INTERVAL_MS);
+    state.ticker.trendsRefreshTimer = setInterval(() => requestTrendsRefresh({ reason: "timer" }).catch(() => {}), TRENDS_REFRESH_MS);
 
-    state.ticker.trendsRefreshTimer = setInterval(() => {
-      requestTrendsRefresh({ reason: "timer" }).catch(() => {});
-    }, TRENDS_REFRESH_MS);
-
-    // intento inmediato (con cache)
     requestTrendsRefresh({ reason: "boot" }).catch(() => {});
     rotateTrendsPop();
   }
@@ -2437,7 +2320,8 @@ Fuente:
       pop.innerHTML = `<span class="tnpPopTag">#Tendencias</span><span class="tnpPopMeta">${escapeHtml(meta || "sin datos")}</span>`;
       return;
     }
-    pop.innerHTML = `<span class="tnpPopTag">${escapeHtml(t.startsWith("#") ? t : ("#" + t.replace(/\s+/g, "")))}</span><span class="tnpPopMeta">${escapeHtml(meta || "click para añadir")}</span>`;
+    const shown = t.startsWith("#") ? t : ("#" + t.replace(/\s+/g, ""));
+    pop.innerHTML = `<span class="tnpPopTag">${escapeHtml(shown)}</span><span class="tnpPopMeta">${escapeHtml(meta || "click para añadir")}</span>`;
   }
 
   function rotateTrendsPop() {
@@ -2454,7 +2338,6 @@ Fuente:
   }
 
   async function requestTrendsRefresh({ reason = "manual" } = {}) {
-    // cache
     const lastTs = Number(localStorage.getItem(LS_TRENDS_TS) || "0") || 0;
     const age = Date.now() - lastTs;
 
@@ -2477,7 +2360,6 @@ Fuente:
       rotateTrendsPop();
       if (reason === "boot") toast("📡 Tendencias cargadas.");
     } else {
-      // si falla, intenta mantener cache anterior
       const cached = safeJson(localStorage.getItem(LS_TRENDS_CACHE)) || [];
       if (Array.isArray(cached) && cached.length) {
         state.ticker.trends = cached.slice(0, TRENDS_MAX);
@@ -2489,10 +2371,6 @@ Fuente:
   }
 
   async function fetchTrendsBestEffort() {
-    // Nota: “Trends de X” reales requieren API/autenticación.
-    // Aquí hacemos best-effort con fuentes públicas tipo “Twitter trends mirror” (pueden cambiar).
-    // Orden: Trends24 ES -> GetDayTrends ES -> Google Trends Daily (ES) (como fallback).
-
     const providers = [
       () => fetchTrendsTrends24("spain", "Trends24"),
       () => fetchTrendsGetDayTrends("spain", "GetDayTrends"),
@@ -2502,7 +2380,6 @@ Fuente:
     for (const fn of providers) {
       const res = await fn().catch(() => []);
       const cleaned = (res || []).map(x => normalizeTrend(x)).filter(Boolean);
-      if (cleaned.length >= 8) return cleaned.slice(0, TRENDS_MAX);
       if (cleaned.length) return cleaned.slice(0, TRENDS_MAX);
     }
     return [];
@@ -2523,22 +2400,19 @@ Fuente:
   function cleanTrendLabel(s) {
     const t = String(s || "").trim();
     if (!t) return "";
-    // quita contadores/ruido
     const x = t
       .replace(/\s{2,}/g, " ")
       .replace(/^\d+\.\s+/, "")
       .replace(/\b(tweets|tweet|posts)\b.*$/i, "")
       .trim();
     if (!x) return "";
-    // Si parece un hashtag ya, perfecto. Si es frase, la dejamos (luego al añadir convertimos a #palabra)
     return x.length > 42 ? (x.slice(0, 41) + "…") : x;
   }
 
   async function fetchTrendsTrends24(countrySlug = "spain", src = "Trends24") {
     const url = `https://trends24.in/${encodeURIComponent(countrySlug)}/`;
-    const html = await fetchTextSmart(url, null, 14000);
+    const html = await fetchTextSmart(url, null, 14_000);
     if (!html) return [];
-    // Trends24: suele tener listas <ol class="trend-card__list"> ... <a>Trend</a>
     const tags = [];
     const re = /<a[^>]+href="\/[^"]+"[^>]*>([^<]+)<\/a>/gi;
     let m;
@@ -2546,7 +2420,6 @@ Fuente:
       const label = decodeHtml(m[1]);
       const t = cleanTrendLabel(label);
       if (!t) continue;
-      // suele mezclar ciudades/hora: filtramos cosas muy cortas genéricas
       if (t.length < 2) continue;
       tags.push({ label: t, src });
       if (tags.length >= TRENDS_MAX) break;
@@ -2556,9 +2429,8 @@ Fuente:
 
   async function fetchTrendsGetDayTrends(countrySlug = "spain", src = "GetDayTrends") {
     const url = `https://getdaytrends.com/${encodeURIComponent(countrySlug)}/`;
-    const html = await fetchTextSmart(url, null, 14000);
+    const html = await fetchTextSmart(url, null, 14_000);
     if (!html) return [];
-    // GetDayTrends: <a class="trend-link"> ... </a>
     const tags = [];
     const re = /class=["'][^"']*trend-link[^"']*["'][^>]*>([^<]+)<\/a>/gi;
     let m;
@@ -2573,9 +2445,8 @@ Fuente:
   }
 
   async function fetchTrendsGoogleDaily(geo = "ES", src = "GoogleTrends") {
-    // Daily trending searches RSS
     const url = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${encodeURIComponent(geo)}`;
-    const xml = await fetchTextSmart(url, null, 14000);
+    const xml = await fetchTextSmart(url, null, 14_000);
     if (!xml) return [];
     const doc = new DOMParser().parseFromString(xml, "text/xml");
     const items = Array.from(doc.querySelectorAll("item")).slice(0, TRENDS_MAX);
@@ -2600,22 +2471,15 @@ Fuente:
     return out;
   }
 
-  /* ───────────────────────────── TICKER: EXTRA ACTIONS ───────────────────────────── */
-  // (Opcional) Si quieres: click derecho abre, alt+click abre, click normal “Usar” (ya implementado)
-
-  /* ───────────────────────────── PARSING UTILS ───────────────────────────── */
-  function pickTextSafe(node, sel) {
-    try { return node.querySelector(sel)?.textContent || ""; } catch { return ""; }
-  }
-
-  /* ───────────────────────────── TICKER: (no bloquea) ───────────────────────────── */
-
-  /* ───────────────────────────── EXTRA: CSS class badges in existing CSS ───────────────────────────── */
-  // No tocamos styles.css: usamos las clases existentes (.badge.*) que ya están en tu CSS.
-
   /* ───────────────────────────── BOOT ───────────────────────────── */
   try {
-    init();
+    // Como tu script se carga con defer, DOM ya está listo.
+    // Aun así, por seguridad: si por alguna razón no hay body, espera microtask.
+    if (!document.body) {
+      setTimeout(() => init(), 0);
+    } else {
+      init();
+    }
   } catch (e) {
     crashOverlay(e);
   }
