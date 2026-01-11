@@ -70,6 +70,11 @@ Fuente:
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
+  function numOr(v, fallback){
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
   function safeParseJSON(raw) {
     if (raw == null) return undefined; // null/undefined
     try { return JSON.parse(raw); } catch { return undefined; }
@@ -412,26 +417,27 @@ Fuente:
 
     s.liveUrl = s.liveUrl || "https://twitch.tv/globaleyetv";
 
-    s.delayMin = (typeof s.delayMin === "number") ? s.delayMin : 0;
-    s.timeFilter = (typeof s.timeFilter === "number") ? s.timeFilter : 60;
-    s.sortBy = s.sortBy || "impact";
-    s.showLimit = (typeof s.showLimit === "number") ? s.showLimit : 120;
-    s.fetchCap = (typeof s.fetchCap === "number") ? s.fetchCap : 240;
-    s.batchFeeds = (typeof s.batchFeeds === "number") ? s.batchFeeds : 12;
-    s.refreshSec = (typeof s.refreshSec === "number") ? s.refreshSec : 60;
+    s.delayMin  = numOr(s.delayMin, 0);
+    s.timeFilter= numOr(s.timeFilter, 60);
+    s.showLimit = numOr(s.showLimit, 120);
+    s.fetchCap  = numOr(s.fetchCap, 240);
+    s.batchFeeds= numOr(s.batchFeeds, 12);
+    s.refreshSec= numOr(s.refreshSec, 60);
 
-    s.optOnlyReady = (s.optOnlyReady === true);
-    s.optOnlySpanish = (s.optOnlySpanish !== false); // prioridad ES ON
+    s.sortBy = s.sortBy || "impact";
+
+    s.optOnlyReady    = (s.optOnlyReady === true);
+    s.optOnlySpanish  = (s.optOnlySpanish !== false); // prioridad ES ON
     s.optResolveLinks = (s.optResolveLinks !== false);
     s.optShowOriginal = (s.optShowOriginal !== false);
-    s.optHideUsed = (s.optHideUsed !== false);
-    s.optAutoRefresh = (s.optAutoRefresh !== false);
+    s.optHideUsed     = (s.optHideUsed !== false);
+    s.optAutoRefresh  = (s.optAutoRefresh !== false);
 
     // Ticker: velocidad en pixels por segundo (pps). Menos = más lento.
     // ⬇️ Default más lento para lectura humana.
-    s.tickerPps = (typeof s.tickerPps === "number") ? s.tickerPps : 30;
+    s.tickerPps = numOr(s.tickerPps, 30);
 
-    s.optIncludeLive = (s.optIncludeLive !== false);
+    s.optIncludeLive   = (s.optIncludeLive !== false);
     s.optIncludeSource = (s.optIncludeSource !== false);
 
     s.catFilter = s.catFilter || "all";
@@ -1023,14 +1029,14 @@ Fuente:
 
   /* ───────────────────────────── FILTER / RENDER ───────────────────────────── */
   function currentWindowMs(){
-    const v = Number(els.timeFilter?.value || settings.timeFilter || 60);
+    const v = numOr(els.timeFilter?.value, settings.timeFilter || 60);
     if (Number.isFinite(v) && v > 0) return v * 60 * 1000;
     return 60 * 60 * 1000;
   }
 
   function applyFilters(){
     const q = (els.searchBox?.value || "").trim().toLowerCase();
-    const minAge = clamp(Number(els.delayMin?.value || settings.delayMin || 0), 0, 60) * 60 * 1000;
+    const minAge = clamp(numOr(els.delayMin?.value, settings.delayMin || 0), 0, 60) * 60 * 1000;
 
     const win = currentWindowMs();
     const onlyReady = !!(els.optOnlyReady?.checked);
@@ -1065,7 +1071,7 @@ Fuente:
       out.sort((a,b) => b.dateMs - a.dateMs);
     }
 
-    const lim = clamp(Number(els.showLimit?.value || settings.showLimit || 120), 10, 500);
+    const lim = clamp(numOr(els.showLimit?.value, settings.showLimit || 120), 10, 500);
     out = out.slice(0, lim);
 
     state.filtered = out;
@@ -1339,7 +1345,7 @@ Fuente:
 
   /* ───────────────────────────── TICKER SPEED HELPERS ───────────────────────────── */
   function getTickerPps(){
-    const v = Number(els.tickerSpeed?.value || settings.tickerPps || 30);
+    const v = numOr(els.tickerSpeed?.value, settings.tickerPps || 30);
     return clamp(v, 10, 220);
   }
 
@@ -1385,7 +1391,6 @@ Fuente:
     const top10 = state.filtered.slice(0, 10);
     if (!top10.length){
       els.tnpTickerInner.textContent = "Sin noticias aún…";
-      // aun así aplicamos duración (por si el user cambió speed)
       requestAnimationFrame(() => {
         applyTickerSpeed();
         if (state.lastTickerPps !== pps) restartTickerAnim();
@@ -1395,7 +1400,6 @@ Fuente:
 
     const sig = top10.map(x => x.id).join("|");
 
-    // Si el contenido no cambió pero el usuario tocó speed: aplica + reinicia
     if (sig === state.lastTickerSig){
       if (state.lastTickerPps !== pps){
         requestAnimationFrame(() => {
@@ -1403,7 +1407,6 @@ Fuente:
           restartTickerAnim();
         });
       } else {
-        // mantiene duración correcta aunque cambie ancho por fuentes/layout
         requestAnimationFrame(() => applyTickerSpeed());
       }
       return;
@@ -1414,7 +1417,6 @@ Fuente:
     const parts = top10.map(x => `• ${x.title}`);
     els.tnpTickerInner.textContent = parts.join("   ");
 
-    // Espera a que el DOM mida el ancho, aplica duración y reinicia
     requestAnimationFrame(() => {
       applyTickerSpeed();
       restartTickerAnim();
@@ -1494,7 +1496,6 @@ Fuente:
       state.swReg = null;
     }
 
-    // Backup: si no hay registro (por lo que sea), intenta registrar suave
     if (!state.swReg){
       try{
         state.swReg = await navigator.serviceWorker.register("./sw.js", { updateViaCache:"none" });
@@ -1503,7 +1504,6 @@ Fuente:
       }
     }
 
-    // Guard anti-bucle reload
     if (!window.__TNP_SW_GUARD__){
       window.__TNP_SW_GUARD__ = { reloading:false };
       navigator.serviceWorker.addEventListener("controllerchange", () => {
@@ -1513,7 +1513,6 @@ Fuente:
       });
     }
 
-    // Mantenimiento: update periódico
     setInterval(async () => {
       try{
         if (state.swReg) await state.swReg.update();
@@ -1525,14 +1524,12 @@ Fuente:
   }
 
   async function requestClearTnpCaches(){
-    // 1) pide al SW limpiar caches propios
     try{
       if (navigator.serviceWorker?.controller){
         navigator.serviceWorker.controller.postMessage({ type:"CLEAR_CACHES" });
       }
     }catch{}
 
-    // 2) además: intentamos borrar caches tnp-* desde la página (por si SW no escucha)
     try{
       if ("caches" in window){
         const keys = await caches.keys();
@@ -1542,7 +1539,6 @@ Fuente:
   }
 
   async function selfHealIfBuildChanged(){
-    // Si cambia BUILD_ID, forzamos limpieza de caches para evitar servir shell viejo.
     const prev = localStorage.getItem(LS_BUILD_ID);
     const cur = `${APP_VERSION}:${BUILD_ID}`;
     if (prev === cur) return;
@@ -1551,7 +1547,6 @@ Fuente:
     setStatus("Aplicando actualización… (limpiando caché)");
     await requestClearTnpCaches();
 
-    // reload 1 vez
     try{
       if (!window.__TNP_SELF_HEAL__){
         window.__TNP_SELF_HEAL__ = true;
@@ -1657,8 +1652,8 @@ Fuente:
     setStatus(force ? "Refrescando (force)…" : "Refrescando…");
 
     try{
-      const cap = clamp(Number(els.fetchCap?.value || settings.fetchCap || 240), 80, 2000);
-      const batchSize = clamp(Number(els.batchFeeds?.value || settings.batchFeeds || 12), 4, 50);
+      const cap = clamp(numOr(els.fetchCap?.value, settings.fetchCap || 240), 80, 2000);
+      const batchSize = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds || 12), 4, 50);
 
       const allItems = [];
       const enabledFeeds = feeds.slice();
@@ -1701,7 +1696,6 @@ Fuente:
 
       state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
 
-      // Si NO funcionó ningún feed, casi seguro es SW/caché o proxy bloqueado: auto-repair 1 vez.
       await emergencyRepairIfAllFailed(enabledFeeds.length, ok);
 
       if (signal.aborted || mySeq !== state.refreshSeq) throw new Error("Abort");
@@ -1769,7 +1763,7 @@ Fuente:
     clearInterval(state.autoTimer);
     if (!els.optAutoRefresh?.checked) return;
 
-    const sec = clamp(Number(els.refreshSec?.value || settings.refreshSec || 60), 20, 600);
+    const sec = clamp(numOr(els.refreshSec?.value, settings.refreshSec || 60), 20, 600);
     state.autoTimer = setInterval(() => {
       if (document.hidden) return;
       refreshAll({ force:false, user:false }).catch(()=>{});
@@ -1803,37 +1797,37 @@ Fuente:
 
     if (els.catFilter) els.catFilter.value = settings.catFilter || "all";
 
-    // ticker UI opcional
     if (els.tickerSpeed){
-      els.tickerSpeed.value = String(clamp(Number(settings.tickerPps || 30), 10, 220));
+      els.tickerSpeed.value = String(clamp(numOr(settings.tickerPps, 30), 10, 220));
       if (els.tickerSpeedVal) els.tickerSpeedVal.textContent = `${els.tickerSpeed.value} pps`;
     }
 
     const saveSettingFrom = () => {
       settings.liveUrl = normSpace(els.liveUrl?.value || settings.liveUrl);
-      settings.delayMin = Number(els.delayMin?.value || settings.delayMin);
-      settings.timeFilter = Number(els.timeFilter?.value || settings.timeFilter);
-      settings.sortBy = els.sortBy?.value || settings.sortBy;
-      settings.showLimit = Number(els.showLimit?.value || settings.showLimit);
-      settings.fetchCap = Number(els.fetchCap?.value || settings.fetchCap);
-      settings.batchFeeds = Number(els.batchFeeds?.value || settings.batchFeeds);
-      settings.refreshSec = Number(els.refreshSec?.value || settings.refreshSec);
 
-      settings.optOnlyReady = !!els.optOnlyReady?.checked;
-      settings.optOnlySpanish = !!els.optOnlySpanish?.checked;
+      settings.delayMin   = clamp(numOr(els.delayMin?.value, settings.delayMin), 0, 60);
+      settings.timeFilter = clamp(numOr(els.timeFilter?.value, settings.timeFilter), 1, 24*60);
+      settings.showLimit  = clamp(numOr(els.showLimit?.value, settings.showLimit), 10, 500);
+      settings.fetchCap   = clamp(numOr(els.fetchCap?.value, settings.fetchCap), 80, 2000);
+      settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 4, 50);
+      settings.refreshSec = clamp(numOr(els.refreshSec?.value, settings.refreshSec), 20, 600);
+
+      settings.sortBy = els.sortBy?.value || settings.sortBy;
+
+      settings.optOnlyReady    = !!els.optOnlyReady?.checked;
+      settings.optOnlySpanish  = !!els.optOnlySpanish?.checked;
       settings.optResolveLinks = !!els.optResolveLinks?.checked;
       settings.optShowOriginal = !!els.optShowOriginal?.checked;
-      settings.optHideUsed = !!els.optHideUsed?.checked;
-      settings.optAutoRefresh = !!els.optAutoRefresh?.checked;
+      settings.optHideUsed     = !!els.optHideUsed?.checked;
+      settings.optAutoRefresh  = !!els.optAutoRefresh?.checked;
 
-      settings.optIncludeLive = !!els.optIncludeLive?.checked;
+      settings.optIncludeLive   = !!els.optIncludeLive?.checked;
       settings.optIncludeSource = !!els.optIncludeSource?.checked;
 
       settings.catFilter = els.catFilter?.value || "all";
 
-      // ticker speed (si hay slider)
       if (els.tickerSpeed){
-        settings.tickerPps = clamp(Number(els.tickerSpeed.value || settings.tickerPps || 30), 10, 220);
+        settings.tickerPps = clamp(numOr(els.tickerSpeed.value, settings.tickerPps || 30), 10, 220);
       }
 
       saveSettings(settings);
@@ -1843,7 +1837,6 @@ Fuente:
       applyFilters();
       startAuto();
 
-      // aplica speed y reinicia ticker para que se note al instante
       requestAnimationFrame(() => {
         applyTickerSpeed();
         restartTickerAnim();
@@ -1992,7 +1985,6 @@ Fuente:
 
     setStatus(`TNP listo (${APP_VERSION})`);
 
-    // aplica speed inicial (aunque no haya noticias aún)
     requestAnimationFrame(() => {
       applyTickerSpeed();
       restartTickerAnim();

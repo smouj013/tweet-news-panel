@@ -9,6 +9,12 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <meta name="robots" content="noindex,nofollow" />
 
+  <!-- PWA -->
+  <meta name="application-name" content="News → Tweet Template Panel" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./assets/icons/favicon-32.png" sizes="32x32" />
   <link rel="icon" href="./assets/icons/icon-192.png" sizes="192x192" />
@@ -20,6 +26,11 @@
   <link rel="preconnect" href="https://api.codetabs.com" crossorigin />
   <link rel="preconnect" href="https://thingproxy.freeboard.io" crossorigin />
   <link rel="preconnect" href="https://r.jina.ai" crossorigin />
+  <link rel="dns-prefetch" href="https://corsproxy.io" />
+  <link rel="dns-prefetch" href="https://api.allorigins.win" />
+  <link rel="dns-prefetch" href="https://api.codetabs.com" />
+  <link rel="dns-prefetch" href="https://thingproxy.freeboard.io" />
+  <link rel="dns-prefetch" href="https://r.jina.ai" />
 
   <link rel="preload" href="./styles.css" as="style" />
   <link rel="stylesheet" href="./styles.css" />
@@ -64,13 +75,18 @@
       <div class="topbar__controls">
         <label class="field field--inline">
           <span class="field__label">Buscar</span>
-          <input id="searchBox" class="input input--sm" type="search" placeholder="Buscar titular / medio…" />
+          <input id="searchBox" class="input input--sm" type="search" placeholder="Buscar titular / medio…" autocomplete="off" />
         </label>
 
-        <button id="btnRefresh" class="btn btn--primary btn--sm" type="button"
-          title="Refrescar (Shift+click = force + reset backoff)">
+        <button
+          id="btnRefresh"
+          class="btn btn--primary btn--sm"
+          type="button"
+          title="Refrescar (Shift+click = force + reset backoff)"
+        >
           Refrescar
         </button>
+
         <button id="btnFeeds" class="btn btn--sm" type="button">Feeds</button>
         <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
         <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
@@ -78,7 +94,8 @@
     </div>
 
     <div class="topbar__right">
-      <div id="status" class="status">Listo</div>
+      <!-- aria-live para que cambios de estado se anuncien (accesibilidad) -->
+      <div id="status" class="status" role="status" aria-live="polite">Listo</div>
     </div>
   </header>
 
@@ -94,7 +111,7 @@
   <main id="main" class="layout">
     <div class="grid">
       <!-- LEFT: COMPOSER -->
-      <section class="panel">
+      <section class="panel" aria-label="Compositor del tweet">
         <div class="panel__head">
           <div>
             <div class="panel__title">Plantilla</div>
@@ -106,23 +123,23 @@
           <div class="grid2">
             <label class="field">
               <span class="field__label">🔴 En vivo (tu link)</span>
-              <input id="liveUrl" class="input" type="url" placeholder="https://twitch.tv/globaleyetv" />
+              <input id="liveUrl" class="input" type="url" placeholder="https://twitch.tv/globaleyetv" inputmode="url" />
             </label>
 
             <label class="field">
               <span class="field__label">Hashtags</span>
-              <input id="hashtags" class="input" type="text" placeholder="#ÚltimaHora #España …" />
+              <input id="hashtags" class="input" type="text" placeholder="#ÚltimaHora #España …" autocomplete="off" />
             </label>
           </div>
 
           <label class="field">
             <span class="field__label">Titular</span>
-            <input id="headline" class="input" type="text" placeholder="Se rellena al elegir noticia…" />
+            <input id="headline" class="input" type="text" placeholder="Se rellena al elegir noticia…" autocomplete="off" />
           </label>
 
           <label class="field">
             <span class="field__label">URL de la fuente</span>
-            <input id="sourceUrl" class="input" type="url" placeholder="https://…" />
+            <input id="sourceUrl" class="input" type="url" placeholder="https://…" inputmode="url" />
           </label>
 
           <div class="row row--wrap">
@@ -138,7 +155,7 @@
 
           <label class="field">
             <span class="field__label">Template</span>
-            <textarea id="template" class="input input--area mono" rows="8"></textarea>
+            <textarea id="template" class="input input--area mono" rows="8" spellcheck="false"></textarea>
           </label>
 
           <div class="row row--wrap">
@@ -153,7 +170,7 @@
             <button id="btnResetTemplate" class="btn btn--sm" type="button">Reset template</button>
           </div>
 
-          <div class="warn" id="warn"></div>
+          <div class="warn" id="warn" aria-live="polite"></div>
 
           <div class="previewWrap">
             <div class="previewTitle">
@@ -164,7 +181,7 @@
             <pre id="preview" class="preview"></pre>
 
             <!-- Vista previa estilo X -->
-            <div class="xMock">
+            <div class="xMock" aria-label="Vista previa estilo X">
               <div class="xMock__avatar" aria-hidden="true"></div>
               <div class="xMock__body">
                 <div class="xMock__nameRow">
@@ -215,10 +232,10 @@
               </select>
             </label>
 
-            <!-- ✅ NUEVO: Control de velocidad del ticker (pps) -->
+            <!-- Control de velocidad del ticker (pps) -->
             <label class="field field--inline" title="Velocidad del ticker en píxeles por segundo (menos = más lento)">
               <span class="field__label">Ticker</span>
-              <input id="tickerSpeed" class="input input--sm" type="number" min="15" max="200" value="28" />
+              <input id="tickerSpeed" class="input input--sm" type="number" min="10" max="220" value="28" />
               <span id="tickerSpeedVal" class="mini muted" style="margin-left:8px;">28 pps</span>
             </label>
 
@@ -274,7 +291,7 @@
 
             <label class="field field--inline">
               <span class="field__label">Mostrar</span>
-              <input id="showLimit" class="input input--sm" type="number" min="10" max="200" value="120" />
+              <input id="showLimit" class="input input--sm" type="number" min="10" max="500" value="120" />
             </label>
 
             <label class="field field--inline">
@@ -295,7 +312,7 @@
       </section>
 
       <!-- RIGHT: NEWS -->
-      <section class="panel">
+      <section class="panel" aria-label="Lista de noticias">
         <div class="panel__head">
           <div>
             <div class="panel__title">Noticias</div>
@@ -311,7 +328,15 @@
   </main>
 
   <!-- MODAL FEEDS -->
-  <div id="modal" class="modal hidden" hidden aria-hidden="true" role="dialog" aria-label="Gestión de feeds">
+  <div
+    id="modal"
+    class="modal hidden"
+    hidden
+    aria-hidden="true"
+    aria-modal="true"
+    role="dialog"
+    aria-label="Gestión de feeds"
+  >
     <div class="modal__panel">
       <div class="modal__head">
         <div>
@@ -323,8 +348,8 @@
 
       <div class="modal__body">
         <div class="row row--3">
-          <input id="newFeedName" class="input input--sm" placeholder="Nombre" />
-          <input id="newFeedUrl" class="input input--sm" placeholder="URL RSS/Atom" />
+          <input id="newFeedName" class="input input--sm" placeholder="Nombre" autocomplete="off" />
+          <input id="newFeedUrl" class="input input--sm" placeholder="URL RSS/Atom" inputmode="url" />
           <button id="btnAddFeed" class="btn btn--primary btn--sm" type="button">Añadir</button>
         </div>
 
@@ -336,6 +361,7 @@
             id="feedsJson"
             class="input input--area mono"
             rows="7"
+            spellcheck="false"
             placeholder='[ { "name": "RTVE — Mundo", "url": "https://…", "enabled": true, "cat":"world" } ]'
           ></textarea>
         </label>
@@ -348,7 +374,7 @@
         </div>
 
         <div class="mini muted">
-          Si algún feed falla por CORS, la app intenta proxy automáticamente (AllOrigins / CodeTabs / ThingProxy).
+          Si algún feed falla por CORS, la app intenta proxy automáticamente (CorsProxy / AllOrigins / CodeTabs / ThingProxy / Jina).
         </div>
       </div>
     </div>
