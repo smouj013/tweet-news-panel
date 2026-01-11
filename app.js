@@ -3,7 +3,8 @@
    ✅ FIX CRÍTICO: localStorage con "null" / JSON corrupto => nunca rompe (adiós liveUrl null)
    ✅ FIX: “no refresca / no actualiza” => self-heal al detectar build nuevo (limpia caches tnp-* + reload guard)
    ✅ FIX: refresh manual ABORTA el refresh anterior (no se queda colgado)
-   ✅ Anti-cache: fetch no-store + headers no-cache + cache-bust en PROXIES
+   ✅ Anti-cache: fetch no-store + cache-bust en PROXIES (sin headers que provoquen preflight)
+   ✅ CORS PRO: proxy-pool (corsproxy -> allorigins -> codetabs -> thingproxy -> jina) + retry suave
    ✅ RSS/Atom: extracción de imágenes mejorada (media/enclosure + <img>)
    ✅ OG best-effort (HTML vía proxies) + caché local
    ✅ Backoff por feed + batch configurable
@@ -16,8 +17,26 @@
   const APP_VERSION = "tnp-v4.1.1";
 
   // OJO: no es “versión”, es build-id para auto-heal de caches aunque no cambies APP_VERSION
-  // Puedes cambiar este string cuando publiques cambios, sin tocar el resto.
-  const BUILD_ID = "2026-01-10a";
+  // Cambia este string cuando publiques cambios si quieres forzar self-heal.
+  const BUILD_ID = "2026-01-11a";
+
+  /* ───────────────────────────── PROXY CONFIG ─────────────────────────────
+    En navegador (GitHub Pages) MUCHOS RSS no tienen CORS. Necesitas proxy.
+    - Por defecto usamos un pool público (mejor esfuerzo).
+    - RECOMENDADO PRO: poner tu propio proxy (Cloudflare Worker) aquí.
+
+    CUSTOM_PROXY_TEMPLATE admite:
+      - {{URL}}          => URL con cache-bust ya aplicado (sin encode)
+      - {{ENCODED_URL}}  => encodeURIComponent(URL)
+
+    Ejemplos:
+      const CUSTOM_PROXY_TEMPLATE = "https://tuworker.tudominio.workers.dev/?url={{ENCODED_URL}}";
+      const CUSTOM_PROXY_TEMPLATE = "https://tuworker.tudominio.workers.dev/proxy?url={{ENCODED_URL}}";
+  */
+  const CUSTOM_PROXY_TEMPLATE = ""; // <- pon aquí tu proxy propio si quieres 100% estabilidad
+
+  // Modo recomendado en GitHub Pages: proxy primero (evita “CORS fail” masivo)
+  const PROXY_FIRST = true;
 
   /* ───────────────────────────── STORAGE ───────────────────────────── */
   const LS_FEEDS    = "tnp_feeds_v4";
@@ -449,6 +468,9 @@ Fuente:
 
     // SW
     swReg: null,
+
+    // hint: feedUrl -> preferred proxy index
+    proxyHint: new Map(),
   };
 
   function loadUsed(){
@@ -595,7 +617,7 @@ Fuente:
     }catch{}
   }
 
-  /* ───────────────────────────── FETCH (ANTI-CORS + ANTI-CACHE) ───────────────────────────── */
+  /* ───────────────────────────── FETCH (CORS SAFE + ANTI-PREFLIGHT) ───────────────────────────── */
   function withTimeout(ms, signal){
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort("timeout"), ms);
@@ -611,16 +633,7 @@ Fuente:
     };
   }
 
-  function noCacheHeaders(extra){
-    return {
-      "Cache-Control": "no-cache, no-store, must-revalidate",
-      "Pragma": "no-cache",
-      "Expires": "0",
-      ...(extra || {})
-    };
-  }
-
-  function bustProxy(url){
+  function bustUrl(url){
     try{
       const u = new URL(url);
       u.searchParams.set("__tnp", `${APP_VERSION}_${BUILD_ID}_${nowMs().toString(36)}`);
@@ -631,14 +644,47 @@ Fuente:
     }
   }
 
-  async function fetchText(url, signal, extraHeaders){
-    const { signal: s2, cancel } = withTimeout(15000, signal);
+  function applyProxyTemplate(tpl, rawUrl, encUrl){
+    if (!tpl) return "";
+    return String(tpl)
+      .replaceAll("{{URL}}", rawUrl)
+      .replaceAll("{{ENCODED_URL}}", encUrl);
+  }
+
+  function makeProxyCandidates(targetUrl){
+    const raw = bustUrl(targetUrl);
+    const enc = encodeURIComponent(raw);
+    const out = [];
+
+    // 1) Tu proxy propio (si lo configuras)
+    if (CUSTOM_PROXY_TEMPLATE){
+      out.push(applyProxyTemplate(CUSTOM_PROXY_TEMPLATE, raw, enc));
+    }
+
+    // 2) Pool público (orden importa)
+    out.push(`https://corsproxy.io/?url=${enc}`);
+    out.push(`https://api.allorigins.win/raw?url=${enc}`);
+    out.push(`https://api.codetabs.com/v1/proxy?quest=${enc}`);
+    out.push(`https://thingproxy.freeboard.io/fetch/${raw}`);
+    out.push(`https://r.jina.ai/${raw}`); // “reader” (a veces envuelve, lo saneamos antes de parsear)
+
+    return out;
+  }
+
+  async function fetchText(url, signal, accept){
+    const { signal: s2, cancel } = withTimeout(20000, signal);
     try{
-      const headers = {
-        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, text/html;q=0.8, */*;q=0.7",
-        ...noCacheHeaders(extraHeaders),
-      };
-      const r = await fetch(url, { signal: s2, cache:"no-store", headers, redirect:"follow" });
+      // IMPORTANTÍSIMO: NO meter headers tipo Cache-Control/Pragma/Expires (provocan preflight CORS).
+      const headers = {};
+      if (accept) headers["Accept"] = accept;
+
+      const r = await fetch(url, {
+        signal: s2,
+        cache: "no-store",
+        redirect: "follow",
+        credentials: "omit",
+        headers
+      });
       if (!r.ok) throw new Error("HTTP " + r.status);
       return await r.text();
     } finally {
@@ -646,27 +692,84 @@ Fuente:
     }
   }
 
-  async function fetchTextSmart(url, signal){
-    try { return await fetchText(url, signal); } catch {}
+  function extractXmlFromText(text){
+    let s = String(text || "");
+    s = s.replace(/^\uFEFF/, "").trim(); // BOM
 
-    const enc = encodeURIComponent(url);
+    const needles = ["<?xml", "<rss", "<feed", "<rdf:RDF", "<RDF", "<channel"];
+    let best = -1;
 
-    try { return await fetchText(bustProxy(`https://api.allorigins.win/raw?url=${enc}`), signal); } catch {}
-    try { return await fetchText(bustProxy(`https://api.codetabs.com/v1/proxy?quest=${enc}`), signal); } catch {}
-    try { return await fetchText(bustProxy(`https://thingproxy.freeboard.io/fetch/${url}`), signal); } catch {}
+    for (const n of needles){
+      const i = s.indexOf(n);
+      if (i >= 0 && (best < 0 || i < best)) best = i;
+    }
 
-    throw new Error("fetch_failed");
+    // Si r.jina mete cabecera “Title:” o similar, cortamos desde el primer “<”
+    if (best < 0){
+      const lt = s.indexOf("<");
+      if (lt >= 0) best = lt;
+    }
+
+    if (best > 0) s = s.slice(best).trim();
+    return s;
   }
 
-  async function fetchHtmlSmart(url, signal){
-    try { return await fetchText(url, signal, { "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }); } catch {}
+  async function fetchTextSmart(targetUrl, signal){
+    const accept = "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.7";
+    const proxies = makeProxyCandidates(targetUrl);
 
-    const enc = encodeURIComponent(url);
-    try { return await fetchText(bustProxy(`https://api.allorigins.win/raw?url=${enc}`), signal, { "Accept": "text/html,*/*;q=0.8" }); } catch {}
-    try { return await fetchText(bustProxy(`https://api.codetabs.com/v1/proxy?quest=${enc}`), signal, { "Accept": "text/html,*/*;q=0.8" }); } catch {}
-    try { return await fetchText(bustProxy(`https://thingproxy.freeboard.io/fetch/${url}`), signal, { "Accept": "text/html,*/*;q=0.8" }); } catch {}
+    const candidates = PROXY_FIRST
+      ? [...proxies, targetUrl]
+      : [targetUrl, ...proxies];
 
-    throw new Error("html_fetch_failed");
+    // hint (si un proxy ya funcionó antes para este feed, lo probamos primero)
+    const hint = state.proxyHint.get(targetUrl);
+    if (Number.isFinite(hint) && hint >= 0 && hint < candidates.length){
+      const hinted = candidates[hint];
+      candidates.splice(hint, 1);
+      candidates.unshift(hinted);
+    }
+
+    let lastErr = null;
+
+    for (let i=0; i<candidates.length; i++){
+      const u = candidates[i];
+      try{
+        const txt = await fetchText(u, signal, accept);
+        // si es feed proxied/reader, limpiamos y validamos rápido
+        const xml = extractXmlFromText(txt);
+        if (!xml || xml.length < 40) throw new Error("empty");
+        // guardamos hint para la próxima vez (solo si fue proxy, no direct)
+        state.proxyHint.set(targetUrl, i);
+        return xml;
+      }catch(e){
+        lastErr = e;
+        await sleep(60);
+      }
+    }
+
+    throw lastErr || new Error("fetch_failed");
+  }
+
+  async function fetchHtmlSmart(targetUrl, signal){
+    const accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+    const proxies = makeProxyCandidates(targetUrl);
+
+    const candidates = PROXY_FIRST
+      ? [...proxies, targetUrl]
+      : [targetUrl, ...proxies];
+
+    let lastErr = null;
+    for (const u of candidates){
+      try{
+        return await fetchText(u, signal, accept);
+      }catch(e){
+        lastErr = e;
+        await sleep(60);
+      }
+    }
+
+    throw lastErr || new Error("html_fetch_failed");
   }
 
   async function mapLimit(arr, limit, fn){
@@ -803,7 +906,8 @@ Fuente:
   }
 
   function parseFeed(xmlText, feed){
-    const doc = parseXml(xmlText);
+    const xml = extractXmlFromText(xmlText);
+    const doc = parseXml(xml);
     if (doc.querySelector("rss")) return parseRss(doc, feed);
     if (doc.querySelector("feed")) return parseAtom(doc, feed);
     if (doc.querySelector("channel item")) return parseRss(doc, feed);
@@ -865,7 +969,7 @@ Fuente:
     try{
       const { signal: s2, cancel } = withTimeout(9000, signal);
       try{
-        const r = await fetch(url, { signal: s2, redirect:"follow", cache:"no-store", headers: noCacheHeaders() });
+        const r = await fetch(url, { signal: s2, redirect:"follow", cache:"no-store", credentials:"omit" });
         const finalUrl = r.url || url;
         const clean = cleanUrl(finalUrl);
         state.resolveCache.set(k, clean);
@@ -1302,152 +1406,6 @@ Fuente:
     state.backoff.clear();
   }
 
-  /* ───────────────────────────── REFRESH LOOP ───────────────────────────── */
-  async function refreshAll({ force=false, user=false } = {}){
-    if (state.refreshInFlight){
-      if (!user) return;
-      try{ state.refreshAbort?.abort("user_refresh"); }catch{}
-    }
-
-    const mySeq = ++state.refreshSeq;
-
-    const feeds = state.feeds.filter(f => f.enabled);
-    if (!feeds.length){
-      setStatus("No hay feeds activados. Abre Feeds y activa alguno.");
-      return;
-    }
-
-    if (force) resetBackoff();
-
-    state.refreshInFlight = true;
-    state.refreshAbort?.abort("new_refresh");
-    state.refreshAbort = new AbortController();
-    const signal = state.refreshAbort.signal;
-
-    state.items = [];
-    state.filtered = [];
-    renderNewsList([]);
-    updateTicker();
-    updateTrendsPop();
-
-    setStatus(force ? "Refrescando (force)…" : "Refrescando…");
-
-    try{
-      const cap = clamp(Number(els.fetchCap?.value || settings.fetchCap || 240), 80, 2000);
-      const batchSize = clamp(Number(els.batchFeeds?.value || settings.batchFeeds || 12), 4, 50);
-
-      const allItems = [];
-      const enabledFeeds = feeds.slice();
-
-      let ok = 0, fail = 0;
-
-      for (let i=0;i<enabledFeeds.length;i += batchSize){
-        if (signal.aborted || mySeq !== state.refreshSeq) break;
-
-        const chunk = enabledFeeds.slice(i, i + batchSize);
-
-        await Promise.allSettled(chunk.map(async (f) => {
-          if (signal.aborted || mySeq !== state.refreshSeq) return;
-
-          if (shouldSkipFeed(f.url, force)){
-            fail++;
-            return;
-          }
-
-          try{
-            const xml = await fetchTextSmart(f.url, signal);
-            const items = parseFeed(xml, f);
-
-            for (const it of items){
-              const sc = scoreImpact(it, true);
-              it.top = sc >= 8;
-              allItems.push(it);
-              if (allItems.length >= cap * 2) break;
-            }
-            ok++;
-          }catch{
-            fail++;
-            bumpBackoff(f.url);
-          }
-        }));
-
-        setStatus(`Refrescando… (${Math.min(i + batchSize, enabledFeeds.length)}/${enabledFeeds.length}) · OK:${ok} FAIL:${fail}`);
-        await sleep(60);
-      }
-
-      state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
-      if (signal.aborted || mySeq !== state.refreshSeq) throw new Error("Abort");
-
-      const seen = new Set();
-      const dedup = [];
-      for (const it of allItems){
-        const k = it.link;
-        if (!k) continue;
-        const kk = cleanUrl(k);
-        if (seen.has(kk)) continue;
-        seen.add(kk);
-        it.link = kk;
-        it.domain = domainOf(kk);
-        dedup.push(it);
-      }
-
-      const now = nowMs();
-      const clean = dedup.filter(it => (now - it.dateMs) >= 0);
-
-      clean.sort((a,b) => b.dateMs - a.dateMs);
-      state.items = clean.slice(0, cap);
-
-      if (els.optResolveLinks?.checked){
-        const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 80);
-        await mapLimit(need, 6, async (it) => {
-          it.resolvedUrl = await resolveUrl(it.link, signal);
-        });
-      }
-
-      const needImg = state.items
-        .filter(it => !it.img && (it.resolvedUrl || it.link))
-        .slice(0, 80);
-
-      await mapLimit(needImg, 6, async (it) => {
-        const u = it.resolvedUrl || it.link;
-        const og = await fetchOgImage(u, signal);
-        if (og && og.img) it.img = og.img;
-      });
-
-      for (const it of state.items){
-        it.ready = !!(it.title && (it.resolvedUrl || it.link));
-      }
-
-      saveCaches();
-      setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
-      applyFilters();
-      updatePreview();
-    } catch (e){
-      const aborted = (String(e?.name || e).includes("Abort") || signal.aborted || mySeq !== state.refreshSeq);
-      if (aborted){
-        setStatus("Refresh cancelado.");
-      } else {
-        console.error(e);
-        setStatus("⚠️ Error refrescando (mira consola).");
-      }
-    } finally {
-      if (mySeq === state.refreshSeq){
-        state.refreshInFlight = false;
-      }
-    }
-  }
-
-  function startAuto(){
-    clearInterval(state.autoTimer);
-    if (!els.optAutoRefresh?.checked) return;
-
-    const sec = clamp(Number(els.refreshSec?.value || settings.refreshSec || 60), 20, 600);
-    state.autoTimer = setInterval(() => {
-      if (document.hidden) return;
-      refreshAll({ force:false, user:false }).catch(()=>{});
-    }, sec * 1000);
-  }
-
   /* ───────────────────────────── SW MAINTENANCE + SELF-HEAL ───────────────────────────── */
   async function attachSwMaintenance(){
     if (!("serviceWorker" in navigator)) return;
@@ -1570,6 +1528,174 @@ Fuente:
     }catch{}
 
     location.reload();
+  }
+
+  async function emergencyRepairIfAllFailed(totalFeeds, okFeeds){
+    if (okFeeds > 0) return;
+    if (totalFeeds < 3) return;
+    if (window.__TNP_EMERGENCY_REPAIR__) return;
+    if (!("serviceWorker" in navigator)) return;
+
+    window.__TNP_EMERGENCY_REPAIR__ = true;
+    setStatus("⚠️ Todo falló. Reparando caché/SW automáticamente…");
+
+    try{ await requestClearTnpCaches(); }catch{}
+    try{
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }catch{}
+
+    setTimeout(() => location.reload(), 350);
+  }
+
+  /* ───────────────────────────── REFRESH LOOP ───────────────────────────── */
+  async function refreshAll({ force=false, user=false } = {}){
+    if (state.refreshInFlight){
+      if (!user) return;
+      try{ state.refreshAbort?.abort("user_refresh"); }catch{}
+    }
+
+    const mySeq = ++state.refreshSeq;
+
+    const feeds = state.feeds.filter(f => f.enabled);
+    if (!feeds.length){
+      setStatus("No hay feeds activados. Abre Feeds y activa alguno.");
+      return;
+    }
+
+    if (force) resetBackoff();
+
+    state.refreshInFlight = true;
+    state.refreshAbort?.abort("new_refresh");
+    state.refreshAbort = new AbortController();
+    const signal = state.refreshAbort.signal;
+
+    state.items = [];
+    state.filtered = [];
+    renderNewsList([]);
+    updateTicker();
+    updateTrendsPop();
+
+    setStatus(force ? "Refrescando (force)…" : "Refrescando…");
+
+    try{
+      const cap = clamp(Number(els.fetchCap?.value || settings.fetchCap || 240), 80, 2000);
+      const batchSize = clamp(Number(els.batchFeeds?.value || settings.batchFeeds || 12), 4, 50);
+
+      const allItems = [];
+      const enabledFeeds = feeds.slice();
+
+      let ok = 0, fail = 0;
+
+      for (let i=0;i<enabledFeeds.length;i += batchSize){
+        if (signal.aborted || mySeq !== state.refreshSeq) break;
+
+        const chunk = enabledFeeds.slice(i, i + batchSize);
+
+        await Promise.allSettled(chunk.map(async (f) => {
+          if (signal.aborted || mySeq !== state.refreshSeq) return;
+
+          if (shouldSkipFeed(f.url, force)){
+            fail++;
+            return;
+          }
+
+          try{
+            const xml = await fetchTextSmart(f.url, signal);
+            const items = parseFeed(xml, f);
+
+            for (const it of items){
+              const sc = scoreImpact(it, true);
+              it.top = sc >= 8;
+              allItems.push(it);
+              if (allItems.length >= cap * 2) break;
+            }
+            ok++;
+          }catch{
+            fail++;
+            bumpBackoff(f.url);
+          }
+        }));
+
+        setStatus(`Refrescando… (${Math.min(i + batchSize, enabledFeeds.length)}/${enabledFeeds.length}) · OK:${ok} FAIL:${fail}`);
+        await sleep(60);
+      }
+
+      state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
+
+      // Si NO funcionó ningún feed, casi seguro es SW/caché o proxy bloqueado: auto-repair 1 vez.
+      await emergencyRepairIfAllFailed(enabledFeeds.length, ok);
+
+      if (signal.aborted || mySeq !== state.refreshSeq) throw new Error("Abort");
+
+      const seen = new Set();
+      const dedup = [];
+      for (const it of allItems){
+        const k = it.link;
+        if (!k) continue;
+        const kk = cleanUrl(k);
+        if (seen.has(kk)) continue;
+        seen.add(kk);
+        it.link = kk;
+        it.domain = domainOf(kk);
+        dedup.push(it);
+      }
+
+      const now = nowMs();
+      const clean = dedup.filter(it => (now - it.dateMs) >= 0);
+
+      clean.sort((a,b) => b.dateMs - a.dateMs);
+      state.items = clean.slice(0, cap);
+
+      if (els.optResolveLinks?.checked){
+        const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 80);
+        await mapLimit(need, 6, async (it) => {
+          it.resolvedUrl = await resolveUrl(it.link, signal);
+        });
+      }
+
+      const needImg = state.items
+        .filter(it => !it.img && (it.resolvedUrl || it.link))
+        .slice(0, 80);
+
+      await mapLimit(needImg, 6, async (it) => {
+        const u = it.resolvedUrl || it.link;
+        const og = await fetchOgImage(u, signal);
+        if (og && og.img) it.img = og.img;
+      });
+
+      for (const it of state.items){
+        it.ready = !!(it.title && (it.resolvedUrl || it.link));
+      }
+
+      saveCaches();
+      setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
+      applyFilters();
+      updatePreview();
+    } catch (e){
+      const aborted = (String(e?.name || e).includes("Abort") || signal.aborted || mySeq !== state.refreshSeq);
+      if (aborted){
+        setStatus("Refresh cancelado.");
+      } else {
+        console.error(e);
+        setStatus("⚠️ Error refrescando (mira consola).");
+      }
+    } finally {
+      if (mySeq === state.refreshSeq){
+        state.refreshInFlight = false;
+      }
+    }
+  }
+
+  function startAuto(){
+    clearInterval(state.autoTimer);
+    if (!els.optAutoRefresh?.checked) return;
+
+    const sec = clamp(Number(els.refreshSec?.value || settings.refreshSec || 60), 20, 600);
+    state.autoTimer = setInterval(() => {
+      if (document.hidden) return;
+      refreshAll({ force:false, user:false }).catch(()=>{});
+    }, sec * 1000);
   }
 
   /* ───────────────────────────── UI BIND ───────────────────────────── */
