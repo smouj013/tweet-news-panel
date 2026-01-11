@@ -9,6 +9,7 @@
    ✅ OG best-effort (HTML vía proxies) + caché local
    ✅ Backoff por feed + batch configurable
    ✅ Vista previa estilo X + conteo tipo X (URLs=23)
+   ✅ TICKER SPEED: configurable (pps) + duración automática por ancho del texto
 */
 
 (() => {
@@ -376,6 +377,10 @@ Fuente:
     tnpTickerInner: $("tnpTickerInner"),
     tnpTrendsPop: $("tnpTrendsPop"),
 
+    // (Opcional) control velocidad ticker (si existe en tu HTML)
+    tickerSpeed: $("tickerSpeed"),
+    tickerSpeedVal: $("tickerSpeedVal"),
+
     // X Mock
     xMockText: $("xMockText"),
     xMockCard: $("xMockCard"),
@@ -422,6 +427,10 @@ Fuente:
     s.optHideUsed = (s.optHideUsed !== false);
     s.optAutoRefresh = (s.optAutoRefresh !== false);
 
+    // Ticker: velocidad en pixels por segundo (pps). Menos = más lento.
+    // ⬇️ Default más lento para lectura humana.
+    s.tickerPps = (typeof s.tickerPps === "number") ? s.tickerPps : 30;
+
     s.optIncludeLive = (s.optIncludeLive !== false);
     s.optIncludeSource = (s.optIncludeSource !== false);
 
@@ -432,6 +441,13 @@ Fuente:
     localStorage.setItem(LS_SETTINGS, JSON.stringify(asObject(s, {})));
   }
   const settings = loadSettings();
+
+  // Override rápido por URL: ?tickerPps=25 (más lento) / ?tickerPps=80 (más rápido)
+  try{
+    const qs = new URLSearchParams(location.search);
+    const v = Number(qs.get("tickerPps"));
+    if (Number.isFinite(v)) settings.tickerPps = clamp(v, 10, 220);
+  }catch{}
 
   function loadTemplate(){
     const t = localStorage.getItem(LS_TEMPLATE);
@@ -464,6 +480,7 @@ Fuente:
 
     // ui
     lastTickerSig: "",
+    lastTickerPps: null,
     lastFetchReport: { ok:0, fail:0, total:0 },
 
     // SW
@@ -736,10 +753,8 @@ Fuente:
       const u = candidates[i];
       try{
         const txt = await fetchText(u, signal, accept);
-        // si es feed proxied/reader, limpiamos y validamos rápido
         const xml = extractXmlFromText(txt);
         if (!xml || xml.length < 40) throw new Error("empty");
-        // guardamos hint para la próxima vez (solo si fue proxy, no direct)
         state.proxyHint.set(targetUrl, i);
         return xml;
       }catch(e){
@@ -1322,25 +1337,88 @@ Fuente:
     applyFilters();
   }
 
+  /* ───────────────────────────── TICKER SPEED HELPERS ───────────────────────────── */
+  function getTickerPps(){
+    const v = Number(els.tickerSpeed?.value || settings.tickerPps || 30);
+    return clamp(v, 10, 220);
+  }
+
+  function computeTickerDurationSec(){
+    const inner = els.tnpTickerInner;
+    const wrap = inner?.parentElement;
+    if (!inner || !wrap) return 40;
+
+    const pps = getTickerPps();
+    const distPx = inner.scrollWidth + wrap.clientWidth; // recorrido total
+    const sec = distPx / Math.max(pps, 1);
+    return clamp(sec, 18, 240);
+  }
+
+  function restartTickerAnim(){
+    if (!els.tnpTickerInner) return;
+    els.tnpTickerInner.style.animation = "none";
+    // eslint-disable-next-line no-unused-expressions
+    els.tnpTickerInner.offsetHeight;
+    els.tnpTickerInner.style.animation = "";
+  }
+
+  function applyTickerSpeed(){
+    if (!els.tnpTickerInner) return;
+
+    const pps = getTickerPps();
+    const sec = computeTickerDurationSec();
+
+    els.tnpTickerInner.style.animationDuration = `${sec}s`;
+
+    if (els.tickerSpeedVal){
+      els.tickerSpeedVal.textContent = `${pps} pps`;
+    }
+    state.lastTickerPps = pps;
+  }
+
   /* ───────────────────────────── TICKER + “TRENDS” ───────────────────────────── */
   function updateTicker(){
     if (!els.tnpTickerInner) return;
+
+    const pps = getTickerPps();
+
     const top10 = state.filtered.slice(0, 10);
     if (!top10.length){
       els.tnpTickerInner.textContent = "Sin noticias aún…";
+      // aun así aplicamos duración (por si el user cambió speed)
+      requestAnimationFrame(() => {
+        applyTickerSpeed();
+        if (state.lastTickerPps !== pps) restartTickerAnim();
+      });
       return;
     }
+
     const sig = top10.map(x => x.id).join("|");
-    if (sig === state.lastTickerSig) return;
+
+    // Si el contenido no cambió pero el usuario tocó speed: aplica + reinicia
+    if (sig === state.lastTickerSig){
+      if (state.lastTickerPps !== pps){
+        requestAnimationFrame(() => {
+          applyTickerSpeed();
+          restartTickerAnim();
+        });
+      } else {
+        // mantiene duración correcta aunque cambie ancho por fuentes/layout
+        requestAnimationFrame(() => applyTickerSpeed());
+      }
+      return;
+    }
+
     state.lastTickerSig = sig;
 
     const parts = top10.map(x => `• ${x.title}`);
     els.tnpTickerInner.textContent = parts.join("   ");
 
-    els.tnpTickerInner.style.animation = "none";
-    // eslint-disable-next-line no-unused-expressions
-    els.tnpTickerInner.offsetHeight;
-    els.tnpTickerInner.style.animation = "";
+    // Espera a que el DOM mida el ancho, aplica duración y reinicia
+    requestAnimationFrame(() => {
+      applyTickerSpeed();
+      restartTickerAnim();
+    });
   }
 
   function buildTrendCandidates(){
@@ -1725,6 +1803,12 @@ Fuente:
 
     if (els.catFilter) els.catFilter.value = settings.catFilter || "all";
 
+    // ticker UI opcional
+    if (els.tickerSpeed){
+      els.tickerSpeed.value = String(clamp(Number(settings.tickerPps || 30), 10, 220));
+      if (els.tickerSpeedVal) els.tickerSpeedVal.textContent = `${els.tickerSpeed.value} pps`;
+    }
+
     const saveSettingFrom = () => {
       settings.liveUrl = normSpace(els.liveUrl?.value || settings.liveUrl);
       settings.delayMin = Number(els.delayMin?.value || settings.delayMin);
@@ -1747,12 +1831,23 @@ Fuente:
 
       settings.catFilter = els.catFilter?.value || "all";
 
+      // ticker speed (si hay slider)
+      if (els.tickerSpeed){
+        settings.tickerPps = clamp(Number(els.tickerSpeed.value || settings.tickerPps || 30), 10, 220);
+      }
+
       saveSettings(settings);
       if (els.template) saveTemplate(els.template.value || DEFAULT_TEMPLATE);
 
       updatePreview();
       applyFilters();
       startAuto();
+
+      // aplica speed y reinicia ticker para que se note al instante
+      requestAnimationFrame(() => {
+        applyTickerSpeed();
+        restartTickerAnim();
+      });
     };
 
     els.btnRefresh?.addEventListener("click", (e) => {
@@ -1881,7 +1976,8 @@ Fuente:
       els.fetchCap, els.batchFeeds, els.refreshSec,
       els.optOnlyReady, els.optOnlySpanish, els.optResolveLinks, els.optShowOriginal,
       els.optHideUsed, els.optAutoRefresh, els.catFilter,
-      els.headline, els.sourceUrl, els.hashtags, els.optIncludeLive, els.optIncludeSource
+      els.headline, els.sourceUrl, els.hashtags, els.optIncludeLive, els.optIncludeSource,
+      els.tickerSpeed
     ].forEach(bind);
 
     els.searchBox?.addEventListener("input", () => applyFilters());
@@ -1895,6 +1991,12 @@ Fuente:
     });
 
     setStatus(`TNP listo (${APP_VERSION})`);
+
+    // aplica speed inicial (aunque no haya noticias aún)
+    requestAnimationFrame(() => {
+      applyTickerSpeed();
+      restartTickerAnim();
+    });
   }
 
   /* ───────────────────────────── INIT ───────────────────────────── */
