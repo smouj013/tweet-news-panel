@@ -15,9 +15,11 @@
   <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon-180.png" sizes="180x180" />
 
   <!-- Proxies (anti-CORS) usados por app.js -->
+  <link rel="preconnect" href="https://corsproxy.io" crossorigin />
   <link rel="preconnect" href="https://api.allorigins.win" crossorigin />
   <link rel="preconnect" href="https://api.codetabs.com" crossorigin />
   <link rel="preconnect" href="https://thingproxy.freeboard.io" crossorigin />
+  <link rel="preconnect" href="https://r.jina.ai" crossorigin />
 
   <link rel="preload" href="./styles.css" as="style" />
   <link rel="stylesheet" href="./styles.css" />
@@ -213,6 +215,13 @@
               </select>
             </label>
 
+            <!-- ✅ NUEVO: Control de velocidad del ticker (pps) -->
+            <label class="field field--inline" title="Velocidad del ticker en píxeles por segundo (menos = más lento)">
+              <span class="field__label">Ticker</span>
+              <input id="tickerSpeed" class="input input--sm" type="number" min="15" max="200" value="28" />
+              <span id="tickerSpeedVal" class="mini muted" style="margin-left:8px;">28 pps</span>
+            </label>
+
             <label class="field field--inline">
               <span class="field__label">Auto</span>
               <input id="optAutoRefresh" type="checkbox" checked />
@@ -280,7 +289,7 @@
           </div>
 
           <div class="mini muted">
-            Tip: Shift+click en “Refrescar” = force + reset backoff.
+            Tip: Shift+click en “Refrescar” = force + reset backoff. · Ticker: menos pps = más lento.
           </div>
         </div>
       </section>
@@ -379,7 +388,6 @@
         try { if (statusEl) statusEl.textContent = msg; } catch {}
       }
 
-      // 1) Captura errores JS y los muestra en status (cuando el bug “mata” listeners)
       window.addEventListener("error", function (e) {
         try {
           var m = (e && (e.message || (e.error && e.error.message))) ? (e.message || e.error.message) : "Error JS";
@@ -387,7 +395,6 @@
         } catch {}
       });
 
-      // 2) Auto-update SW robusto (sin depender de app.js)
       var swReg = null;
       var swReloading = false;
 
@@ -395,10 +402,8 @@
         if (!("serviceWorker" in navigator)) return;
 
         try {
-          // updateViaCache:none ayuda a evitar que el propio sw.js quede cacheado por HTTP cache
           swReg = await navigator.serviceWorker.register(SW_URL, { updateViaCache: "none" });
         } catch (e) {
-          // si falla, no matamos la app
           return;
         }
 
@@ -412,14 +417,12 @@
           } catch {}
         }
 
-        // cuando detecta update
         swReg.addEventListener("updatefound", function () {
           try {
             var nw = swReg.installing;
             if (!nw) return;
 
             nw.addEventListener("statechange", function () {
-              // cuando se instala uno nuevo y ya hay controller => es update real
               if (nw.state === "installed" && navigator.serviceWorker.controller) {
                 trySkipWaiting(swReg);
               }
@@ -433,7 +436,6 @@
           location.reload();
         });
 
-        // “mantenimiento”: fuerza update check periódico
         setInterval(function () {
           try { if (swReg) swReg.update(); } catch {}
         }, 60 * 1000);
@@ -441,12 +443,9 @@
 
       registerAndUpdateSW();
 
-      // 3) Diagnóstico: si en 3s no cambió el status típico de app.js -> mostrar banner
       function shouldShowDiag() {
         var s = (statusEl && statusEl.textContent) ? statusEl.textContent.trim() : "";
-        // app.js suele poner "TNP listo (...)" cuando ha bindeado listeners
         if (s.indexOf("TNP listo") !== -1) return false;
-        // si ya hay texto distinto a "Listo" y no es error, probablemente sí arrancó
         if (s && s !== "Listo" && s.indexOf("❌") === -1) return false;
         return true;
       }
@@ -459,9 +458,7 @@
         }, 3000);
       });
 
-      // 4) Botones del banner de reparación (funcionan aunque app.js no)
       async function purgeAllTnpCachesAndSw() {
-        // OJO: esto borra caches (PWA) y puede resetear offline, pero arregla “no se actualiza”
         try {
           if ("serviceWorker" in navigator) {
             var regs = await navigator.serviceWorker.getRegistrations();
@@ -473,15 +470,11 @@
           if ("caches" in window) {
             var keys = await caches.keys();
             await Promise.all(keys.map(function (k) {
-              // borra caches del proyecto (prefijo tnp-)
               if (String(k).indexOf("tnp-") === 0) return caches.delete(k);
               return Promise.resolve(false);
             }));
           }
         } catch {}
-
-        // NO borro localStorage aquí para no cargarte feeds/settings.
-        // Si quieres reset total, usa tu botón “Reset” cuando la app arranque.
       }
 
       if (repairBtn) {
@@ -498,7 +491,6 @@
           try {
             if (swReg) {
               await swReg.update();
-              // si ya hay uno esperando, le pedimos activar
               try { if (swReg.waiting) swReg.waiting.postMessage({ type: "SKIP_WAITING" }); } catch {}
             } else {
               await registerAndUpdateSW();
