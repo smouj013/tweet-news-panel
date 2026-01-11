@@ -4,6 +4,7 @@
   "description": "Panel PRO para extraer noticias (RSS/Atom), resolver link original, imágenes y generar plantilla lista para X.",
   "start_url": "./?source=pwa",
   "scope": "./",
+  "id": "./?app=TweetNews",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
   "background_color": "#070A12",
@@ -12,7 +13,14 @@
   "dir": "ltr",
   "orientation": "any",
   "categories": ["news", "productivity", "utilities"],
+  "prefer_related_applications": false,
   "icons": [
+    {
+      "src": "./assets/icons/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "./assets/icons/icon-192.png",
       "sizes": "192x192",
@@ -36,8 +44,24 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    },
+    {
+      "src": "./assets/icons/apple-touch-icon-152.png",
+      "sizes": "152x152",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./assets/icons/apple-touch-icon-167.png",
+      "sizes": "167x167",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./assets/icons/apple-touch-icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
     }
-  ],
-  "id": "./?app=TweetNews",
-  "prefer_related_applications": false
+  ]
 }

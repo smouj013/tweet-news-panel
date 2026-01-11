@@ -1,14 +1,13 @@
-/* app.js — TNP v4.1.1 — DIRECT RSS + HARDENED (NO Google por defecto)
-   ✅ Compat 100% con tu index.html (IDs + modal + ticker + X mock + botones)
-   ✅ FIX CRÍTICO: localStorage con "null" / JSON corrupto => nunca rompe (adiós liveUrl null)
-   ✅ FIX: “no refresca / no actualiza” => self-heal al detectar build nuevo (limpia caches tnp-* + reload guard)
-   ✅ FIX: refresh manual ABORTA el refresh anterior (no se queda colgado)
+/* app.js — TNP v4.1.1 — DIRECT RSS + HARDENED + ES TRANSLATE FIX (compat index.html)
+   ✅ 100% compatible con tu index.html (IDs + modal + ticker + X mock + botones)
+   ✅ FIX: Traducción ES (títulos) con caché + concurrencia + proxy-pool (best-effort)
+   ✅ FIX: Al elegir noticia SIEMPRE reemplaza Titular/URL/hashtags (y refresca preview antes de abrir X)
+   ✅ FIX CLAVE: si el usuario “rompe” el Template (sin {{HEADLINE}}) -> auto-repara (evita tweet anterior pegado)
+   ✅ FIX: “Abrir X” ya NO usa texto antiguo (force updatePreview + buildTweet con plantilla validada)
    ✅ Anti-cache: fetch no-store + cache-bust en PROXIES (sin headers que provoquen preflight)
    ✅ CORS PRO: proxy-pool (corsproxy -> allorigins -> codetabs -> thingproxy -> jina) + retry suave
-   ✅ RSS/Atom: extracción de imágenes mejorada (media/enclosure + <img>)
-   ✅ OG best-effort (HTML vía proxies) + caché local
+   ✅ RSS/Atom: extracción de imágenes (media/enclosure + <img>) + OG best-effort
    ✅ Backoff por feed + batch configurable
-   ✅ Vista previa estilo X + conteo tipo X (URLs=23)
    ✅ TICKER SPEED: configurable (pps) + duración automática por ancho del texto
 */
 
@@ -16,27 +15,11 @@
   "use strict";
 
   const APP_VERSION = "tnp-v4.1.1";
+  // Cambia BUILD_ID cuando publiques (fuerza self-heal cache/SW)
+  const BUILD_ID = "2026-01-11b";
 
-  // OJO: no es “versión”, es build-id para auto-heal de caches aunque no cambies APP_VERSION
-  // Cambia este string cuando publiques cambios si quieres forzar self-heal.
-  const BUILD_ID = "2026-01-11a";
-
-  /* ───────────────────────────── PROXY CONFIG ─────────────────────────────
-    En navegador (GitHub Pages) MUCHOS RSS no tienen CORS. Necesitas proxy.
-    - Por defecto usamos un pool público (mejor esfuerzo).
-    - RECOMENDADO PRO: poner tu propio proxy (Cloudflare Worker) aquí.
-
-    CUSTOM_PROXY_TEMPLATE admite:
-      - {{URL}}          => URL con cache-bust ya aplicado (sin encode)
-      - {{ENCODED_URL}}  => encodeURIComponent(URL)
-
-    Ejemplos:
-      const CUSTOM_PROXY_TEMPLATE = "https://tuworker.tudominio.workers.dev/?url={{ENCODED_URL}}";
-      const CUSTOM_PROXY_TEMPLATE = "https://tuworker.tudominio.workers.dev/proxy?url={{ENCODED_URL}}";
-  */
-  const CUSTOM_PROXY_TEMPLATE = ""; // <- pon aquí tu proxy propio si quieres 100% estabilidad
-
-  // Modo recomendado en GitHub Pages: proxy primero (evita “CORS fail” masivo)
+  /* ───────────────────────────── PROXY CONFIG ───────────────────────────── */
+  const CUSTOM_PROXY_TEMPLATE = ""; // p.ej: "https://tuworker.workers.dev/?url={{ENCODED_URL}}"
   const PROXY_FIRST = true;
 
   /* ───────────────────────────── STORAGE ───────────────────────────── */
@@ -47,6 +30,7 @@
 
   const LS_RESOLVE_CACHE = "tnp_resolve_cache_v4";
   const LS_OG_CACHE      = "tnp_og_cache_v4";
+  const LS_TR_CACHE      = "tnp_tr_cache_v4";
 
   const LS_BUILD_ID = "tnp_build_id_v4";
 
@@ -63,6 +47,19 @@ Fuente:
 
   const DEFAULT_LIVE_LINE = "🔴#ENVIVO >>> {{LIVE_URL}}";
 
+  /* ───────────────────────────── TRANSLATE (ES) ─────────────────────────────
+     - Best-effort (puede fallar según proxies / rate)
+     - Se usa solo para títulos NO españoles cuando “ES prioridad” está activado.
+  */
+  const TR_ENABLED_DEFAULT = true;
+  const TR_CONCURRENCY = 2;
+  const TR_VISIBLE_LIMIT = 80;
+  const TR_CACHE_LIMIT = 2000;
+
+  // Endpoint Google Translate (gtx) (se llama vía proxies)
+  const TR_ENDPOINT = (text) =>
+    `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=${encodeURIComponent(text)}`;
+
   /* ───────────────────────────── HELPERS ───────────────────────────── */
   const $ = (id) => document.getElementById(id);
   const nowMs = () => Date.now();
@@ -76,7 +73,7 @@ Fuente:
   }
 
   function safeParseJSON(raw) {
-    if (raw == null) return undefined; // null/undefined
+    if (raw == null) return undefined;
     try { return JSON.parse(raw); } catch { return undefined; }
   }
 
@@ -181,7 +178,7 @@ Fuente:
     let m;
     while ((m = urlRe.exec(s)) !== null){
       out += s.slice(last, m.index);
-      out += "x".repeat(23); // reglas tipo X
+      out += "x".repeat(23);
       last = m.index + m[0].length;
     }
     out += s.slice(last);
@@ -204,9 +201,8 @@ Fuente:
     if (bd) bd.hidden = true;
   }
 
-  /* ───────────────────────────── DEFAULT FEEDS (DIRECT + packs OFF) ───────────────────────────── */
+  /* ───────────────────────────── DEFAULT FEEDS ───────────────────────────── */
   const DIRECT_FEEDS = [
-    // ── España (ON)
     { name:"RTVE — Portada (RSS)", url:"https://www.rtve.es/api/noticias.rss", enabled:true, cat:"spain" },
     { name:"El País — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", enabled:true, cat:"spain" },
     { name:"El Mundo — Portada (RSS)", url:"https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml", enabled:true, cat:"spain" },
@@ -216,26 +212,21 @@ Fuente:
     { name:"El Confidencial — España (RSS)", url:"https://rss.elconfidencial.com/espana/", enabled:true, cat:"spain" },
     { name:"Europa Press — Portada (RSS)", url:"https://www.europapress.es/rss/rss.aspx?ch=69", enabled:true, cat:"spain" },
 
-    // ── Mundo (ON)
     { name:"BBC — World (RSS)", url:"https://feeds.bbci.co.uk/news/world/rss.xml", enabled:true, cat:"world" },
     { name:"The Guardian — World (RSS)", url:"https://www.theguardian.com/world/rss", enabled:true, cat:"world" },
     { name:"Al Jazeera — All (RSS)", url:"https://www.aljazeera.com/xml/rss/all.xml", enabled:true, cat:"world" },
     { name:"DW Español — Portada (RSS)", url:"https://rss.dw.com/rdf/rss-es-all", enabled:true, cat:"world" },
     { name:"Euronews — Español (MRSS)", url:"https://www.euronews.com/rss?format=mrss", enabled:true, cat:"world" },
 
-    // ── Economía (ON)
     { name:"Expansión — Portada (RSS)", url:"https://e00-expansion.uecdn.es/rss/portada.xml", enabled:true, cat:"economy" },
     { name:"Cinco Días — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/cincodias.com/portada", enabled:true, cat:"economy" },
     { name:"El Blog Salmón (RSS)", url:"https://feeds.weblogssl.com/elblogsalmon", enabled:true, cat:"economy" },
 
-    // ── Tech (ON)
     { name:"Xataka (RSS)", url:"https://feeds.weblogssl.com/xataka2", enabled:true, cat:"tech" },
     { name:"Genbeta (RSS)", url:"https://feeds.weblogssl.com/genbeta", enabled:true, cat:"tech" },
 
-    // ── Sucesos (ON)
     { name:"El Confidencial — Sucesos (RSS)", url:"https://rss.elconfidencial.com/espana/sucesos/", enabled:true, cat:"crime" },
 
-    // ── OFF (más / opcional)
     { name:"ElDiario.es — Portada (RSS) [OFF]", url:"https://www.eldiario.es/rss/", enabled:false, cat:"spain" },
     { name:"Público — Portada (RSS) [OFF]", url:"https://www.publico.es/rss", enabled:false, cat:"spain" },
     { name:"OKDIARIO — Portada (RSS) [OFF]", url:"https://okdiario.com/feed", enabled:false, cat:"spain" },
@@ -249,93 +240,11 @@ Fuente:
     { name:"The Guardian — Technology (RSS) [OFF]", url:"https://www.theguardian.com/uk/technology/rss", enabled:false, cat:"tech" },
     { name:"The Guardian — Sport (RSS) [OFF]", url:"https://www.theguardian.com/uk/sport/rss", enabled:false, cat:"sports" },
 
-    // Fallback (Google News, OFF)
     { name:"Google News — España (Top) [OFF]", url:"https://news.google.com/rss?hl=es&gl=ES&ceid=ES:es", enabled:false, cat:"spain" },
     { name:"Google News — World (Top) [OFF]", url:"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", enabled:false, cat:"world" },
   ];
 
-  const GOOGLE_NEWS_SEARCH_PACK = (() => {
-    const mk = (label, q, cat, hl="es", gl="ES", ceid="ES:es") => ({
-      name: `Google News — ${label} [OFF]`,
-      url: `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${hl}&gl=${gl}&ceid=${ceid}`,
-      enabled: false,
-      cat
-    });
-
-    const list = [
-      mk("OTAN + Ucrania", "OTAN Ucrania", "world"),
-      mk("Rusia + Ucrania", "Rusia Ucrania", "world"),
-      mk("Israel + Gaza", "Israel Gaza", "world"),
-      mk("Irán", "Irán noticias", "world"),
-      mk("China", "China noticias", "world"),
-      mk("Estados Unidos", "Estados Unidos política", "world"),
-      mk("Unión Europea", "Unión Europea", "world"),
-      mk("España — Política", "España política", "spain"),
-      mk("España — Sucesos", "España sucesos", "crime"),
-      mk("España — Economía", "España economía", "economy"),
-      mk("IBEX 35", "IBEX 35", "economy"),
-      mk("Inflación", "inflación", "economy"),
-      mk("BCE", "BCE tipos de interés", "economy"),
-      mk("FED", "Reserva Federal tipos de interés", "economy"),
-      mk("Bitcoin", "Bitcoin", "economy"),
-      mk("IA", "inteligencia artificial", "tech"),
-      mk("Ciberseguridad", "ciberseguridad", "tech"),
-      mk("Apple", "Apple noticias", "tech"),
-      mk("Google", "Google noticias", "tech"),
-      mk("Microsoft", "Microsoft noticias", "tech"),
-      mk("Salud", "salud alerta", "health"),
-      mk("Deportes", "deportes última hora", "sports"),
-      mk("Cine/TV", "cine series estreno", "ent"),
-    ];
-
-    const regions = [
-      { hl:"es", gl:"ES", ceid:"ES:es", tag:"ES" },
-      { hl:"es", gl:"MX", ceid:"MX:es", tag:"MX" },
-      { hl:"es", gl:"AR", ceid:"AR:es", tag:"AR" },
-      { hl:"es", gl:"CO", ceid:"CO:es", tag:"CO" },
-      { hl:"en", gl:"US", ceid:"US:en", tag:"US" },
-      { hl:"en", gl:"GB", ceid:"GB:en", tag:"UK" },
-    ];
-
-    const out = [];
-    for (const r of regions){
-      for (const base of list){
-        out.push({
-          name: base.name.replace("[OFF]", `(${r.tag}) [OFF]`),
-          url: base.url.replace(/hl=[^&]+&gl=[^&]+&ceid=[^&]+/, `hl=${r.hl}&gl=${r.gl}&ceid=${r.ceid}`),
-          enabled: false,
-          cat: base.cat
-        });
-      }
-    }
-    return out;
-  })();
-
-  const REDDIT_RSS_PACK = (() => {
-    const mk = (label, sub, cat) => ({
-      name: `Reddit — ${label} [OFF]`,
-      url: `https://www.reddit.com/r/${sub}/.rss`,
-      enabled: false,
-      cat
-    });
-    return [
-      mk("worldnews", "worldnews", "world"),
-      mk("europe", "europe", "world"),
-      mk("spain", "spain", "spain"),
-      mk("economics", "economics", "economy"),
-      mk("technology", "technology", "tech"),
-      mk("cybersecurity", "cybersecurity", "tech"),
-      mk("health", "health", "health"),
-      mk("soccer", "soccer", "sports"),
-      mk("television", "television", "ent"),
-    ];
-  })();
-
-  const DEFAULT_FEEDS = [
-    ...DIRECT_FEEDS,
-    ...GOOGLE_NEWS_SEARCH_PACK,
-    ...REDDIT_RSS_PACK,
-  ];
+  const DEFAULT_FEEDS = [...DIRECT_FEEDS];
 
   /* ───────────────────────────── UI REFS ───────────────────────────── */
   const els = {
@@ -382,11 +291,9 @@ Fuente:
     tnpTickerInner: $("tnpTickerInner"),
     tnpTrendsPop: $("tnpTrendsPop"),
 
-    // (Opcional) control velocidad ticker (si existe en tu HTML)
     tickerSpeed: $("tickerSpeed"),
     tickerSpeedVal: $("tickerSpeedVal"),
 
-    // X Mock
     xMockText: $("xMockText"),
     xMockCard: $("xMockCard"),
     xMockCardImg: $("xMockCardImg"),
@@ -407,40 +314,42 @@ Fuente:
   };
 
   function uiOk(){
-    return !!(els.newsList && els.btnRefresh && els.btnFeeds && els.status);
+    return !!(els.newsList && els.btnRefresh && els.btnFeeds && els.status && els.btnX && els.template);
   }
 
   /* ───────────────────────────── SETTINGS ───────────────────────────── */
   function loadSettings(){
     const raw = safeParseJSON(localStorage.getItem(LS_SETTINGS));
-    const s = asObject(raw, {}); // <-- FIX: si raw es null, array, string... => {}
+    const s = asObject(raw, {});
 
     s.liveUrl = s.liveUrl || "https://twitch.tv/globaleyetv";
 
-    s.delayMin  = numOr(s.delayMin, 0);
-    s.timeFilter= numOr(s.timeFilter, 60);
-    s.showLimit = numOr(s.showLimit, 120);
-    s.fetchCap  = numOr(s.fetchCap, 240);
-    s.batchFeeds= numOr(s.batchFeeds, 12);
-    s.refreshSec= numOr(s.refreshSec, 60);
+    s.delayMin   = numOr(s.delayMin, 0);
+    s.timeFilter = numOr(s.timeFilter, 60);
+    s.showLimit  = numOr(s.showLimit, 120);
+    s.fetchCap   = numOr(s.fetchCap, 240);
+    s.batchFeeds = numOr(s.batchFeeds, 12);
+    s.refreshSec = numOr(s.refreshSec, 60);
 
     s.sortBy = s.sortBy || "impact";
 
     s.optOnlyReady    = (s.optOnlyReady === true);
-    s.optOnlySpanish  = (s.optOnlySpanish !== false); // prioridad ES ON
+    s.optOnlySpanish  = (s.optOnlySpanish !== false); // ON por defecto
     s.optResolveLinks = (s.optResolveLinks !== false);
     s.optShowOriginal = (s.optShowOriginal !== false);
     s.optHideUsed     = (s.optHideUsed !== false);
     s.optAutoRefresh  = (s.optAutoRefresh !== false);
 
-    // Ticker: velocidad en pixels por segundo (pps). Menos = más lento.
-    // ⬇️ Default más lento para lectura humana.
     s.tickerPps = numOr(s.tickerPps, 30);
 
     s.optIncludeLive   = (s.optIncludeLive !== false);
     s.optIncludeSource = (s.optIncludeSource !== false);
 
     s.catFilter = s.catFilter || "all";
+
+    // Traducción ES (best-effort)
+    s.trEnabled = (s.trEnabled !== false) && TR_ENABLED_DEFAULT;
+
     return s;
   }
   function saveSettings(s){
@@ -448,7 +357,6 @@ Fuente:
   }
   const settings = loadSettings();
 
-  // Override rápido por URL: ?tickerPps=25 (más lento) / ?tickerPps=80 (más rápido)
   try{
     const qs = new URLSearchParams(location.search);
     const v = Number(qs.get("tickerPps"));
@@ -469,6 +377,7 @@ Fuente:
     items: [],
     filtered: [],
     selectedId: null,
+
     used: new Set(),
 
     refreshInFlight: false,
@@ -480,20 +389,25 @@ Fuente:
 
     resolveCache: new Map(),
     ogCache: new Map(),
+    trCache: new Map(),
 
-    // backoff: feedUrl -> { delayMs, untilMs }
     backoff: new Map(),
 
-    // ui
     lastTickerSig: "",
     lastTickerPps: null,
     lastFetchReport: { ok:0, fail:0, total:0 },
 
-    // SW
     swReg: null,
 
-    // hint: feedUrl -> preferred proxy index
     proxyHint: new Map(),
+
+    // Traducción
+    trQueueRunning: false,
+    trInFlight: new Set(),
+    trDebounceTimer: null,
+
+    // Composer
+    lastBuiltTweet: "",
   };
 
   function loadUsed(){
@@ -518,6 +432,13 @@ Fuente:
       if (v && typeof v === "object") state.ogCache.set(k, v);
       if (v === null) state.ogCache.set(k, null);
     }
+
+    const trRaw = safeParseJSON(localStorage.getItem(LS_TR_CACHE));
+    const tr = asObject(trRaw, {});
+    for (const [k,v] of Object.entries(tr)){
+      if (typeof v === "string") state.trCache.set(k, v);
+      if (v === null) state.trCache.set(k, null);
+    }
   }
 
   function saveCaches(){
@@ -536,6 +457,14 @@ Fuente:
       if (++i > 1200) break;
     }
     localStorage.setItem(LS_OG_CACHE, JSON.stringify(ogOut));
+
+    const trOut = {};
+    i = 0;
+    for (const [k,v] of state.trCache.entries()){
+      trOut[k] = v;
+      if (++i > TR_CACHE_LIMIT) break;
+    }
+    localStorage.setItem(LS_TR_CACHE, JSON.stringify(trOut));
   }
 
   /* ───────────────────────────── FEEDS CRUD ───────────────────────────── */
@@ -679,17 +608,15 @@ Fuente:
     const enc = encodeURIComponent(raw);
     const out = [];
 
-    // 1) Tu proxy propio (si lo configuras)
     if (CUSTOM_PROXY_TEMPLATE){
       out.push(applyProxyTemplate(CUSTOM_PROXY_TEMPLATE, raw, enc));
     }
 
-    // 2) Pool público (orden importa)
     out.push(`https://corsproxy.io/?url=${enc}`);
     out.push(`https://api.allorigins.win/raw?url=${enc}`);
     out.push(`https://api.codetabs.com/v1/proxy?quest=${enc}`);
     out.push(`https://thingproxy.freeboard.io/fetch/${raw}`);
-    out.push(`https://r.jina.ai/${raw}`); // “reader” (a veces envuelve, lo saneamos antes de parsear)
+    out.push(`https://r.jina.ai/${raw}`);
 
     return out;
   }
@@ -697,7 +624,6 @@ Fuente:
   async function fetchText(url, signal, accept){
     const { signal: s2, cancel } = withTimeout(20000, signal);
     try{
-      // IMPORTANTÍSIMO: NO meter headers tipo Cache-Control/Pragma/Expires (provocan preflight CORS).
       const headers = {};
       if (accept) headers["Accept"] = accept;
 
@@ -717,7 +643,7 @@ Fuente:
 
   function extractXmlFromText(text){
     let s = String(text || "");
-    s = s.replace(/^\uFEFF/, "").trim(); // BOM
+    s = s.replace(/^\uFEFF/, "").trim();
 
     const needles = ["<?xml", "<rss", "<feed", "<rdf:RDF", "<RDF", "<channel"];
     let best = -1;
@@ -727,7 +653,6 @@ Fuente:
       if (i >= 0 && (best < 0 || i < best)) best = i;
     }
 
-    // Si r.jina mete cabecera “Title:” o similar, cortamos desde el primer “<”
     if (best < 0){
       const lt = s.indexOf("<");
       if (lt >= 0) best = lt;
@@ -740,12 +665,8 @@ Fuente:
   async function fetchTextSmart(targetUrl, signal){
     const accept = "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.7";
     const proxies = makeProxyCandidates(targetUrl);
+    const candidates = PROXY_FIRST ? [...proxies, targetUrl] : [targetUrl, ...proxies];
 
-    const candidates = PROXY_FIRST
-      ? [...proxies, targetUrl]
-      : [targetUrl, ...proxies];
-
-    // hint (si un proxy ya funcionó antes para este feed, lo probamos primero)
     const hint = state.proxyHint.get(targetUrl);
     if (Number.isFinite(hint) && hint >= 0 && hint < candidates.length){
       const hinted = candidates[hint];
@@ -775,10 +696,7 @@ Fuente:
   async function fetchHtmlSmart(targetUrl, signal){
     const accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
     const proxies = makeProxyCandidates(targetUrl);
-
-    const candidates = PROXY_FIRST
-      ? [...proxies, targetUrl]
-      : [targetUrl, ...proxies];
+    const candidates = PROXY_FIRST ? [...proxies, targetUrl] : [targetUrl, ...proxies];
 
     let lastErr = null;
     for (const u of candidates){
@@ -789,8 +707,31 @@ Fuente:
         await sleep(60);
       }
     }
-
     throw lastErr || new Error("html_fetch_failed");
+  }
+
+  async function fetchJsonSmart(targetUrl, signal){
+    // se usa para Translate (JSON). Acept no provoca preflight en simple GET.
+    const accept = "application/json, text/plain, */*;q=0.8";
+    const proxies = makeProxyCandidates(targetUrl);
+    const candidates = PROXY_FIRST ? [...proxies, targetUrl] : [targetUrl, ...proxies];
+
+    let lastErr = null;
+    for (const u of candidates){
+      try{
+        const txt = await fetchText(u, signal, accept);
+        const raw = String(txt || "").trim();
+        // algunos proxies devuelven basura antes del JSON
+        const start = raw.indexOf("[");
+        const start2 = raw.indexOf("{");
+        const s = (start >= 0 && (start2 < 0 || start < start2)) ? raw.slice(start) : (start2 >= 0 ? raw.slice(start2) : raw);
+        return JSON.parse(s);
+      }catch(e){
+        lastErr = e;
+        await sleep(60);
+      }
+    }
+    throw lastErr || new Error("json_fetch_failed");
   }
 
   async function mapLimit(arr, limit, fn){
@@ -850,6 +791,26 @@ Fuente:
     return "";
   }
 
+  function baseItem(feed, url, ts, title){
+    const clean = cleanUrl(url);
+    return {
+      id: makeId(feed.name, clean, ts, title),
+      feedName: feed.name,
+      cat: feed.cat || "all",
+      title: title || "",
+      originalTitle: title || "",
+      translated: false,
+
+      link: clean,
+      dateMs: ts,
+      domain: domainOf(clean),
+      img: "",
+      resolvedUrl: "",
+      ready: false,
+      top: false,
+    };
+  }
+
   function parseRss(doc, feed){
     const items = [];
     const nodes = [...doc.querySelectorAll("item")];
@@ -869,21 +830,9 @@ Fuente:
       const url = cleanUrl(link || guid);
       if (!url) continue;
 
-      const img = pickImageFromNode(it, url);
-
-      items.push({
-        id: makeId(feed.name, url, ts, title),
-        feedName: feed.name,
-        cat: feed.cat || "all",
-        title,
-        link: url,
-        dateMs: ts,
-        domain: domainOf(url),
-        img: img || "",
-        resolvedUrl: "",
-        ready: false,
-        top: false,
-      });
+      const item = baseItem(feed, url, ts, title);
+      item.img = pickImageFromNode(it, url) || "";
+      items.push(item);
     }
     return items;
   }
@@ -907,21 +856,9 @@ Fuente:
       const url = cleanUrl(link);
       if (!url) continue;
 
-      const img = pickImageFromNode(e, url);
-
-      items.push({
-        id: makeId(feed.name, url, ts, title),
-        feedName: feed.name,
-        cat: feed.cat || "all",
-        title,
-        link: url,
-        dateMs: ts,
-        domain: domainOf(url),
-        img: img || "",
-        resolvedUrl: "",
-        ready: false,
-        top: false,
-      });
+      const item = baseItem(feed, url, ts, title);
+      item.img = pickImageFromNode(e, url) || "";
+      items.push(item);
     }
     return items;
   }
@@ -1004,6 +941,133 @@ Fuente:
     return url;
   }
 
+  /* ───────────────────────────── TRANSLATE ES ───────────────────────────── */
+  function trKeyFor(title){
+    return "t:" + title;
+  }
+
+  function parseGtXResponse(json){
+    // gtx típico: [ [ ["texto", "...", ...], ... ], null, "auto", ... ]
+    try{
+      const chunks = json?.[0];
+      if (!Array.isArray(chunks)) return "";
+      let out = "";
+      for (const c of chunks){
+        if (Array.isArray(c) && typeof c[0] === "string") out += c[0];
+      }
+      return normSpace(out);
+    }catch{
+      return "";
+    }
+  }
+
+  async function translateTitleToEs(title, signal){
+    const src = normSpace(title);
+    if (!src) return "";
+    const k = trKeyFor(src);
+    if (state.trCache.has(k)) return state.trCache.get(k) || "";
+
+    try{
+      const json = await fetchJsonSmart(TR_ENDPOINT(src), signal);
+      const es = parseGtXResponse(json);
+      const out = es && es.length >= 2 ? es : "";
+      state.trCache.set(k, out || null);
+      return out;
+    }catch{
+      state.trCache.set(k, null);
+      return "";
+    }
+  }
+
+  function patchRenderedTitle(id, newTitle){
+    if (!els.newsList) return;
+    const row = els.newsList.querySelector(`.newsItem[data-id="${CSS.escape(id)}"]`);
+    if (!row) return;
+    const titleEl = row.querySelector(".newsTitle");
+    if (titleEl) titleEl.textContent = newTitle;
+  }
+
+  function kickTranslateVisible(){
+    // Solo si ES prioridad y traducción activada
+    const preferEs = !!els.optOnlySpanish?.checked;
+    if (!preferEs) return;
+    if (!settings.trEnabled) return;
+
+    if (!state.filtered.length) return;
+
+    // Evitar spam: si ya está corriendo, salimos
+    if (state.trQueueRunning) return;
+
+    // Candidatos: visibles y NO españoles
+    const candidates = [];
+    for (const it of state.filtered){
+      if (candidates.length >= TR_VISIBLE_LIMIT) break;
+      if (!it || !it.title) continue;
+      if (it.translated) continue;
+      if (likelySpanish(it.title, it.feedName, it.cat)) continue;
+
+      // si ya hay cache para ese texto y es string vacío/null, no insistimos
+      const k = trKeyFor(it.title);
+      if (state.trCache.has(k) && !state.trCache.get(k)) continue;
+
+      candidates.push(it);
+    }
+
+    if (!candidates.length) return;
+
+    const mySeq = state.refreshSeq;
+    const signal = state.refreshAbort?.signal;
+
+    state.trQueueRunning = true;
+
+    mapLimit(candidates, TR_CONCURRENCY, async (it) => {
+      if (!it) return;
+      if (signal?.aborted) return;
+      if (mySeq !== state.refreshSeq) return;
+
+      const id = it.id;
+      if (state.trInFlight.has(id)) return;
+      state.trInFlight.add(id);
+
+      const srcTitle = it.title;
+      const es = await translateTitleToEs(srcTitle, signal);
+      if (signal?.aborted) return;
+      if (mySeq !== state.refreshSeq) return;
+
+      if (es && es !== srcTitle){
+        it.originalTitle = it.originalTitle || srcTitle;
+        it.title = es;
+        it.translated = true;
+
+        patchRenderedTitle(it.id, it.title);
+
+        // Si está seleccionado y el usuario NO ha tocado el titular, lo actualizamos
+        if (state.selectedId === it.id && els.headline){
+          const cur = normSpace(els.headline.value);
+          const orig = normSpace(it.originalTitle);
+          if (!cur || cur === orig || cur === srcTitle){
+            els.headline.value = it.title;
+          }
+        }
+
+        // Actualiza ticker con debounce
+        if (state.trDebounceTimer) clearTimeout(state.trDebounceTimer);
+        state.trDebounceTimer = setTimeout(() => {
+          try{
+            updateTicker();
+            updateTrendsPop();
+            updatePreview();
+          }catch{}
+        }, 350);
+      }
+
+      state.trInFlight.delete(id);
+    }).finally(() => {
+      state.trQueueRunning = false;
+      try{ saveCaches(); }catch{}
+    });
+  }
+
   /* ───────────────────────────── SCORING ───────────────────────────── */
   function scoreImpact(it, preferEs){
     const t = (it.title || "").toLowerCase();
@@ -1078,6 +1142,9 @@ Fuente:
     renderNewsList(out);
     updateTicker();
     updateTrendsPop();
+
+    // ⬇️ Traducción best-effort: después de renderizar para poder parchear títulos en DOM
+    kickTranslateVisible();
   }
 
   function renderNewsList(list){
@@ -1101,6 +1168,7 @@ Fuente:
       const row = document.createElement("div");
       row.className = "newsItem" + (state.used.has(it.id) ? " used" : "") + (it.id === state.selectedId ? " sel" : "");
       row.tabIndex = 0;
+      row.dataset.id = it.id;
 
       const thumb = document.createElement("div");
       thumb.className = "thumb";
@@ -1218,7 +1286,27 @@ Fuente:
     return [...base, ...picks].join(" ");
   }
 
+  function ensureTemplateValid(){
+    if (!els.template) return;
+
+    const t = String(els.template.value || "").trim();
+    // Si NO tiene {{HEADLINE}} => no es plantilla usable => se queda pegado el tweet anterior.
+    if (!t.includes("{{HEADLINE}}")){
+      const saved = loadTemplate();
+      const fallback = (saved && saved.includes("{{HEADLINE}}")) ? saved : DEFAULT_TEMPLATE;
+
+      els.template.value = fallback;
+      saveTemplate(fallback);
+
+      if (els.warn){
+        els.warn.textContent = "⚠️ Tu Template no tenía {{HEADLINE}} (parecía un tweet ya relleno). Se ha restaurado la plantilla para evitar que se quede la noticia anterior.";
+      }
+    }
+  }
+
   function buildTweet(){
+    ensureTemplateValid();
+
     const tpl = (els.template?.value || DEFAULT_TEMPLATE);
 
     const headline = normSpace(els.headline?.value);
@@ -1237,6 +1325,7 @@ Fuente:
       .replaceAll("{{SOURCE_URL}}", sourceUrl)
       .replaceAll("{{HASHTAGS}}", tags);
 
+    // si optIncludeSource está desactivado, intentamos quitar sección "Fuente"
     if (els.optIncludeSource && !els.optIncludeSource.checked){
       out = out
         .replace(/\n?Fuente:\s*\n\s*https?:\/\/[^\s]+/i, "")
@@ -1244,7 +1333,9 @@ Fuente:
         .replace(/\n{3,}/g, "\n\n");
     }
 
-    return out.trim();
+    out = out.trim();
+    state.lastBuiltTweet = out;
+    return out;
   }
 
   function renderXMockCard(it){
@@ -1294,13 +1385,18 @@ Fuente:
   }
 
   function updatePreview(){
+    ensureTemplateValid();
+
     const t = buildTweet();
     if (els.preview) els.preview.textContent = t;
 
     const len = estimateXChars(t);
     if (els.charCount) els.charCount.textContent = `${len} / 280`;
+
+    // OJO: si ensureTemplateValid escribió warn, no lo pisamos si hay overflow
     if (els.warn){
-      els.warn.textContent = (len > 280) ? `⚠️ Se pasa de 280 (sobran ${len - 280})` : "";
+      const overflowMsg = (len > 280) ? `⚠️ Se pasa de 280 (sobran ${len - 280})` : "";
+      if (overflowMsg) els.warn.textContent = overflowMsg;
     }
 
     if (els.xMockText) els.xMockText.textContent = t;
@@ -1326,13 +1422,16 @@ Fuente:
 
     state.selectedId = id;
 
-    if (els.headline) els.headline.value = (it.title || "").trim();
+    // ✅ SIEMPRE sustituye (evita quedarse con lo anterior)
+    if (els.headline) els.headline.value = normSpace(it.title || it.originalTitle || "");
     const src = (els.optShowOriginal?.checked) ? (it.resolvedUrl || it.link) : it.link;
-    if (els.sourceUrl) els.sourceUrl.value = src;
+    if (els.sourceUrl) els.sourceUrl.value = normSpace(src || "");
+    if (els.hashtags) els.hashtags.value = suggestHashtags(it.title || it.originalTitle, it.cat);
 
-    if (els.hashtags) els.hashtags.value = suggestHashtags(it.title, it.cat);
-
+    // ✅ Forzar preview antes de cualquier otra cosa (clave para Abrir X)
     updatePreview();
+
+    // Re-render lista para marcar seleccionado
     applyFilters();
   }
 
@@ -1355,7 +1454,7 @@ Fuente:
     if (!inner || !wrap) return 40;
 
     const pps = getTickerPps();
-    const distPx = inner.scrollWidth + wrap.clientWidth; // recorrido total
+    const distPx = inner.scrollWidth + wrap.clientWidth;
     const sec = distPx / Math.max(pps, 1);
     return clamp(sec, 18, 240);
   }
@@ -1478,7 +1577,7 @@ Fuente:
   function bumpBackoff(feedUrl){
     const cur = state.backoff.get(feedUrl);
     const prevDelay = cur?.delayMs || 0;
-    const nextDelay = prevDelay ? Math.min(prevDelay * 2, 10 * 60 * 1000) : 30 * 1000; // 30s -> ... -> 10m
+    const nextDelay = prevDelay ? Math.min(prevDelay * 2, 10 * 60 * 1000) : 30 * 1000;
     state.backoff.set(feedUrl, { delayMs: nextDelay, untilMs: nowMs() + nextDelay });
   }
 
@@ -1583,6 +1682,7 @@ Fuente:
       localStorage.removeItem(LS_USED);
       localStorage.removeItem(LS_RESOLVE_CACHE);
       localStorage.removeItem(LS_OG_CACHE);
+      localStorage.removeItem(LS_TR_CACHE);
       localStorage.removeItem(LS_BUILD_ID);
     }catch{}
 
@@ -1695,7 +1795,6 @@ Fuente:
       }
 
       state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
-
       await emergencyRepairIfAllFailed(enabledFeeds.length, ok);
 
       if (signal.aborted || mySeq !== state.refreshSeq) throw new Error("Abort");
@@ -1708,6 +1807,7 @@ Fuente:
         const kk = cleanUrl(k);
         if (seen.has(kk)) continue;
         seen.add(kk);
+
         it.link = kk;
         it.domain = domainOf(kk);
         dedup.push(it);
@@ -1742,6 +1842,7 @@ Fuente:
 
       saveCaches();
       setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
+
       applyFilters();
       updatePreview();
     } catch (e){
@@ -1927,6 +2028,7 @@ Fuente:
     });
 
     els.btnCopyUrl?.addEventListener("click", async () => {
+      updatePreview();
       const u = (els.sourceUrl?.value || "").trim();
       if (!u) return;
       await copyText(u);
@@ -1934,6 +2036,7 @@ Fuente:
     });
 
     els.btnCopy?.addEventListener("click", async () => {
+      updatePreview();
       const t = buildTweet();
       await copyText(t);
       setStatus("Tweet copiado.");
@@ -1941,6 +2044,8 @@ Fuente:
     });
 
     els.btnX?.addEventListener("click", () => {
+      // ✅ CLAVE: fuerza el preview + buildTweet en el momento (evita “noticia anterior”)
+      updatePreview();
       const t = buildTweet();
       const url = "https://x.com/intent/tweet?text=" + encodeURIComponent(t);
       window.open(url, "_blank", "noopener,noreferrer");

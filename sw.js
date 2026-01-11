@@ -1,33 +1,35 @@
 /* sw.js — News → Tweet Template Panel (tnp-v4.1.1) — PWA Service Worker (AUTO-UPDATE REAL, HARDENED)
-   ✅ Objetivo real: que SI cambias app.js/styles/index SIN tocar versión, el usuario recargue y vea lo nuevo (online).
+   ✅ En GitHub Pages: evita quedarte pegado con app.js viejo
    ✅ NAV/HTML: Network-first (cache fallback)
-   ✅ Shell CRÍTICO (index.html, app.js, styles.css, manifest): Network-first (cache fallback) + fetch cache:"reload"
-      -> evita quedarte “pegado” con un app.js viejo servido desde cache del SW.
-   ✅ Shell NO crítico (otros .css/.js/.json): Stale-while-revalidate
-   ✅ RSS/feeds/proxies/APIs: Network-first (cache fallback)
+   ✅ Shell CRÍTICO (index/app/styles/manifest): Network-first + cache:"reload"
+   ✅ Shell no crítico: Stale-while-revalidate
+   ✅ RSS/feeds/proxies/APIs: Network-first
    ✅ Imágenes/favicons: Stale-while-revalidate
    ✅ Limpieza automática de caches antiguos
    ✅ skipWaiting + clients.claim
    ✅ message: SKIP_WAITING / CLEAR_CACHES
-   ✅ Anti-explosión de cache: normaliza cache-key quitando ?__tnp= (cache-bust de app.js)
+   ✅ Anti-explosión de cache: normaliza cache-key quitando ?__tnp=
 */
 
 "use strict";
 
 /* ───────────────────────────── CONFIG ───────────────────────────── */
 const SW_VERSION = "tnp-v4.1.1";
+/* Bump aquí si quieres “forzar” nueva familia de caches sin tocar SW_VERSION */
+const SW_BUILD_ID = "2026-01-11b";
+
 const CACHE_PREFIX = "tnp";
 
-const CACHE_SHELL   = `${CACHE_PREFIX}-shell-${SW_VERSION}`;
-const CACHE_RUNTIME = `${CACHE_PREFIX}-runtime-${SW_VERSION}`;
-const CACHE_FEEDS   = `${CACHE_PREFIX}-feeds-${SW_VERSION}`;
-const CACHE_IMAGES  = `${CACHE_PREFIX}-img-${SW_VERSION}`;
+const CACHE_SHELL   = `${CACHE_PREFIX}-shell-${SW_VERSION}-${SW_BUILD_ID}`;
+const CACHE_RUNTIME = `${CACHE_PREFIX}-runtime-${SW_VERSION}-${SW_BUILD_ID}`;
+const CACHE_FEEDS   = `${CACHE_PREFIX}-feeds-${SW_VERSION}-${SW_BUILD_ID}`;
+const CACHE_IMAGES  = `${CACHE_PREFIX}-img-${SW_VERSION}-${SW_BUILD_ID}`;
 
 const CACHE_KEEP_PREFIXES = [
   `${CACHE_PREFIX}-shell-`,
   `${CACHE_PREFIX}-runtime-`,
   `${CACHE_PREFIX}-feeds-`,
-  `${CACHE_PREFIX}-img-`,
+  `${CACHE_PREFIX}-img-`
 ];
 
 // OJO: si algo no existe, no rompe (allSettled)
@@ -45,16 +47,22 @@ const SHELL_ASSETS = [
   "./assets/icons/icon-192.png",
   "./assets/icons/icon-512.png",
   "./assets/icons/icon-192-maskable.png",
-  "./assets/icons/icon-512-maskable.png",
+  "./assets/icons/icon-512-maskable.png"
 ];
 
 /* ───────────────────────────── URL HELPERS ───────────────────────────── */
+function safeUrl(reqUrl) {
+  try { return new URL(reqUrl); } catch { return null; }
+}
+
 function isSameOrigin(reqUrl) {
-  try { return new URL(reqUrl).origin === self.location.origin; } catch { return false; }
+  const u = safeUrl(reqUrl);
+  return !!u && u.origin === self.location.origin;
 }
 
 function pathOf(reqUrl) {
-  try { return new URL(reqUrl).pathname.toLowerCase(); } catch { return ""; }
+  const u = safeUrl(reqUrl);
+  return u ? u.pathname.toLowerCase() : "";
 }
 
 function isHtml(req) {
@@ -64,8 +72,6 @@ function isHtml(req) {
 
 function isCriticalShellAsset(reqUrl) {
   const p = pathOf(reqUrl);
-  // IMPORTANT: aquí priorizamos “siempre fresco cuando online”
-  // (resuelve el típico “me quedé con app.js viejo”)
   return (
     p.endsWith("/") ||
     p.endsWith("/index.html") ||
@@ -94,21 +100,23 @@ function isShellAsset(reqUrl) {
 
 function isFontAsset(reqUrl) {
   const p = pathOf(reqUrl);
-  return (p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf") || p.endsWith(".otf"));
+  return p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf") || p.endsWith(".otf");
 }
 
 function isFeedLike(reqUrl) {
-  let u;
-  try { u = new URL(reqUrl); } catch { return false; }
+  const u = safeUrl(reqUrl);
+  if (!u) return false;
 
   const p = u.pathname.toLowerCase();
   const h = u.hostname.toLowerCase();
   const qs = u.search.toLowerCase();
 
-  // proxies usados por app.js
+  // Proxies usados por app.js (incluye corsproxy + jina)
+  if (h.includes("corsproxy.io")) return true;
   if (h.includes("allorigins.win")) return true;
   if (h.includes("codetabs.com")) return true;
   if (h.includes("thingproxy.freeboard.io")) return true;
+  if (h.includes("r.jina.ai")) return true;
 
   // Google News RSS
   if (h.includes("news.google.com") && (p.includes("/rss") || p.endsWith("/rss"))) return true;
@@ -121,8 +129,8 @@ function isFeedLike(reqUrl) {
 }
 
 function isImageLike(reqUrl) {
-  let u;
-  try { u = new URL(reqUrl); } catch { return false; }
+  const u = safeUrl(reqUrl);
+  if (!u) return false;
 
   const p = u.pathname.toLowerCase();
   const h = u.hostname.toLowerCase();
@@ -139,29 +147,24 @@ function isImageLike(reqUrl) {
 
 /* ───────────────────────────── CACHE KEY NORMALIZATION ───────────────────────────── */
 function normalizeCacheKeyRequest(req) {
-  // Para evitar que ?__tnp= (cache-bust) te cree 5000 entradas
-  // (tu app.js mete __tnp para forzar fresh en proxies)
   try {
     const url = new URL(req.url);
 
+    // Evita que cache-bust __tnp cree miles de entradas
     if (url.searchParams.has("__tnp")) {
       url.searchParams.delete("__tnp");
-      // si queda sin params, limpia el "?"
       if ([...url.searchParams.keys()].length === 0) url.search = "";
     }
 
-    // también normaliza algunas basuras comunes (por si acaso)
+    // Normaliza basura común (por si acaso)
     if (url.searchParams.has("_")) url.searchParams.delete("_");
     if (url.searchParams.has("cb")) url.searchParams.delete("cb");
     if ([...url.searchParams.keys()].length === 0) url.search = "";
 
-    // No copiamos headers: el cache key depende de URL + método principalmente.
-    // Preservamos method GET.
     return new Request(url.toString(), {
       method: "GET",
-      // para cross-origin, omit evita problemas raros; same-origin mantiene credenciales si hiciera falta
       credentials: isSameOrigin(url.toString()) ? "same-origin" : "omit",
-      redirect: "follow",
+      redirect: "follow"
     });
   } catch {
     return req;
@@ -179,7 +182,6 @@ function withTimeout(timeoutMs) {
 async function putIfCacheable(cache, cacheKeyReq, res) {
   try {
     if (!res) return;
-    // Guardamos ok y también opaque (sirve para algunos proxies/imagenes)
     if (res.ok || res.type === "opaque") {
       await cache.put(cacheKeyReq, res.clone());
     }
@@ -252,15 +254,13 @@ async function cacheFirst(req, cacheName, timeoutMs = 12000, fetchCacheMode = "n
 async function precacheShell() {
   const cache = await caches.open(CACHE_SHELL);
 
-  // "cache: reload" fuerza a ir a red (cuando se instala el SW)
+  // "cache: reload" fuerza a ir a red en instalación (si hay red)
   const requests = SHELL_ASSETS.map((u) => {
     try { return new Request(u, { cache: "reload" }); }
     catch { return u; }
   });
 
-  await Promise.allSettled(
-    requests.map((r) => cache.add(r))
-  );
+  await Promise.allSettled(requests.map((r) => cache.add(r)));
 }
 
 /* ───────────────────────────── LIFECYCLE ───────────────────────────── */
@@ -286,21 +286,24 @@ self.addEventListener("activate", (event) => {
 
     await self.clients.claim();
 
-    // Aviso opcional
+    // Aviso opcional a clientes
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const c of clients) {
-      try { c.postMessage({ type: "SW_ACTIVATED", version: SW_VERSION }); } catch {}
+      try { c.postMessage({ type: "SW_ACTIVATED", version: SW_VERSION, build: SW_BUILD_ID }); } catch {}
     }
   })());
 });
 
 self.addEventListener("message", (event) => {
   const msg = event.data || {};
-  if (msg && msg.type === "SKIP_WAITING") {
+  if (!msg || typeof msg !== "object") return;
+
+  if (msg.type === "SKIP_WAITING") {
     self.skipWaiting();
     return;
   }
-  if (msg && msg.type === "CLEAR_CACHES") {
+
+  if (msg.type === "CLEAR_CACHES") {
     event.waitUntil((async () => {
       const keys = await caches.keys();
       await Promise.allSettled(keys.map((k) => {
@@ -314,7 +317,12 @@ self.addEventListener("message", (event) => {
 /* ───────────────────────────── FETCH ROUTER ───────────────────────────── */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-  if (req.method !== "GET") return;
+  if (!req || req.method !== "GET") return;
+
+  // ignora esquemas raros
+  const u = safeUrl(req.url);
+  if (!u) return;
+  if (u.protocol !== "http:" && u.protocol !== "https:") return;
 
   const url = req.url;
   const same = isSameOrigin(url);
@@ -323,11 +331,10 @@ self.addEventListener("fetch", (event) => {
   if (req.mode === "navigate" || (same && isHtml(req))) {
     event.respondWith((async () => {
       // HTML: online -> fresh (reload) | offline -> cache
-      const fresh = await networkFirst(req, CACHE_RUNTIME, 9000, "reload");
+      const fresh = await networkFirst(req, CACHE_RUNTIME, 12000, "reload");
       if (fresh && fresh.ok) return fresh;
 
       const shell = await caches.open(CACHE_SHELL);
-
       // Fallback robusto
       return (
         (await shell.match(normalizeCacheKeyRequest(new Request("./index.html")))) ||
@@ -340,35 +347,34 @@ self.addEventListener("fetch", (event) => {
 
   // SAME-ORIGIN: Shell CRÍTICO (SIEMPRE intento red primero)
   if (same && isCriticalShellAsset(url)) {
-    // cache:"reload" = “quiero lo nuevo cuando online”
-    event.respondWith(networkFirst(req, CACHE_SHELL, 12000, "reload"));
+    event.respondWith(networkFirst(req, CACHE_SHELL, 15000, "reload"));
     return;
   }
 
   // SAME-ORIGIN: otros shell assets (SWR)
   if (same && isShellAsset(url)) {
-    event.respondWith(staleWhileRevalidate(req, CACHE_SHELL, 12000, "no-store"));
+    event.respondWith(staleWhileRevalidate(req, CACHE_SHELL, 15000, "no-store"));
     return;
   }
 
-  // FONTS
+  // FONTS (cache-first)
   if (same && isFontAsset(url)) {
-    event.respondWith(cacheFirst(req, CACHE_SHELL, 12000, "no-store"));
+    event.respondWith(cacheFirst(req, CACHE_SHELL, 15000, "no-store"));
     return;
   }
 
   // FEEDS / APIs / PROXIES
   if (isFeedLike(url)) {
-    event.respondWith(networkFirst(req, CACHE_FEEDS, 14000, "no-store"));
+    event.respondWith(networkFirst(req, CACHE_FEEDS, 16000, "no-store"));
     return;
   }
 
   // IMAGES / FAVICONS
   if (isImageLike(url)) {
-    event.respondWith(staleWhileRevalidate(req, CACHE_IMAGES, 14000, "no-store"));
+    event.respondWith(staleWhileRevalidate(req, CACHE_IMAGES, 16000, "no-store"));
     return;
   }
 
   // RESTO
-  event.respondWith(staleWhileRevalidate(req, CACHE_RUNTIME, 12000, "no-store"));
+  event.respondWith(staleWhileRevalidate(req, CACHE_RUNTIME, 15000, "no-store"));
 });
