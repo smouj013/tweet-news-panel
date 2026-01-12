@@ -1,5 +1,6 @@
-<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CACHE-BUST + SW BOOT REPAIR + CONFIG BOOT + KOFI
+<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — FIXED HIDDEN + SW BOOT REPAIR + CONFIG BOOT + KOFI
   ✅ 100% compatible con app.js v4.2.0 (IDs + modal feeds + ticker + X mock + botones)
+  ✅ FIX CLAVE: evita “doble ocultación” (hidden attr + .hidden) que rompía modales/gates si app.js solo quitaba una de las dos
   ✅ AUTH: Login Google (GIS) + Gate opcional (si requireLogin=true)
   ✅ MEMBERSHIP: FREE / PRO / ELITE (modal “Planes” listo)
   ✅ Cache-bust controlado (BUILD_TAG) para evitar “app.js viejo” en GitHub Pages
@@ -23,6 +24,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <!-- 🔧 Build tag único (úsalo igual en scripts + SW abajo) -->
+  <meta name="tnp-build" content="tnp-v4.2.0_2026-01-12d" />
 
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./assets/icons/favicon-32.png" sizes="32x32" />
@@ -49,6 +53,11 @@
 
   <!-- Google Identity Services (Login Google). app.js lo usa si auth.enabled=true -->
   <script async defer src="https://accounts.google.com/gsi/client"></script>
+
+  <!-- 🔧 Fallback: asegura que .hidden SIEMPRE oculta (evita dependencias de styles.css) -->
+  <style>
+    .hidden{ display:none !important; }
+  </style>
 
   <!-- Mini CSS local SOLO para banner de reparación + gate + planes (no rompe tu styles.css) -->
   <style>
@@ -118,8 +127,8 @@
 <body>
   <a class="skipLink" href="#main">Saltar a contenido</a>
 
-  <!-- AUTH GATE (app.js lo mostrará/ocultará; por defecto hidden) -->
-  <div id="authGate" class="authGate hidden" hidden aria-hidden="true">
+  <!-- AUTH GATE (app.js lo mostrará/ocultará; por defecto oculto SOLO por .hidden) -->
+  <div id="authGate" class="authGate hidden" aria-hidden="true">
     <div class="authGate__panel" role="dialog" aria-label="Acceso requerido">
       <div class="authGate__title">Inicia sesión para usar el panel</div>
       <div class="authGate__sub">
@@ -286,7 +295,7 @@
 
                 <div id="xMockText" class="xMock__text"></div>
 
-                <a id="xMockCard" class="xMock__card" href="#" target="_blank" rel="noopener noreferrer" hidden>
+                <a id="xMockCard" class="xMock__card hidden" href="#" target="_blank" rel="noopener noreferrer" aria-hidden="true">
                   <div id="xMockCardImg" class="xMock__cardImg"></div>
                   <div class="xMock__cardMeta">
                     <div id="xMockCardTitle" class="xMock__cardTitle"></div>
@@ -425,7 +434,6 @@
   <div
     id="modal"
     class="modal hidden"
-    hidden
     aria-hidden="true"
     aria-modal="true"
     role="dialog"
@@ -478,7 +486,6 @@
   <div
     id="membModal"
     class="modal hidden"
-    hidden
     aria-hidden="true"
     aria-modal="true"
     role="dialog"
@@ -565,7 +572,7 @@
   </noscript>
 
   <!-- Banner de reparación (aparece si la app no “engancha” por caché/SW viejo) -->
-  <div id="bootDiag" class="bootDiag" hidden>
+  <div id="bootDiag" class="bootDiag hidden" aria-hidden="true">
     <div class="bootDiag__title">⚠️ La app no ha arrancado (probable caché / Service Worker)</div>
     <div class="bootDiag__msg">
       Si ves que ningún botón responde o no se refresca nada, suele ser porque el navegador está sirviendo un <b>app.js viejo</b> desde caché.
@@ -583,11 +590,9 @@
     (function () {
       "use strict";
 
-      // 👇 Debe coincidir con:
-      // - window.TNP_CONFIG.buildTag (boot-config.js)
-      // - query ?v=... de boot-config.js y app.js (abajo)
-      // - app.js (APP_VERSION + BUILD_ID)
-      var BUILD_TAG = "tnp-v4.2.0_2026-01-12c";
+      function q(sel){ try { return document.querySelector(sel); } catch { return null; } }
+      var buildMeta = q('meta[name="tnp-build"]');
+      var BUILD_TAG = (buildMeta && buildMeta.content) ? String(buildMeta.content) : "tnp-v4.2.0_dev";
 
       // Cache-bust en SW (nuevo URL => browser re-evalúa SW)
       var SW_URL = "./sw.js?v=" + encodeURIComponent(BUILD_TAG);
@@ -600,6 +605,20 @@
 
       function setStatusSafe(msg) {
         try { if (statusEl) statusEl.textContent = msg; } catch {}
+      }
+      function showDiag() {
+        try {
+          if (!bootDiag) return;
+          bootDiag.classList.remove("hidden");
+          bootDiag.setAttribute("aria-hidden", "false");
+        } catch {}
+      }
+      function hideDiag() {
+        try {
+          if (!bootDiag) return;
+          bootDiag.classList.add("hidden");
+          bootDiag.setAttribute("aria-hidden", "true");
+        } catch {}
       }
 
       // Captura errores tempranos
@@ -662,22 +681,25 @@
 
       registerAndUpdateSW();
 
-      function shouldShowDiag() {
-        var s = (statusEl && statusEl.textContent) ? statusEl.textContent.trim() : "";
-        // app.js pone: "TNP listo (tnp-vX.Y.Z)"
-        if (s.indexOf("TNP listo") !== -1) return false;
-        // Si hay estado “trabajando…” no muestres diag
-        if (s && s !== "Listo" && s.indexOf("❌") === -1) return false;
-        return true;
+      function appSeemsBooted() {
+        var s = (statusEl && statusEl.textContent) ? String(statusEl.textContent).trim() : "";
+        if (s.indexOf("TNP listo") !== -1) return true;
+        return false;
       }
 
+      // Diag: espera más para no molestar en redes lentas.
       window.addEventListener("load", function () {
         setTimeout(function () {
           try {
-            if (bootDiag && shouldShowDiag()) bootDiag.hidden = false;
+            if (!appSeemsBooted()) showDiag();
           } catch {}
-        }, 3200);
+        }, 6500);
       });
+
+      // Si la app termina arrancando, oculta el diag automáticamente
+      setInterval(function () {
+        try { if (appSeemsBooted()) hideDiag(); } catch {}
+      }, 800);
 
       async function purgeAllTnpCachesAndSw() {
         // Unregister SWs
@@ -700,11 +722,21 @@
         } catch {}
       }
 
+      function hardReloadWithBuster() {
+        try {
+          var u = new URL(location.href);
+          u.searchParams.set("__repair", String(Date.now()));
+          location.replace(u.toString());
+        } catch {
+          location.reload();
+        }
+      }
+
       if (repairBtn) {
         repairBtn.addEventListener("click", async function () {
           setStatusSafe("Reparando… (limpiando cachés/SW)");
           await purgeAllTnpCachesAndSw();
-          location.reload();
+          hardReloadWithBuster();
         });
       }
 
@@ -727,16 +759,16 @@
 
       if (hideBtn) {
         hideBtn.addEventListener("click", function () {
-          if (bootDiag) bootDiag.hidden = true;
+          hideDiag();
         });
       }
     })();
   </script>
 
   <!-- Config boot (ANTES de app.js) -->
-  <script defer src="./config/boot-config.js?v=tnp-v4.2.0_2026-01-12c"></script>
+  <script defer src="./config/boot-config.js?v=tnp-v4.2.0_2026-01-12d"></script>
 
   <!-- app.js v4.2.0 — cache-bust controlado -->
-  <script defer src="./app.js?v=tnp-v4.2.0_2026-01-12c"></script>
+  <script defer src="./app.js?v=tnp-v4.2.0_2026-01-12d"></script>
 </body>
 </html>
