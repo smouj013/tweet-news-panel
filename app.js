@@ -1,12 +1,10 @@
-/* app.js — TNP v4.1.3 — MEMBERSHIP + GOOGLE LOGIN (GIS) + 3 TIERS + HARDENED
+/* app.js — TNP v4.2.0 — BUILD 2026-01-12d — MEMBERSHIP + GOOGLE LOGIN (GIS) + 3 TIERS + HARDENED + TRENDS (OPTIONAL)
    ✅ 100% compatible con tu index.html (IDs + modal + ticker + X mock + botones)
-   ✅ Login con Google (GIS) SIN cuentas propias
-   ✅ 3 tipos de membresía visibles: Básica / Pro / Elite (configurable)
-   ✅ Gating suave (Free funciona, Pro sube límites)
-   ✅ Soporta verificación por:
-      A) Endpoint (Cloudflare Worker recomendado) -> BOOT.membershipEndpoint
-      B) Allowlist estática (GitHub Pages) con hash -> BOOT.membershipAllowlistUrl (+salt)
-   ✅ Inyecta botón “Membresía” + modal (no rompe tu CSS)
+   ✅ Lee config NUEVO (auth/membership/ui/network/features) + compat con config antiguo
+   ✅ Login Google (GIS) SIN cuentas propias
+   ✅ Membresía: endpoint o allowlist (hash o email allowlist)
+   ✅ Gating suave + hardGate opcional (si requireLogin/hardGate en config)
+   ✅ Tendencias opcionales (Google Trends RSS) + fallback a “trend candidates” desde titulares
 */
 
 (() => {
@@ -34,123 +32,6 @@ Fuente:
 {{HASHTAGS}}`;
 
   const DEFAULT_LIVE_LINE = "🔴#ENVIVO >>> {{LIVE_URL}}";
-
-  /* ───────────────────────────── BOOT CONFIG (/config/boot-config.js) ───────────────────────────── */
-  // window.TNP_CONFIG = {
-  //   buildTag, googleClientId,
-  //   kofiTiersUrl, membershipEndpoint OR membershipAllowlistUrl,
-  //   membershipSalt, tiers:[{id,name,price,perks[]},...]
-  // }
-  const BOOT = (() => {
-    const c = (window.TNP_CONFIG || window.TNP_BOOT_CONFIG || window.__TNP_CONFIG__ || null);
-    const cfg = (c && typeof c === "object" && !Array.isArray(c)) ? c : {};
-
-    const num = (v, fb) => {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : fb;
-    };
-
-    const buildTag = String(cfg.buildTag || `${APP_VERSION}_${BUILD_ID}`).trim();
-
-    const tiersDefault = [
-      {
-        id: "basic",
-        name: "Básica",
-        price: "3€/mes",
-        perks: ["Más límites", "Más feeds activos", "Más items por refresh"]
-      },
-      {
-        id: "pro",
-        name: "Pro",
-        price: "7€/mes",
-        perks: ["Auto-refresh más rápido", "Más OG imágenes", "Más cap de items"]
-      },
-      {
-        id: "elite",
-        name: "Elite",
-        price: "15€/mes",
-        perks: ["Máximos límites", "Mejor rendimiento", "Prioridad / features pro"]
-      }
-    ];
-
-    const tiers = Array.isArray(cfg.tiers) && cfg.tiers.length === 3 ? cfg.tiers : tiersDefault;
-
-    return {
-      buildTag,
-
-      // Proxy
-      customProxyTemplate: String(cfg.customProxyTemplate || "").trim(),
-      proxyFirst: (cfg.proxyFirst !== false),
-
-      // Defaults composer
-      defaultLiveUrl: String(cfg.defaultLiveUrl || "https://twitch.tv/globaleyetv").trim(),
-      defaultHashtags: String(cfg.defaultHashtags || "").trim(),
-
-      defaultTemplate: String(cfg.defaultTemplate || DEFAULT_TEMPLATE),
-      defaultLiveLine: String(cfg.defaultLiveLine || DEFAULT_LIVE_LINE),
-
-      // Traducción
-      trEnabledDefault: (cfg.trEnabledDefault !== false),
-
-      // Feeds defaults
-      defaultFeeds: Array.isArray(cfg.defaultFeeds) ? cfg.defaultFeeds : null,
-
-      // Límites
-      maxItemsKeep: Math.max(200, Math.min(5000, num(cfg.maxItemsKeep, 900))),
-      visibleTranslateLimit: Math.max(20, Math.min(200, num(cfg.visibleTranslateLimit, 80))),
-
-      // Membership / Monetización
-      googleClientId: String(cfg.googleClientId || "").trim(), // REQUIRED para login real
-      kofiTiersUrl: String(cfg.kofiTiersUrl || "").trim(),     // e.g. https://ko-fi.com/TUUSER/tiers
-      membershipEndpoint: String(cfg.membershipEndpoint || "").trim(), // Worker recomendado
-      membershipAllowlistUrl: String(cfg.membershipAllowlistUrl || "").trim(), // e.g. ./config/members.json
-      membershipSalt: String(cfg.membershipSalt || "tnp").trim(),
-      tiers,
-    };
-  })();
-
-  /* ───────────────────────────── MEMBERSHIP TIERS (LIMITS) ───────────────────────────── */
-  // “Free” = sin membresía (por defecto). Tiers: basic/pro/elite.
-  const TIER_LIMITS = {
-    free:  { maxEnabledFeeds: 10, fetchCapMax: 240, showLimitMax: 120, batchMax: 12, autoMinSec: 60, resolveLimit: 60, ogLimit: 60 },
-    basic: { maxEnabledFeeds: 25, fetchCapMax: 600, showLimitMax: 200, batchMax: 20, autoMinSec: 45, resolveLimit: 90, ogLimit: 110 },
-    pro:   { maxEnabledFeeds: 60, fetchCapMax: 1400, showLimitMax: 350, batchMax: 35, autoMinSec: 30, resolveLimit: 140, ogLimit: 170 },
-    elite: { maxEnabledFeeds: 140, fetchCapMax: 2000, showLimitMax: 500, batchMax: 50, autoMinSec: 20, resolveLimit: 220, ogLimit: 260 },
-  };
-
-  function normTier(t){
-    t = String(t || "").toLowerCase().trim();
-    if (t === "basic" || t === "pro" || t === "elite") return t;
-    return "free";
-  }
-
-  /* ───────────────────────────── PROXY CONFIG ───────────────────────────── */
-  const CUSTOM_PROXY_TEMPLATE = BOOT.customProxyTemplate;
-  const PROXY_FIRST = BOOT.proxyFirst;
-
-  /* ───────────────────────────── STORAGE ───────────────────────────── */
-  const LS_FEEDS    = "tnp_feeds_v4";
-  const LS_TEMPLATE = "tnp_template_v4";
-  const LS_SETTINGS = "tnp_settings_v4";
-  const LS_USED     = "tnp_used_v4";
-
-  const LS_RESOLVE_CACHE = "tnp_resolve_cache_v4";
-  const LS_OG_CACHE      = "tnp_og_cache_v4";
-  const LS_TR_CACHE      = "tnp_tr_cache_v4";
-
-  const LS_BUILD_ID = "tnp_build_id_v4";
-
-  // Membership session
-  const LS_MEMBER = "tnp_member_v1"; // {tier,email,name,picture,expMs,sub}
-
-  /* ───────────────────────────── TRANSLATE (ES) ───────────────────────────── */
-  const TR_ENABLED_DEFAULT = true;
-  const TR_CONCURRENCY = 2;
-  const TR_VISIBLE_LIMIT = BOOT.visibleTranslateLimit;
-  const TR_CACHE_LIMIT = 2000;
-
-  const TR_ENDPOINT = (text) =>
-    `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=${encodeURIComponent(text)}`;
 
   /* ───────────────────────────── HELPERS ───────────────────────────── */
   const $ = (id) => document.getElementById(id);
@@ -300,110 +181,202 @@ Fuente:
     if (bd) bd.hidden = true;
   }
 
-  /* ───────────────────────────── MEMBERSHIP HELPERS ───────────────────────────── */
-  function loadMember(){
-    const raw = safeParseJSON(localStorage.getItem(LS_MEMBER));
-    const m = asObject(raw, {});
-    const expMs = Number(m.expMs || 0);
-    const tier = normTier(m.tier);
-    if (!expMs || expMs < nowMs() || tier === "free"){
-      return { tier:"free", email:"", name:"", picture:"", expMs:0, sub:"" };
+  /* ───────────────────────────── BOOT CONFIG (/config/boot-config.js) ───────────────────────────── */
+  const BOOT = (() => {
+    const c = (window.TNP_CONFIG || window.TNP_BOOT_CONFIG || window.__TNP_CONFIG__ || null);
+    const cfg = (c && typeof c === "object" && !Array.isArray(c)) ? c : {};
+
+    const auth = asObject(cfg.auth, {});
+    const membership = asObject(cfg.membership, {});
+    const ui = asObject(cfg.ui, {});
+    const network = asObject(cfg.network, {});
+    const ticker = asObject(cfg.ticker, {});
+    const features = asObject(cfg.features, {});
+    const donations = asObject(cfg.donations, {});
+    const donationLinks = asObject(donations.links, {});
+
+    const buildTag = String(cfg.buildTag || `${APP_VERSION}_${BUILD_ID}`).trim();
+
+    // Compat: a veces googleClientId está en raíz
+    const googleClientId =
+      String(cfg.googleClientId || auth.googleClientId || "").trim();
+
+    const requireLogin = (auth.requireLogin === true) || (cfg.requireLogin === true);
+    const hardGate = (ui.hardGate === true);
+    const autoPrompt = (auth.autoPrompt !== false);
+    const rememberSession = (auth.rememberSession !== false);
+    const hd = String(auth.hd || "").trim();
+
+    // Tiers visibles (para cards). Si config trae free/pro/elite, mostramos 3 (pro/elite + “basic” fallback si falta).
+    const tiersDefault = [
+      { id: "basic", name: "Básica", price: "3€/mes", perks: ["Más límites", "Más feeds activos", "Más items por refresh"] },
+      { id: "pro",   name: "Pro",   price: "7€/mes", perks: ["Auto-refresh más rápido", "Más OG imágenes", "Más cap de items"] },
+      { id: "elite", name: "Elite", price: "15€/mes", perks: ["Máximos límites", "Mejor rendimiento", "Prioridad / features pro"] },
+    ];
+
+    // membership.tiers (nuevo) suele traer: free/pro/elite
+    let tiersFromCfg = asArray(membership.tiers, []);
+    if (tiersFromCfg.length){
+      // convertir a formato simple para UI cards
+      const map = new Map(tiersFromCfg.map(t => [String(t?.id||"").toLowerCase().trim(), t]));
+      const pick = (id, fb) => {
+        const t = map.get(id);
+        if (!t) return fb;
+        return {
+          id,
+          name: String(t.name || fb.name),
+          price: String(t.priceLabel || fb.price),
+          perks: asArray(t.perks, fb.perks)
+        };
+      };
+      const basic = pick("basic", tiersDefault[0]);
+      const pro   = pick("pro", tiersDefault[1]);
+      const elite = pick("elite", tiersDefault[2]);
+
+      // Si no existe basic pero sí free, usamos free como basic “visual”
+      if (!map.get("basic") && map.get("free")){
+        const freeT = map.get("free");
+        tiersFromCfg = [
+          { id:"basic", name:String(freeT.name||"Básica"), price:String(freeT.priceLabel||"0€"), perks:asArray(freeT.perks, tiersDefault[0].perks) },
+          pro, elite
+        ];
+      } else {
+        tiersFromCfg = [basic, pro, elite];
+      }
     }
+
+    const tiers = (tiersFromCfg && tiersFromCfg.length === 3) ? tiersFromCfg : tiersDefault;
+
+    // Monetización: Ko-fi
+    const kofiTiersUrl =
+      String(cfg.kofiTiersUrl || donationLinks.kofi || "").trim();
+
+    // Membership verify: endpoint o allowlist
+    const apiBase = String(membership.apiBase || "").trim();
+    const verifyEndpoint =
+      String(cfg.membershipEndpoint || membership.verifyEndpoint || (apiBase ? (apiBase.replace(/\/+$/,"") + "/membership") : "") || "").trim();
+
+    const allowlistUrl =
+      String(cfg.membershipAllowlistUrl || membership.allowlistUrl || "").trim();
+
+    const salt =
+      String(cfg.membershipSalt || membership.salt || "tnp").trim();
+
+    // Trends
+    const trendsSourcesUrl =
+      String(cfg.trendsSourcesUrl || cfg.trendsSources || membership.trendsSourcesUrl || "./config/tnp.trends.sources.json").trim();
+
     return {
-      tier,
-      email: String(m.email || ""),
-      name: String(m.name || ""),
-      picture: String(m.picture || ""),
-      expMs,
-      sub: String(m.sub || "")
+      buildTag,
+
+      // Proxies
+      customProxyTemplate: String(cfg.customProxyTemplate || "").trim(),
+      proxyFirst: (cfg.proxyFirst !== false),
+
+      // Defaults composer
+      defaultLiveUrl: String(cfg.defaultLiveUrl || cfg.liveUrlDefault || "https://twitch.tv/globaleyetv").trim(),
+      defaultHashtags: String(cfg.defaultHashtags || cfg.hashtagsDefault || "").trim(),
+      defaultTemplate: String(cfg.defaultTemplate || DEFAULT_TEMPLATE),
+      defaultLiveLine: String(cfg.defaultLiveLine || DEFAULT_LIVE_LINE),
+
+      // Traducción
+      trEnabledDefault: (cfg.trEnabledDefault !== false),
+
+      // Feeds defaults (si inyectas defaultFeeds)
+      defaultFeeds: Array.isArray(cfg.defaultFeeds) ? cfg.defaultFeeds : null,
+
+      // Límites generales
+      maxItemsKeep: Math.max(200, Math.min(5000, numOr(cfg.maxItemsKeep, 900))),
+      visibleTranslateLimit: Math.max(20, Math.min(200, numOr(cfg.visibleTranslateLimit, 80))),
+
+      // Auth
+      googleClientId,
+      requireLogin,
+      hardGate,
+      autoPrompt,
+      rememberSession,
+      hd,
+
+      // Membership
+      membershipEnabled: (membership.enabled !== false),
+      allowLocalOverride: (membership.allowLocalOverride === true),
+      checkoutUrlTemplate: String(membership.checkoutUrlTemplate || "").trim(),
+      manageUrl: String(membership.manageUrl || "").trim(),
+
+      membershipEndpoint: verifyEndpoint,
+      membershipAllowlistUrl: allowlistUrl,
+      membershipSalt: salt,
+      tiers,
+      kofiTiersUrl,
+
+      // Network knobs (opcionales)
+      fetchTimeoutMs: clamp(numOr(network.fetchTimeoutMs, 20000), 6000, 45000),
+      maxConcurrentFeeds: clamp(numOr(network.maxConcurrentFeeds, 6), 2, 20),
+      maxConcurrentResolve: clamp(numOr(network.maxConcurrentResolve, 4), 2, 12),
+      maxConcurrentOg: clamp(numOr(network.maxConcurrentOg, 4), 2, 12),
+
+      // Ticker knobs
+      tickerMaxItems: clamp(numOr(ticker.maxItems, 10), 5, 30),
+      tickerSeparator: String(ticker.separator || "   ").slice(0, 12) || "   ",
+      popTrends: (ticker.popTrends !== false),
+      popDurationMs: clamp(numOr(ticker.popDurationMs, 4200), 2000, 12000),
+
+      // Features
+      enableTrends: (features.enableTrends !== false),
+      enableOgImages: (features.enableOgImages !== false),
+      enableFavicons: (features.enableFavicons !== false),
+
+      trendsSourcesUrl,
     };
+  })();
+
+  /* ───────────────────────────── TIERS / LIMITS ───────────────────────────── */
+  function normTier(t){
+    t = String(t || "").toLowerCase().trim();
+    if (t === "basic" || t === "pro" || t === "elite" || t === "free") return t;
+    // compat
+    if (t === "premium") return "pro";
+    if (t === "vip") return "elite";
+    return "free";
   }
 
-  function saveMember(m){
-    localStorage.setItem(LS_MEMBER, JSON.stringify(asObject(m, {})));
-  }
+  // Defaults (si config membership.tiers trae limits, se mezclan)
+  const DEFAULT_LIMITS = {
+    free:  { maxEnabledFeeds: 10, fetchCapMax: 240, showLimitMax: 120, batchMax: 12, autoMinSec: 60, resolveLimit: 60, ogLimit: 60 },
+    basic: { maxEnabledFeeds: 25, fetchCapMax: 600, showLimitMax: 200, batchMax: 20, autoMinSec: 45, resolveLimit: 90, ogLimit: 110 },
+    pro:   { maxEnabledFeeds: 60, fetchCapMax: 1400, showLimitMax: 350, batchMax: 35, autoMinSec: 30, resolveLimit: 140, ogLimit: 170 },
+    elite: { maxEnabledFeeds: 140, fetchCapMax: 2000, showLimitMax: 500, batchMax: 50, autoMinSec: 20, resolveLimit: 220, ogLimit: 260 },
+  };
 
-  function clearMember(){
-    try{ localStorage.removeItem(LS_MEMBER); }catch{}
-  }
+  // Si TNP_CONFIG.membership.tiers[*].limits existe, úsalo
+  function buildLimitsFromConfig(){
+    const cfg = asObject(window.TNP_CONFIG, {});
+    const mem = asObject(cfg.membership, {});
+    const tiers = asArray(mem.tiers, []);
+    if (!tiers.length) return null;
 
-  function base64UrlToUtf8(s){
-    try{
-      s = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
-      const pad = s.length % 4;
-      if (pad) s += "=".repeat(4 - pad);
-      const bin = atob(s);
-      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-      const dec = new TextDecoder("utf-8");
-      return dec.decode(bytes);
-    }catch{ return ""; }
-  }
+    const out = JSON.parse(JSON.stringify(DEFAULT_LIMITS));
+    for (const t of tiers){
+      const id = normTier(t?.id);
+      const lim = asObject(t?.limits, {});
+      if (!out[id]) out[id] = JSON.parse(JSON.stringify(DEFAULT_LIMITS.free));
 
-  function decodeJwtPayload(jwt){
-    try{
-      const parts = String(jwt || "").split(".");
-      if (parts.length < 2) return null;
-      const json = base64UrlToUtf8(parts[1]);
-      const obj = JSON.parse(json);
-      return obj && typeof obj === "object" ? obj : null;
-    }catch{ return null; }
-  }
+      // Map keys
+      if (Number.isFinite(Number(lim.maxFeedsEnabled))) out[id].maxEnabledFeeds = clamp(Number(lim.maxFeedsEnabled), 5, 300);
+      if (Number.isFinite(Number(lim.fetchCapMax))) out[id].fetchCapMax = clamp(Number(lim.fetchCapMax), 80, 5000);
+      if (Number.isFinite(Number(lim.showLimitMax))) out[id].showLimitMax = clamp(Number(lim.showLimitMax), 10, 1000);
+      if (Number.isFinite(Number(lim.minAutoRefreshSec))) out[id].autoMinSec = clamp(Number(lim.minAutoRefreshSec), 10, 600);
+      if (Number.isFinite(Number(lim.ogLookupsMax))) out[id].ogLimit = clamp(Number(lim.ogLookupsMax), 0, 1200);
+      if (Number.isFinite(Number(lim.resolveMax))) out[id].resolveLimit = clamp(Number(lim.resolveMax), 0, 1200);
 
-  async function sha256Hex(str){
-    const data = new TextEncoder().encode(String(str || ""));
-    const buf = await crypto.subtle.digest("SHA-256", data);
-    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
-  }
-
-  async function verifyMembership({ email, credential }){
-    email = String(email || "").toLowerCase().trim();
-    if (!email) return { tier:"free" };
-
-    // A) Endpoint (recomendado)
-    if (BOOT.membershipEndpoint){
-      try{
-        const r = await fetch(BOOT.membershipEndpoint, {
-          method: "POST",
-          headers: { "Content-Type":"application/json" },
-          cache: "no-store",
-          credentials: "omit",
-          body: JSON.stringify({
-            email,
-            credential: String(credential || ""),
-            app: APP_VERSION,
-            build: BUILD_ID
-          })
-        });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const j = await r.json();
-        const tier = normTier(j.tier);
-        const expMs = Number(j.expMs || 0);
-        return { tier, expMs: Number.isFinite(expMs) ? expMs : 0, raw: j };
-      }catch{
-        return { tier:"free" };
-      }
+      // batchMax (si no viene, deriva un poco)
+      const derivedBatch = clamp(Math.round(out[id].maxEnabledFeeds / 4), 6, 60);
+      out[id].batchMax = clamp(numOr(out[id].batchMax, derivedBatch), 4, 80);
     }
-
-    // B) Allowlist (estático) con hash (GitHub Pages)
-    if (BOOT.membershipAllowlistUrl){
-      try{
-        const r = await fetch(BOOT.membershipAllowlistUrl, { cache:"no-store", credentials:"omit" });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const j = await r.json();
-        const salt = String(j.salt || BOOT.membershipSalt || "tnp");
-        const members = Array.isArray(j.members) ? j.members : [];
-        const h = await sha256Hex(`${salt}:${email}`);
-        const hit = members.find(x => String(x.h || "").toLowerCase() === h);
-        const tier = normTier(hit?.tier);
-        const expMs = Number(hit?.expMs || 0);
-        return { tier, expMs: Number.isFinite(expMs) ? expMs : 0, raw: hit || null };
-      }catch{
-        return { tier:"free" };
-      }
-    }
-
-    return { tier:"free" };
+    return out;
   }
+
+  const TIER_LIMITS = buildLimitsFromConfig() || DEFAULT_LIMITS;
 
   function tierTitle(t){
     t = normTier(t);
@@ -413,52 +386,33 @@ Fuente:
     return "FREE";
   }
 
-  /* ───────────────────────────── DEFAULT FEEDS ───────────────────────────── */
-  const DIRECT_FEEDS = [
-    { name:"RTVE — Portada (RSS)", url:"https://www.rtve.es/api/noticias.rss", enabled:true, cat:"spain" },
-    { name:"El País — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", enabled:true, cat:"spain" },
-    { name:"El Mundo — Portada (RSS)", url:"https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml", enabled:true, cat:"spain" },
-    { name:"La Vanguardia — Portada (RSS)", url:"https://www.lavanguardia.com/mvc/feed/rss/home.xml", enabled:true, cat:"spain" },
-    { name:"ABC — Portada (RSS)", url:"https://www.abc.es/rss/feeds/abcPortada.xml", enabled:true, cat:"spain" },
-    { name:"20minutos — Portada (RSS)", url:"https://www.20minutos.es/rss/", enabled:true, cat:"spain" },
-    { name:"El Confidencial — España (RSS)", url:"https://rss.elconfidencial.com/espana/", enabled:true, cat:"spain" },
-    { name:"Europa Press — Portada (RSS)", url:"https://www.europapress.es/rss/rss.aspx?ch=69", enabled:true, cat:"spain" },
+  /* ───────────────────────────── STORAGE ───────────────────────────── */
+  const LS_FEEDS    = "tnp_feeds_v4";
+  const LS_TEMPLATE = "tnp_template_v4";
+  const LS_SETTINGS = "tnp_settings_v4";
+  const LS_USED     = "tnp_used_v4";
 
-    { name:"BBC — World (RSS)", url:"https://feeds.bbci.co.uk/news/world/rss.xml", enabled:true, cat:"world" },
-    { name:"The Guardian — World (RSS)", url:"https://www.theguardian.com/world/rss", enabled:true, cat:"world" },
-    { name:"Al Jazeera — All (RSS)", url:"https://www.aljazeera.com/xml/rss/all.xml", enabled:true, cat:"world" },
-    { name:"DW Español — Portada (RSS)", url:"https://rss.dw.com/rdf/rss-es-all", enabled:true, cat:"world" },
-    { name:"Euronews — Español (MRSS)", url:"https://www.euronews.com/rss?format=mrss", enabled:true, cat:"world" },
+  const LS_RESOLVE_CACHE = "tnp_resolve_cache_v4";
+  const LS_OG_CACHE      = "tnp_og_cache_v4";
+  const LS_TR_CACHE      = "tnp_tr_cache_v4";
 
-    { name:"Expansión — Portada (RSS)", url:"https://e00-expansion.uecdn.es/rss/portada.xml", enabled:true, cat:"economy" },
-    { name:"Cinco Días — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/cincodias.com/portada", enabled:true, cat:"economy" },
-    { name:"El Blog Salmón (RSS)", url:"https://feeds.weblogssl.com/elblogsalmon", enabled:true, cat:"economy" },
+  const LS_BUILD_ID = "tnp_build_id_v4";
 
-    { name:"Xataka (RSS)", url:"https://feeds.weblogssl.com/xataka2", enabled:true, cat:"tech" },
-    { name:"Genbeta (RSS)", url:"https://feeds.weblogssl.com/genbeta", enabled:true, cat:"tech" },
+  // Auth session + Membership session
+  const LS_AUTH   = "tnp_auth_v1";   // {email,name,picture,sub,expMs}
+  const LS_MEMBER = "tnp_member_v1"; // {tier,expMs}
 
-    { name:"El Confidencial — Sucesos (RSS)", url:"https://rss.elconfidencial.com/espana/sucesos/", enabled:true, cat:"crime" },
+  // Dev override
+  const LS_MEM_OVERRIDE = "tnp_membership_override"; // "pro" | "elite" | "basic" | "free"
 
-    { name:"ElDiario.es — Portada (RSS) [OFF]", url:"https://www.eldiario.es/rss/", enabled:false, cat:"spain" },
-    { name:"Público — Portada (RSS) [OFF]", url:"https://www.publico.es/rss", enabled:false, cat:"spain" },
-    { name:"OKDIARIO — Portada (RSS) [OFF]", url:"https://okdiario.com/feed", enabled:false, cat:"spain" },
-    { name:"El Español — Portada (RSS) [OFF]", url:"https://www.elespanol.com/rss/", enabled:false, cat:"spain" },
+  /* ───────────────────────────── TRANSLATE (ES) ───────────────────────────── */
+  const TR_ENABLED_DEFAULT = true;
+  const TR_CONCURRENCY = 2;
+  const TR_VISIBLE_LIMIT = BOOT.visibleTranslateLimit;
+  const TR_CACHE_LIMIT = 2000;
 
-    { name:"BBC — Business (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/business/rss.xml", enabled:false, cat:"economy" },
-    { name:"BBC — Technology (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/technology/rss.xml", enabled:false, cat:"tech" },
-    { name:"BBC — Health (RSS) [OFF]", url:"https://feeds.bbci.co.uk/news/health/rss.xml", enabled:false, cat:"health" },
-
-    { name:"The Guardian — Business (RSS) [OFF]", url:"https://www.theguardian.com/uk/business/rss", enabled:false, cat:"economy" },
-    { name:"The Guardian — Technology (RSS) [OFF]", url:"https://www.theguardian.com/uk/technology/rss", enabled:false, cat:"tech" },
-    { name:"The Guardian — Sport (RSS) [OFF]", url:"https://www.theguardian.com/uk/sport/rss", enabled:false, cat:"sports" },
-
-    { name:"Google News — España (Top) [OFF]", url:"https://news.google.com/rss?hl=es&gl=ES&ceid=ES:es", enabled:false, cat:"spain" },
-    { name:"Google News — World (Top) [OFF]", url:"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", enabled:false, cat:"world" },
-  ];
-
-  const DEFAULT_FEEDS = Array.isArray(BOOT.defaultFeeds) && BOOT.defaultFeeds.length
-    ? BOOT.defaultFeeds
-    : [...DIRECT_FEEDS];
+  const TR_ENDPOINT = (text) =>
+    `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=${encodeURIComponent(text)}`;
 
   /* ───────────────────────────── UI REFS ───────────────────────────── */
   const els = {
@@ -567,9 +521,11 @@ Fuente:
 
     return s;
   }
+
   function saveSettings(s){
     localStorage.setItem(LS_SETTINGS, JSON.stringify(asObject(s, {})));
   }
+
   const settings = loadSettings();
 
   try{
@@ -585,8 +541,204 @@ Fuente:
       ? String(BOOT.defaultTemplate)
       : DEFAULT_TEMPLATE;
   }
+
   function saveTemplate(t){
     localStorage.setItem(LS_TEMPLATE, String(t || DEFAULT_TEMPLATE));
+  }
+
+  /* ───────────────────────────── AUTH + MEMBERSHIP SESSION ───────────────────────────── */
+  function getAuthStore(){
+    // rememberSession=false => sessionStorage
+    try { return BOOT.rememberSession ? localStorage : sessionStorage; }
+    catch { return localStorage; }
+  }
+
+  function loadAuth(){
+    const store = getAuthStore();
+
+    // Migración: si alguien guardó email dentro de LS_MEMBER viejo, intentamos recuperar
+    const legacyMember = safeParseJSON(localStorage.getItem(LS_MEMBER));
+    const legacyObj = asObject(legacyMember, {});
+
+    const raw = safeParseJSON(store.getItem(LS_AUTH));
+    const a = asObject(raw, {});
+
+    const expMs = Number(a.expMs || 0);
+    const email = String(a.email || legacyObj.email || "").toLowerCase().trim();
+    const sub = String(a.sub || legacyObj.sub || "").trim();
+
+    if (!email || !expMs || expMs < nowMs()){
+      return { email:"", name:"", picture:"", sub:"", expMs:0 };
+    }
+
+    return {
+      email,
+      name: String(a.name || legacyObj.name || ""),
+      picture: String(a.picture || legacyObj.picture || ""),
+      sub,
+      expMs,
+    };
+  }
+
+  function saveAuth(a){
+    const store = getAuthStore();
+    store.setItem(LS_AUTH, JSON.stringify(asObject(a, {})));
+  }
+
+  function clearAuth(){
+    const store = getAuthStore();
+    try{ store.removeItem(LS_AUTH); }catch{}
+  }
+
+  function loadMember(){
+    const raw = safeParseJSON(localStorage.getItem(LS_MEMBER));
+    const m = asObject(raw, {});
+    const expMs = Number(m.expMs || 0);
+    const tier = normTier(m.tier);
+    if (!expMs || expMs < nowMs()){
+      return { tier:"free", expMs:0 };
+    }
+    return { tier, expMs };
+  }
+
+  function saveMember(m){
+    localStorage.setItem(LS_MEMBER, JSON.stringify(asObject(m, {})));
+  }
+
+  function clearMember(){
+    try{ localStorage.removeItem(LS_MEMBER); }catch{}
+  }
+
+  function isAuthed(){
+    return !!(state.auth.email && state.auth.expMs && state.auth.expMs > nowMs());
+  }
+
+  function canUseApp(){
+    if (!BOOT.requireLogin) return true;
+    return isAuthed();
+  }
+
+  function base64UrlToUtf8(s){
+    try{
+      s = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
+      const pad = s.length % 4;
+      if (pad) s += "=".repeat(4 - pad);
+      const bin = atob(s);
+      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+      const dec = new TextDecoder("utf-8");
+      return dec.decode(bytes);
+    }catch{ return ""; }
+  }
+
+  function decodeJwtPayload(jwt){
+    try{
+      const parts = String(jwt || "").split(".");
+      if (parts.length < 2) return null;
+      const json = base64UrlToUtf8(parts[1]);
+      const obj = JSON.parse(json);
+      return obj && typeof obj === "object" ? obj : null;
+    }catch{ return null; }
+  }
+
+  async function sha256Hex(str){
+    const data = new TextEncoder().encode(String(str || ""));
+    const buf = await crypto.subtle.digest("SHA-256", data);
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
+  }
+
+  function getOverrideTier(){
+    if (!BOOT.allowLocalOverride) return "";
+    try{
+      const t = String(localStorage.getItem(LS_MEM_OVERRIDE) || "").trim();
+      return normTier(t);
+    }catch{
+      return "";
+    }
+  }
+
+  async function verifyMembership({ email, credential }){
+    email = String(email || "").toLowerCase().trim();
+    if (!email) return { tier:"free", expMs:0 };
+
+    // Dev override (si config lo permite)
+    const overrideTier = getOverrideTier();
+    if (overrideTier && overrideTier !== "free"){
+      return { tier: overrideTier, expMs: nowMs() + 30*24*60*60*1000, raw:{ override:true } };
+    }
+
+    if (!BOOT.membershipEnabled){
+      return { tier:"free", expMs: 0 };
+    }
+
+    // A) Endpoint
+    if (BOOT.membershipEndpoint){
+      try{
+        const r = await fetch(BOOT.membershipEndpoint, {
+          method: "POST",
+          headers: { "Content-Type":"application/json" },
+          cache: "no-store",
+          credentials: "omit",
+          body: JSON.stringify({
+            email,
+            credential: String(credential || ""),
+            app: APP_VERSION,
+            build: BUILD_ID
+          })
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+        const tier = normTier(j.tier);
+        const expMs = Number(j.expMs || 0);
+        return { tier, expMs: Number.isFinite(expMs) ? expMs : 0, raw: j };
+      }catch{
+        // cae a allowlist si existe
+      }
+    }
+
+    // B) Allowlist (dos modos)
+    if (BOOT.membershipAllowlistUrl){
+      try{
+        const r = await fetch(BOOT.membershipAllowlistUrl, { cache:"no-store", credentials:"omit" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+
+        // B1) Hash mode: { salt, members:[{h,tier,expMs}] }
+        if (Array.isArray(j.members)){
+          const salt = String(j.salt || BOOT.membershipSalt || "tnp");
+          const members = j.members;
+          const h = await sha256Hex(`${salt}:${email}`);
+          const hit = members.find(x => String(x?.h || "").toLowerCase() === h);
+          const tier = normTier(hit?.tier);
+          const expMs = Number(hit?.expMs || 0);
+          return { tier, expMs: Number.isFinite(expMs) ? expMs : 0, raw: hit || null };
+        }
+
+        // B2) Email allowlist mode (tipo member.json): { allow:[...], roles:{email:"admin|pro|elite|basic"}, expMs? }
+        const allow = asArray(j.allow, []);
+        if (allow.length){
+          const ok = allow.map(x => String(x||"").toLowerCase().trim()).includes(email);
+          if (!ok) return { tier:"free", expMs:0, raw:null };
+
+          const roles = asObject(j.roles, {});
+          const role = String(roles[email] || "").toLowerCase().trim();
+
+          // Mapeo roles -> tier
+          let tier = "pro";
+          if (role === "elite" || role === "vip") tier = "elite";
+          else if (role === "basic" || role === "free") tier = "basic";
+          else if (role === "admin") tier = "elite";
+          else if (role === "pro") tier = "pro";
+
+          const expMs = Number(j.expMs || 0) || (nowMs() + 30*24*60*60*1000);
+          return { tier: normTier(tier), expMs, raw:{ allowlist:true, role } };
+        }
+
+      }catch{
+        return { tier:"free", expMs:0 };
+      }
+    }
+
+    return { tier:"free", expMs:0 };
   }
 
   /* ───────────────────────────── STATE ───────────────────────────── */
@@ -603,7 +755,6 @@ Fuente:
     refreshSeq: 0,
 
     autoTimer: null,
-    trendsTimer: null,
     uiTickTimer: null,
 
     resolveCache: new Map(),
@@ -625,19 +776,35 @@ Fuente:
     lastBuiltTweet: "",
     lastRenderSig: "",
 
-    // Membership
+    // Sessions
+    auth: loadAuth(),
     member: loadMember(),
+
+    // Membership UI
     memberUi: { btn:null, pill:null, modal:null },
+
+    // Trends external
+    trends: {
+      sourcesLoaded: false,
+      sources: null,
+      tags: [],
+      lastSig: "",
+      timer: null,
+      lastFetchMs: 0,
+    },
+
+    // auth gate overlay
+    gateEl: null,
   };
 
   function tierLimits(){
-    return TIER_LIMITS[normTier(state.member.tier)] || TIER_LIMITS.free;
+    const t = normTier(state.member.tier);
+    return TIER_LIMITS[t] || TIER_LIMITS.free;
   }
 
   function applyTierLimitsToUi(){
     const lim = tierLimits();
 
-    // Clamp UI settings quietly
     const clampInput = (el, min, max) => {
       if (!el) return;
       const raw = (el.value != null) ? el.value : el.getAttribute("value");
@@ -645,25 +812,21 @@ Fuente:
       el.value = String(v);
     };
 
-    // fetchCap/showLimit/batch/refreshSec
     clampInput(els.fetchCap, 80, lim.fetchCapMax);
     clampInput(els.showLimit, 10, lim.showLimitMax);
-    clampInput(els.batchFeeds, 4, lim.batchMax);
+    clampInput(els.batchFeeds, 2, lim.batchMax);
 
-    // auto min sec
     if (els.refreshSec){
       const v = clamp(numOr(els.refreshSec.value, settings.refreshSec || 60), lim.autoMinSec, 600);
       els.refreshSec.value = String(v);
     }
 
-    // Update internal settings
     settings.fetchCap = clamp(numOr(els.fetchCap?.value, settings.fetchCap), 80, lim.fetchCapMax);
     settings.showLimit = clamp(numOr(els.showLimit?.value, settings.showLimit), 10, lim.showLimitMax);
-    settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 4, lim.batchMax);
+    settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 2, lim.batchMax);
     settings.refreshSec = clamp(numOr(els.refreshSec?.value, settings.refreshSec), lim.autoMinSec, 600);
     saveSettings(settings);
 
-    // Enforce enabled feeds max
     enforceEnabledFeedsLimit();
   }
 
@@ -672,7 +835,6 @@ Fuente:
     const enabled = state.feeds.filter(f => f.enabled);
     if (enabled.length <= lim.maxEnabledFeeds) return;
 
-    // Disable extras from the bottom
     let toDisable = enabled.length - lim.maxEnabledFeeds;
     for (let i = state.feeds.length - 1; i >= 0 && toDisable > 0; i--){
       if (state.feeds[i].enabled){
@@ -688,6 +850,7 @@ Fuente:
     const arr = asArray(raw, []);
     state.used = new Set(arr.filter(x => typeof x === "string").slice(0, 5000));
   }
+
   function saveUsed(){
     localStorage.setItem(LS_USED, JSON.stringify(Array.from(state.used).slice(0, 5000)));
   }
@@ -741,6 +904,37 @@ Fuente:
       localStorage.setItem(LS_TR_CACHE, JSON.stringify(trOut));
     }catch{}
   }, 600);
+
+  /* ───────────────────────────── DEFAULT FEEDS ───────────────────────────── */
+  const DIRECT_FEEDS = [
+    { name:"RTVE — Portada (RSS)", url:"https://www.rtve.es/api/noticias.rss", enabled:true, cat:"spain" },
+    { name:"El País — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada", enabled:true, cat:"spain" },
+    { name:"El Mundo — Portada (RSS)", url:"https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml", enabled:true, cat:"spain" },
+    { name:"La Vanguardia — Portada (RSS)", url:"https://www.lavanguardia.com/mvc/feed/rss/home.xml", enabled:true, cat:"spain" },
+    { name:"ABC — Portada (RSS)", url:"https://www.abc.es/rss/feeds/abcPortada.xml", enabled:true, cat:"spain" },
+    { name:"20minutos — Portada (RSS)", url:"https://www.20minutos.es/rss/", enabled:true, cat:"spain" },
+    { name:"El Confidencial — España (RSS)", url:"https://rss.elconfidencial.com/espana/", enabled:true, cat:"spain" },
+    { name:"Europa Press — Portada (RSS)", url:"https://www.europapress.es/rss/rss.aspx?ch=69", enabled:true, cat:"spain" },
+
+    { name:"BBC — World (RSS)", url:"https://feeds.bbci.co.uk/news/world/rss.xml", enabled:true, cat:"world" },
+    { name:"The Guardian — World (RSS)", url:"https://www.theguardian.com/world/rss", enabled:true, cat:"world" },
+    { name:"Al Jazeera — All (RSS)", url:"https://www.aljazeera.com/xml/rss/all.xml", enabled:true, cat:"world" },
+    { name:"DW Español — Portada (RSS)", url:"https://rss.dw.com/rdf/rss-es-all", enabled:true, cat:"world" },
+    { name:"Euronews — Español (MRSS)", url:"https://www.euronews.com/rss?format=mrss", enabled:true, cat:"world" },
+
+    { name:"Expansión — Portada (RSS)", url:"https://e00-expansion.uecdn.es/rss/portada.xml", enabled:true, cat:"economy" },
+    { name:"Cinco Días — Portada (MRSS)", url:"https://feeds.elpais.com/mrss-s/pages/ep/site/cincodias.com/portada", enabled:true, cat:"economy" },
+    { name:"El Blog Salmón (RSS)", url:"https://feeds.weblogssl.com/elblogsalmon", enabled:true, cat:"economy" },
+
+    { name:"Xataka (RSS)", url:"https://feeds.weblogssl.com/xataka2", enabled:true, cat:"tech" },
+    { name:"Genbeta (RSS)", url:"https://feeds.weblogssl.com/genbeta", enabled:true, cat:"tech" },
+
+    { name:"El Confidencial — Sucesos (RSS)", url:"https://rss.elconfidencial.com/espana/sucesos/", enabled:true, cat:"crime" },
+  ];
+
+  const DEFAULT_FEEDS = Array.isArray(BOOT.defaultFeeds) && BOOT.defaultFeeds.length
+    ? BOOT.defaultFeeds
+    : [...DIRECT_FEEDS];
 
   /* ───────────────────────────── FEEDS CRUD ───────────────────────────── */
   function normalizeFeed(f){
@@ -796,7 +990,6 @@ Fuente:
     els.feedList.innerHTML = "";
 
     const lim = tierLimits();
-
     let enabledCount = state.feeds.filter(f => f.enabled).length;
 
     for (let i=0;i<state.feeds.length;i++){
@@ -810,7 +1003,6 @@ Fuente:
       cb.checked = !!f.enabled;
 
       cb.addEventListener("change", () => {
-        // Enforce membership feed limit
         if (cb.checked && enabledCount >= lim.maxEnabledFeeds){
           cb.checked = false;
           f.enabled = false;
@@ -899,8 +1091,8 @@ Fuente:
     const enc = encodeURIComponent(raw);
     const out = [];
 
-    if (CUSTOM_PROXY_TEMPLATE){
-      out.push(applyProxyTemplate(CUSTOM_PROXY_TEMPLATE, raw, enc));
+    if (BOOT.customProxyTemplate){
+      out.push(applyProxyTemplate(BOOT.customProxyTemplate, raw, enc));
     }
 
     out.push(`https://corsproxy.io/?url=${enc}`);
@@ -913,7 +1105,7 @@ Fuente:
   }
 
   async function fetchText(url, signal, accept){
-    const { signal: s2, cancel } = withTimeout(20000, signal);
+    const { signal: s2, cancel } = withTimeout(BOOT.fetchTimeoutMs, signal);
     try{
       const headers = {};
       if (accept) headers["Accept"] = accept;
@@ -956,7 +1148,7 @@ Fuente:
   async function fetchTextSmart(targetUrl, signal){
     const accept = "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.7";
     const proxies = makeProxyCandidates(targetUrl);
-    const candidates = PROXY_FIRST ? [...proxies, targetUrl] : [targetUrl, ...proxies];
+    const candidates = BOOT.proxyFirst ? [...proxies, targetUrl] : [targetUrl, ...proxies];
 
     const hint = state.proxyHint.get(targetUrl);
     if (Number.isFinite(hint) && hint >= 0 && hint < candidates.length){
@@ -987,7 +1179,7 @@ Fuente:
   async function fetchHtmlSmart(targetUrl, signal){
     const accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
     const proxies = makeProxyCandidates(targetUrl);
-    const candidates = PROXY_FIRST ? [...proxies, targetUrl] : [targetUrl, ...proxies];
+    const candidates = BOOT.proxyFirst ? [...proxies, targetUrl] : [targetUrl, ...proxies];
 
     let lastErr = null;
     for (const u of candidates){
@@ -1004,7 +1196,7 @@ Fuente:
   async function fetchJsonSmart(targetUrl, signal){
     const accept = "application/json, text/plain, */*;q=0.8";
     const proxies = makeProxyCandidates(targetUrl);
-    const candidates = PROXY_FIRST ? [...proxies, targetUrl] : [targetUrl, ...proxies];
+    const candidates = BOOT.proxyFirst ? [...proxies, targetUrl] : [targetUrl, ...proxies];
 
     let lastErr = null;
     for (const u of candidates){
@@ -1103,6 +1295,9 @@ Fuente:
       resolvedUrl: "",
       ready: false,
       top: false,
+
+      // optional UI
+      favicon: "",
     };
   }
 
@@ -1112,8 +1307,14 @@ Fuente:
 
     for (const it of nodes){
       const title = stripHtml(it.querySelector("title")?.textContent || "");
-      const link = (it.querySelector("link")?.textContent || "").trim();
+      let link = (it.querySelector("link")?.textContent || "").trim();
       const guid = (it.querySelector("guid")?.textContent || "").trim();
+
+      // Algunas RSS meten link como <link href="...">
+      if (!link){
+        const linkEl = it.querySelector("link[href]");
+        if (linkEl) link = (linkEl.getAttribute("href") || "").trim();
+      }
 
       const pub =
         (it.querySelector("pubDate")?.textContent || "").trim() ||
@@ -1187,7 +1388,6 @@ Fuente:
     }
 
     if (!img) return "";
-
     img = img.replace(/&amp;/g, "&");
     img = absolutizeUrl(img, pageUrl);
     return cleanUrl(img);
@@ -1289,7 +1489,6 @@ Fuente:
     const preferEs = !!els.optOnlySpanish?.checked;
     if (!preferEs) return;
     if (!settings.trEnabled) return;
-
     if (!state.filtered.length) return;
     if (state.trQueueRunning) return;
 
@@ -1305,7 +1504,6 @@ Fuente:
 
       candidates.push(it);
     }
-
     if (!candidates.length) return;
 
     const mySeq = state.refreshSeq;
@@ -1444,6 +1642,13 @@ Fuente:
 
   const applyFiltersDebounced = debounce(applyFilters, 90);
 
+  function faviconForDomain(dom){
+    if (!BOOT.enableFavicons) return "";
+    if (!dom) return "";
+    // s2 favicons funciona bien y es barato
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(dom)}&sz=32`;
+  }
+
   function renderNewsList(list){
     if (!els.newsList) return;
 
@@ -1462,7 +1667,9 @@ Fuente:
       empty.style.color = "rgba(231,233,234,0.65)";
       empty.textContent = state.refreshInFlight
         ? "Cargando noticias…"
-        : "Sin noticias en este filtro. Prueba a subir la ventana (60min/3h) o bajar Delay.";
+        : (!canUseApp()
+            ? "🔒 Login requerido. Abre ‘Membresía’ para iniciar sesión."
+            : "Sin noticias en este filtro. Prueba a subir la ventana (60min/3h) o bajar Delay.");
       els.newsList.appendChild(empty);
       return;
     }
@@ -1509,6 +1716,22 @@ Fuente:
       const b1 = document.createElement("span");
       b1.className = "badge domain";
       b1.textContent = it.domain || "fuente";
+
+      // favicon opcional (sin romper CSS existente)
+      if (BOOT.enableFavicons && it.domain){
+        const fav = document.createElement("img");
+        fav.src = faviconForDomain(it.domain);
+        fav.alt = "";
+        fav.width = 14;
+        fav.height = 14;
+        fav.decoding = "async";
+        fav.loading = "lazy";
+        fav.style.marginRight = "6px";
+        fav.style.verticalAlign = "text-bottom";
+        fav.referrerPolicy = "no-referrer";
+        fav.addEventListener("error", () => { try{ fav.remove(); }catch{} }, { once:true });
+        b1.prepend(fav);
+      }
 
       const b2 = document.createElement("span");
       b2.className = "badge age";
@@ -1815,9 +2038,9 @@ Fuente:
     if (!els.tnpTickerInner) return;
 
     const pps = getTickerPps();
-    const top10 = state.filtered.slice(0, 10);
+    const topN = state.filtered.slice(0, BOOT.tickerMaxItems);
 
-    if (!top10.length){
+    if (!topN.length){
       els.tnpTickerInner.textContent = "Sin noticias aún…";
       requestAnimationFrame(() => {
         applyTickerSpeed();
@@ -1826,7 +2049,7 @@ Fuente:
       return;
     }
 
-    const sig = top10.map(x => x.id).join("|");
+    const sig = topN.map(x => x.id).join("|");
 
     if (sig === state.lastTickerSig){
       if (state.lastTickerPps !== pps){
@@ -1842,13 +2065,26 @@ Fuente:
 
     state.lastTickerSig = sig;
 
-    const parts = top10.map(x => `• ${x.title}`);
-    els.tnpTickerInner.textContent = parts.join("   ");
+    const parts = topN.map(x => `• ${x.title}`);
+    els.tnpTickerInner.textContent = parts.join(BOOT.tickerSeparator);
 
     requestAnimationFrame(() => {
       applyTickerSpeed();
       restartTickerAnim();
     });
+  }
+
+  function toHashtag(s){
+    const raw = String(s || "").trim();
+    if (!raw) return "";
+    const words = raw
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 5);
+    if (!words.length) return "";
+    const cap = words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+    return "#" + cap;
   }
 
   function buildTrendCandidates(){
@@ -1874,25 +2110,98 @@ Fuente:
 
   function updateTrendsPop(){
     if (!els.tnpTrendsPop) return;
+    if (!BOOT.enableTrends || !BOOT.popTrends) return;
 
-    const tags = buildTrendCandidates();
+    const tags = (state.trends.tags && state.trends.tags.length)
+      ? state.trends.tags
+      : buildTrendCandidates();
+
+    const sig = tags.join("|");
     if (!tags.length){
       els.tnpTrendsPop.classList.remove("on");
       els.tnpTrendsPop.setAttribute("aria-hidden","true");
       return;
     }
 
-    clearInterval(state.trendsTimer);
+    if (sig === state.trends.lastSig) return;
+    state.trends.lastSig = sig;
+
+    clearInterval(state.trends.timer);
+
     let idx = 0;
     els.tnpTrendsPop.textContent = tags[idx];
     els.tnpTrendsPop.classList.add("on");
     els.tnpTrendsPop.setAttribute("aria-hidden","false");
 
-    state.trendsTimer = setInterval(() => {
+    state.trends.timer = setInterval(() => {
       idx = (idx + 1) % tags.length;
       els.tnpTrendsPop.textContent = tags[idx];
       els.tnpTrendsPop.classList.add("on");
-    }, 4200);
+    }, BOOT.popDurationMs);
+  }
+
+  async function loadTrendsSourcesOnce(signal){
+    if (state.trends.sourcesLoaded) return;
+    state.trends.sourcesLoaded = true;
+
+    // Best-effort: carga JSON de fuentes (si existe)
+    try{
+      const j = await fetchJsonSmart(BOOT.trendsSourcesUrl, signal);
+      state.trends.sources = j;
+    }catch{
+      state.trends.sources = null;
+    }
+  }
+
+  async function refreshExternalTrends(signal){
+    if (!BOOT.enableTrends || !BOOT.popTrends) return;
+    const now = nowMs();
+    if (now - state.trends.lastFetchMs < 3*60*1000) return; // cada 3 min
+    state.trends.lastFetchMs = now;
+
+    await loadTrendsSourcesOnce(signal);
+    const srcPack = asObject(state.trends.sources, null);
+    if (!srcPack) return;
+
+    const rules = asObject(srcPack.rules, {});
+    const maxShown = clamp(numOr(rules.maxShown, 6), 3, 10);
+    const minLen = clamp(numOr(rules.minLen, 2), 1, 6);
+    const hashtagify = (rules.hashtagify !== false);
+    const banContains = new Set(asArray(rules.banContains, []).map(x => String(x||"").toLowerCase()));
+
+    const sources = asArray(srcPack.sources, []).filter(s => s && s.enabled && s.url);
+    if (!sources.length) return;
+
+    // toma la primera enabled (realtime ES normalmente)
+    const src = sources[0];
+
+    try{
+      const xml = await fetchTextSmart(String(src.url), signal);
+      const feed = { name: "Trends", cat: "trend" };
+      const items = parseFeed(xml, feed).slice(0, 20);
+
+      const tags = [];
+      for (const it of items){
+        const title = normSpace(it.title);
+        if (!title) continue;
+        if (title.length < minLen) continue;
+        const low = title.toLowerCase();
+        let banned = false;
+        for (const b of banContains){
+          if (b && low.includes(b)) { banned = true; break; }
+        }
+        if (banned) continue;
+
+        const tag = hashtagify ? toHashtag(title) : ("#" + title.replace(/\s+/g,""));
+        if (!tag || tag.length < 3) continue;
+        if (!tags.includes(tag)) tags.push(tag);
+        if (tags.length >= maxShown) break;
+      }
+
+      if (tags.length) state.trends.tags = tags;
+    }catch{
+      // ignore
+    }
   }
 
   /* ───────────────────────────── UI TICK (sin re-render) ───────────────────────────── */
@@ -2039,6 +2348,9 @@ Fuente:
       localStorage.removeItem(LS_TR_CACHE);
       localStorage.removeItem(LS_BUILD_ID);
       localStorage.removeItem(LS_MEMBER);
+      localStorage.removeItem(LS_MEM_OVERRIDE);
+      try{ localStorage.removeItem(LS_AUTH); }catch{}
+      try{ sessionStorage.removeItem(LS_AUTH); }catch{}
     }catch{}
 
     try{
@@ -2076,8 +2388,71 @@ Fuente:
     setTimeout(() => location.reload(), 350);
   }
 
+  /* ───────────────────────────── AUTH GATE UI ───────────────────────────── */
+  function ensureGateOverlay(){
+    if (!BOOT.requireLogin || !BOOT.hardGate) return;
+
+    if (canUseApp()){
+      if (state.gateEl){
+        try{ state.gateEl.remove(); }catch{}
+        state.gateEl = null;
+      }
+      return;
+    }
+
+    if (state.gateEl) return;
+
+    const gate = document.createElement("div");
+    gate.id = "tnpAuthGate";
+    gate.style.position = "fixed";
+    gate.style.inset = "0";
+    gate.style.zIndex = "9999";
+    gate.style.background = "rgba(0,0,0,0.65)";
+    gate.style.backdropFilter = "blur(6px)";
+    gate.style.display = "flex";
+    gate.style.alignItems = "center";
+    gate.style.justifyContent = "center";
+    gate.style.padding = "16px";
+
+    gate.innerHTML = `
+      <div style="max-width:560px; width:100%; border:1px solid rgba(255,255,255,0.14); border-radius:18px; background:rgba(10,16,32,0.92); padding:16px;">
+        <div style="font-weight:900; font-size:18px;">🔒 Login requerido</div>
+        <div style="margin-top:8px; color:rgba(231,233,234,0.72); line-height:1.35;">
+          Para usar el panel, inicia sesión con Google.
+        </div>
+        <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+          <button id="tnpGateOpenMember" class="btn btn--primary" type="button">Abrir Membresía</button>
+          <button id="tnpGateRetry" class="btn" type="button">Reintentar</button>
+        </div>
+        <div style="margin-top:10px; color:rgba(231,233,234,0.55); font-size:12px;">
+          Tip: si no ves el botón de Google, revisa <code>googleClientId</code> en <code>config/boot-config.js</code>.
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(gate);
+    state.gateEl = gate;
+
+    gate.querySelector("#tnpGateOpenMember")?.addEventListener("click", () => setMemberModalOpen(true));
+    gate.querySelector("#tnpGateRetry")?.addEventListener("click", () => {
+      if (canUseApp()){
+        try{ gate.remove(); }catch{}
+        state.gateEl = null;
+      } else {
+        setMemberModalOpen(true);
+      }
+    });
+  }
+
   /* ───────────────────────────── REFRESH LOOP ───────────────────────────── */
   async function refreshAll({ force=false, user=false } = {}){
+    if (!canUseApp()){
+      setStatus("🔒 Login requerido. Abre ‘Membresía’ para iniciar sesión.");
+      setMemberModalOpen(true);
+      ensureGateOverlay();
+      return;
+    }
+
     if (state.refreshInFlight){
       if (!user) return;
       try{ state.refreshAbort?.abort("user_refresh"); }catch{}
@@ -2109,7 +2484,17 @@ Fuente:
     try{
       const lim = tierLimits();
       const cap = clamp(numOr(els.fetchCap?.value, settings.fetchCap || 240), 80, lim.fetchCapMax);
-      const batchSize = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds || 12), 4, lim.batchMax);
+
+      // batchSize real = min(UI, tier, network)
+      const batchSize = clamp(
+        Math.min(
+          numOr(els.batchFeeds?.value, settings.batchFeeds || 12),
+          lim.batchMax,
+          BOOT.maxConcurrentFeeds
+        ),
+        2,
+        40
+      );
 
       const allItems = [];
       const enabledFeeds = feeds.slice();
@@ -2136,6 +2521,7 @@ Fuente:
             for (const it of items){
               const sc = scoreImpact(it, true);
               it.top = sc >= 8;
+              if (BOOT.enableFavicons) it.favicon = faviconForDomain(it.domain);
               allItems.push(it);
               if (allItems.length >= cap * 2) break;
             }
@@ -2165,38 +2551,44 @@ Fuente:
 
         it.link = kk;
         it.domain = domainOf(kk);
+        if (BOOT.enableFavicons) it.favicon = faviconForDomain(it.domain);
         dedup.push(it);
       }
 
       const now = nowMs();
       const clean = dedup.filter(it => (now - it.dateMs) >= 0);
-
       clean.sort((a,b) => b.dateMs - a.dateMs);
 
       state.items = clean.slice(0, Math.max(cap, BOOT.maxItemsKeep));
 
       // Resolve/OG limits dependen de tier
       const lim2 = tierLimits();
+
       if (els.optResolveLinks?.checked){
         const need = state.items.filter(it => shouldResolve(it.link)).slice(0, lim2.resolveLimit);
-        await mapLimit(need, 6, async (it) => {
+        await mapLimit(need, BOOT.maxConcurrentResolve, async (it) => {
           it.resolvedUrl = await resolveUrl(it.link, signal);
         }, signal);
       }
 
-      const needImg = state.items
-        .filter(it => !it.img && (it.resolvedUrl || it.link))
-        .slice(0, lim2.ogLimit);
+      if (BOOT.enableOgImages){
+        const needImg = state.items
+          .filter(it => !it.img && (it.resolvedUrl || it.link))
+          .slice(0, lim2.ogLimit);
 
-      await mapLimit(needImg, 6, async (it) => {
-        const u = it.resolvedUrl || it.link;
-        const og = await fetchOgImage(u, signal);
-        if (og && og.img) it.img = og.img;
-      }, signal);
+        await mapLimit(needImg, BOOT.maxConcurrentOg, async (it) => {
+          const u = it.resolvedUrl || it.link;
+          const og = await fetchOgImage(u, signal);
+          if (og && og.img) it.img = og.img;
+        }, signal);
+      }
 
       for (const it of state.items){
         it.ready = !!(it.title && (it.resolvedUrl || it.link));
       }
+
+      // Trends externos (best-effort)
+      try{ await refreshExternalTrends(signal); }catch{}
 
       setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
 
@@ -2221,6 +2613,10 @@ Fuente:
     clearInterval(state.autoTimer);
     if (!els.optAutoRefresh?.checked) return;
 
+    if (!canUseApp()){
+      return;
+    }
+
     const lim = tierLimits();
     const sec = clamp(numOr(els.refreshSec?.value, settings.refreshSec || 60), lim.autoMinSec, 600);
 
@@ -2232,7 +2628,6 @@ Fuente:
 
   /* ───────────────────────────── MEMBERSHIP UI + GOOGLE LOGIN ───────────────────────────── */
   function injectMembershipUi(){
-    // Si ya existe (por recarga parcial / duplicado), no reinjectar
     if (document.getElementById("btnMember") || document.getElementById("memberModal")) {
       const btn = document.getElementById("btnMember");
       const pill = document.getElementById("memberPill");
@@ -2241,7 +2636,6 @@ Fuente:
       return;
     }
 
-    // Host preferente: topbar__right. Fallbacks: topbar / status container / body.
     const topRight =
       document.querySelector(".topbar__right") ||
       document.querySelector(".topbar") ||
@@ -2257,7 +2651,7 @@ Fuente:
     pill.className = "status";
     pill.id = "memberPill";
     pill.style.marginLeft = "8px";
-    pill.textContent = `Membresía: ${tierTitle(state.member.tier)}`;
+    pill.textContent = pillText();
 
     if (topRight){
       topRight.prepend(btn);
@@ -2276,10 +2670,13 @@ Fuente:
     modal.setAttribute("role","dialog");
     modal.setAttribute("aria-label","Membresía");
 
-    const kofiUrl = BOOT.kofiTiersUrl || "";
+    const kofiUrl = BOOT.kofiTiersUrl || BOOT.checkoutUrlTemplate || "";
+
     const tierCardsHtml = BOOT.tiers.map(t => {
       const perks = (Array.isArray(t.perks) ? t.perks : []).slice(0, 6).map(p => `<li>${String(p)}</li>`).join("");
-      const buy = kofiUrl ? `<a class="btn btn--primary btn--sm" href="${kofiUrl}" target="_blank" rel="noopener noreferrer">Unirme en Ko-fi</a>` : "";
+      const buy = kofiUrl
+        ? `<a class="btn btn--primary btn--sm" href="${kofiUrl}" target="_blank" rel="noopener noreferrer">Unirme</a>`
+        : "";
       return `
         <div style="border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:12px; background:rgba(255,255,255,0.04);">
           <div style="display:flex; align-items:baseline; justify-content:space-between; gap:10px;">
@@ -2299,7 +2696,7 @@ Fuente:
         <div class="modal__head">
           <div>
             <div class="modal__title">Membresía</div>
-            <div class="mini muted">Login con Google para activar tu tier (sin cuentas propias).</div>
+            <div class="mini muted">Login con Google para activar sesión y tier (sin cuentas propias).</div>
           </div>
           <button id="btnCloseMemberModal" class="btn btn--sm" type="button">Cerrar</button>
         </div>
@@ -2313,8 +2710,8 @@ Fuente:
           <div class="panel__title panel__title--sm">Tu estado</div>
           <div class="row row--wrap">
             <span class="badge ok" id="memberTierBadge">${tierTitle(state.member.tier)}</span>
-            <span class="mini muted" id="memberEmail">${state.member.email ? state.member.email : "Sin sesión"}</span>
-            <span class="mini muted" id="memberExp">${state.member.expMs ? ("exp: " + new Date(state.member.expMs).toLocaleString()) : ""}</span>
+            <span class="mini muted" id="memberEmail">${state.auth.email ? state.auth.email : "Sin sesión"}</span>
+            <span class="mini muted" id="memberExp">${state.member.expMs ? ("tier exp: " + new Date(state.member.expMs).toLocaleString()) : ""}</span>
           </div>
 
           <div style="height:10px"></div>
@@ -2327,13 +2724,13 @@ Fuente:
           <div class="row row--wrap">
             <div id="gsiBtn"></div>
             <button id="btnMemberSignOut" class="btn btn--danger btn--sm" type="button">Cerrar sesión</button>
-            ${kofiUrl ? `<a class="btn btn--x btn--sm" href="${kofiUrl}" target="_blank" rel="noopener noreferrer">Ver tiers en Ko-fi</a>` : ""}
+            ${BOOT.manageUrl ? `<a class="btn btn--x btn--sm" href="${BOOT.manageUrl}" target="_blank" rel="noopener noreferrer">Gestionar</a>` : ""}
           </div>
 
           <div id="memberMsg" class="warn" style="margin-top:10px;"></div>
 
           <div class="mini muted" style="margin-top:12px;">
-            Tip: si usas allowlist (GitHub Pages), añade tu email con hash (SHA-256) en config/members.json.
+            Tip: si usas allowlist, puedes tener modo “emails” o modo “hash (SHA-256)”.
           </div>
         </div>
       </div>
@@ -2346,19 +2743,30 @@ Fuente:
     btn.addEventListener("click", () => setMemberModalOpen(true));
     modal.addEventListener("click", (e) => { if (e.target === modal) setMemberModalOpen(false); });
     modal.querySelector("#btnCloseMemberModal")?.addEventListener("click", () => setMemberModalOpen(false));
+
     modal.querySelector("#btnMemberSignOut")?.addEventListener("click", () => {
+      clearAuth();
       clearMember();
+      state.auth = loadAuth();
       state.member = loadMember();
       updateMemberUi("Sesión cerrada.");
+
       applyTierLimitsToUi();
       startAuto();
       applyFiltersDebounced();
+      ensureGateOverlay();
+
       try{
         if (window.google?.accounts?.id){
           window.google.accounts.id.disableAutoSelect?.();
         }
       }catch{}
     });
+  }
+
+  function pillText(){
+    const email = state.auth.email ? state.auth.email : "—";
+    return `Cuenta: ${email} · Tier: ${tierTitle(state.member.tier)}`;
   }
 
   function setMemberModalOpen(open){
@@ -2369,14 +2777,13 @@ Fuente:
     m.setAttribute("aria-hidden", open ? "false" : "true");
     if (open){
       updateMemberUi();
-      // Render GIS button if ready
       try{ maybeInitGoogleSignIn(); }catch{}
     }
   }
 
   function updateMemberUi(msg){
     const { pill, modal } = state.memberUi;
-    if (pill) pill.textContent = `Membresía: ${tierTitle(state.member.tier)}`;
+    if (pill) pill.textContent = pillText();
 
     if (modal){
       const badge = modal.querySelector("#memberTierBadge");
@@ -2385,8 +2792,8 @@ Fuente:
       const box = modal.querySelector("#memberMsg");
 
       if (badge) badge.textContent = tierTitle(state.member.tier);
-      if (email) email.textContent = state.member.email || "Sin sesión";
-      if (exp) exp.textContent = state.member.expMs ? ("exp: " + new Date(state.member.expMs).toLocaleString()) : "";
+      if (email) email.textContent = state.auth.email || "Sin sesión";
+      if (exp) exp.textContent = state.member.expMs ? ("tier exp: " + new Date(state.member.expMs).toLocaleString()) : "";
       if (box) box.textContent = msg ? String(msg) : "";
     }
   }
@@ -2442,34 +2849,49 @@ Fuente:
             return;
           }
 
-          updateMemberUi("Verificando membresía…");
+          // hd (domain restriction) si se configura
+          if (BOOT.hd){
+            const dom = email.split("@")[1] || "";
+            if (dom.toLowerCase() !== BOOT.hd.toLowerCase()){
+              updateMemberUi(`❌ Cuenta no permitida (hd=${BOOT.hd}).`);
+              return;
+            }
+          }
 
+          updateMemberUi("Verificando…");
+
+          // Guardar AUTH
+          state.auth = {
+            email, name, picture, sub,
+            expMs: (jwtExp && jwtExp > nowMs()) ? jwtExp : (nowMs() + 24*60*60*1000)
+          };
+          saveAuth(state.auth);
+
+          // Verificar membership tier
           const res = await verifyMembership({ email, credential });
           const tier = normTier(res.tier);
-          const expMs = Number(res.expMs || jwtExp || 0);
+          const expMs = Number(res.expMs || 0);
 
           state.member = {
             tier,
-            email,
-            name,
-            picture,
-            sub,
-            expMs: expMs && expMs > nowMs() ? expMs : (nowMs() + 7*24*60*60*1000) // fallback 7d
+            expMs: (expMs && expMs > nowMs())
+              ? expMs
+              : (tier !== "free" ? (nowMs() + 7*24*60*60*1000) : 0)
           };
           saveMember(state.member);
 
           updateMemberUi(tier !== "free"
-            ? `✅ Membresía activada: ${tierTitle(tier)}`
-            : "ℹ️ Sesión OK, pero no hay tier activo (Free)."
+            ? `✅ Tier activado: ${tierTitle(tier)}`
+            : (BOOT.requireLogin ? "✅ Sesión OK (FREE)." : "ℹ️ Sesión OK, sin tier (FREE).")
           );
 
           applyTierLimitsToUi();
           startAuto();
           applyFiltersDebounced();
+          ensureGateOverlay();
         }
       });
 
-      // Render button inside modal
       const host = state.memberUi.modal?.querySelector("#gsiBtn");
       if (host){
         host.innerHTML = "";
@@ -2482,8 +2904,8 @@ Fuente:
         });
       }
 
-      // One Tap opcional (solo si no hay sesión)
-      if (state.member.tier === "free"){
+      // One Tap opcional
+      if (BOOT.autoPrompt && !isAuthed()){
         try{ window.google.accounts.id.prompt(); }catch{}
       }
 
@@ -2493,7 +2915,7 @@ Fuente:
     }
   }
 
-  // Debug helper: genera hash para allowlist (en consola: TNP.debugHash("tuemail@gmail.com"))
+  // Debug helper: hash para allowlist hash-mode
   window.TNP = window.TNP || {};
   window.TNP.debugHash = async (email) => {
     const e = String(email || "").toLowerCase().trim();
@@ -2506,10 +2928,10 @@ Fuente:
   function bindUI(){
     hideBootDiag();
 
-    // Inject membership UI
     injectMembershipUi();
     updateMemberUi();
     applyTierLimitsToUi();
+    ensureGateOverlay();
 
     if (els.liveUrl) els.liveUrl.value = settings.liveUrl;
     if (els.template) els.template.value = loadTemplate();
@@ -2567,7 +2989,7 @@ Fuente:
     const saveRefreshSettings = () => {
       const lim = tierLimits();
       settings.fetchCap   = clamp(numOr(els.fetchCap?.value, settings.fetchCap), 80, lim.fetchCapMax);
-      settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 4, lim.batchMax);
+      settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 2, Math.min(lim.batchMax, BOOT.maxConcurrentFeeds));
       saveSettings(settings);
     };
 
@@ -2795,8 +3217,13 @@ Fuente:
     applyFilters();
     startAuto();
 
-    // Optional: init GIS en background (no bloquea)
+    // GIS: init best-effort
     try{ setTimeout(() => maybeInitGoogleSignIn(), 400); }catch{}
+
+    // Si hardGate y requireLogin => abre modal directamente (para guiar)
+    if (BOOT.requireLogin && BOOT.hardGate && !canUseApp()){
+      try{ setTimeout(() => setMemberModalOpen(true), 250); }catch{}
+    }
 
     refreshAll({ force:true, user:false }).catch(()=>{});
   }
