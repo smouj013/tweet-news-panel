@@ -15,6 +15,13 @@
   const APP_VERSION = "tnp-v4.1.3";
   const BUILD_ID = "2026-01-12c";
 
+  // Guard anti-doble-carga (SW / recargas parciales / inline scripts duplicados)
+  try{
+    const tag = `${APP_VERSION}:${BUILD_ID}`;
+    if (window.__TNP_APP_LOADED__?.tag === tag) return;
+    window.__TNP_APP_LOADED__ = { tag, at: Date.now() };
+  }catch{}
+
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
   const DEFAULT_TEMPLATE =
 `🚨 ÚLTIMA HORA: {{HEADLINE}}
@@ -633,7 +640,8 @@ Fuente:
     // Clamp UI settings quietly
     const clampInput = (el, min, max) => {
       if (!el) return;
-      const v = clamp(numOr(el.value, numOr(el.getAttribute("value"), min)), min, max);
+      const raw = (el.value != null) ? el.value : el.getAttribute("value");
+      const v = clamp(numOr(raw, min), min, max);
       el.value = String(v);
     };
 
@@ -2224,7 +2232,20 @@ Fuente:
 
   /* ───────────────────────────── MEMBERSHIP UI + GOOGLE LOGIN ───────────────────────────── */
   function injectMembershipUi(){
-    const topRight = document.querySelector(".topbar__right") || (els.status?.parentElement || null);
+    // Si ya existe (por recarga parcial / duplicado), no reinjectar
+    if (document.getElementById("btnMember") || document.getElementById("memberModal")) {
+      const btn = document.getElementById("btnMember");
+      const pill = document.getElementById("memberPill");
+      const modal = document.getElementById("memberModal");
+      state.memberUi = { btn, pill, modal };
+      return;
+    }
+
+    // Host preferente: topbar__right. Fallbacks: topbar / status container / body.
+    const topRight =
+      document.querySelector(".topbar__right") ||
+      document.querySelector(".topbar") ||
+      (els.status?.parentElement || null);
 
     const btn = document.createElement("button");
     btn.type = "button";
@@ -2238,7 +2259,6 @@ Fuente:
     pill.style.marginLeft = "8px";
     pill.textContent = `Membresía: ${tierTitle(state.member.tier)}`;
 
-    // Insert next to status
     if (topRight){
       topRight.prepend(btn);
       topRight.appendChild(pill);
@@ -2333,6 +2353,11 @@ Fuente:
       applyTierLimitsToUi();
       startAuto();
       applyFiltersDebounced();
+      try{
+        if (window.google?.accounts?.id){
+          window.google.accounts.id.disableAutoSelect?.();
+        }
+      }catch{}
     });
   }
 
@@ -2369,6 +2394,9 @@ Fuente:
   function ensureGsiScript(){
     if (!BOOT.googleClientId) return Promise.resolve(false);
     if (window.google && window.google.accounts && window.google.accounts.id) return Promise.resolve(true);
+
+    const existing = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+    if (existing) return Promise.resolve(true);
 
     return new Promise((resolve) => {
       const s = document.createElement("script");
@@ -2767,7 +2795,7 @@ Fuente:
     applyFilters();
     startAuto();
 
-    // Optional: init GIS in background (no bloquea)
+    // Optional: init GIS en background (no bloquea)
     try{ setTimeout(() => maybeInitGoogleSignIn(), 400); }catch{}
 
     refreshAll({ force:true, user:false }).catch(()=>{});

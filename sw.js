@@ -1,21 +1,23 @@
-/* sw.js — News → Tweet Template Panel (tnp-v4.1.1) — PWA Service Worker (AUTO-UPDATE REAL, HARDENED)
+/* sw.js — News → Tweet Template Panel (tnp-v4.1.3) — PWA Service Worker (AUTO-UPDATE REAL, HARDENED)
+   ✅ Alineado con app.js (tnp-v4.1.3 / 2026-01-12c)
    ✅ GitHub Pages friendly: evita quedarte pegado con app.js viejo
    ✅ NAV/HTML: Network-first (cache fallback)
    ✅ Shell CRÍTICO (index/app/styles/manifest): Network-first + cache:"reload"
    ✅ Shell no crítico: Stale-while-revalidate
    ✅ RSS/feeds/proxies/APIs: Network-first
    ✅ Imágenes/favicons: Stale-while-revalidate
+   ✅ Terceros (GIS/Google/etc): Network-only (NO cache) para evitar “pegado” + explosión de cache
    ✅ Limpieza automática de caches antiguos
    ✅ skipWaiting + clients.claim
    ✅ message: SKIP_WAITING / CLEAR_CACHES
-   ✅ Anti-explosión de cache: normaliza cache-key quitando ?__tnp= y ?v= (y otros cb comunes)
+   ✅ Anti-explosión: normaliza cache-key quitando ?__tnp= y ?v= (y otros cb comunes)
 */
 
 "use strict";
 
 /* ───────────────────────────── CONFIG ───────────────────────────── */
-const SW_VERSION  = "tnp-v4.1.1";
-const SW_BUILD_ID = "2026-01-11b"; // 👈 mantenlo alineado con app.js / index.html
+const SW_VERSION  = "tnp-v4.1.3";
+const SW_BUILD_ID = "2026-01-12c"; // 👈 alineado con app.js / index.html
 
 const CACHE_PREFIX = "tnp";
 
@@ -28,7 +30,7 @@ const CACHE_KEEP_PREFIXES = [
   `${CACHE_PREFIX}-shell-`,
   `${CACHE_PREFIX}-runtime-`,
   `${CACHE_PREFIX}-feeds-`,
-  `${CACHE_PREFIX}-img-`
+  `${CACHE_PREFIX}-img-`,
 ];
 
 // OJO: si algo no existe, no rompe (allSettled)
@@ -39,6 +41,10 @@ const SHELL_ASSETS = [
   "./app.js",
   "./manifest.webmanifest",
 
+  // Config opcional (si existe). No rompe si falta.
+  "./config/boot-config.js",
+  "./config/members.json",
+
   "./assets/icons/favicon-32.png",
   "./assets/icons/apple-touch-icon-152.png",
   "./assets/icons/apple-touch-icon-167.png",
@@ -46,7 +52,7 @@ const SHELL_ASSETS = [
   "./assets/icons/icon-192.png",
   "./assets/icons/icon-512.png",
   "./assets/icons/icon-192-maskable.png",
-  "./assets/icons/icon-512-maskable.png"
+  "./assets/icons/icon-512-maskable.png",
 ];
 
 /* ───────────────────────────── URL HELPERS ───────────────────────────── */
@@ -146,7 +152,7 @@ function isImageLike(reqUrl) {
 
 /* ───────────────────────────── CACHE KEY NORMALIZATION ─────────────────────────────
    IMPORTANT:
-   - index.html carga app.js con `?v=...` para bustear caché (GH Pages).
+   - index.html suele cargar app.js con `?v=...` para bustear caché (GH Pages).
    - Si NO normalizamos `v`, se crean MIL entradas (una por build).
 */
 function normalizeCacheKeyRequest(req) {
@@ -163,7 +169,7 @@ function normalizeCacheKeyRequest(req) {
     return new Request(url.toString(), {
       method: "GET",
       credentials: isSameOrigin(url.toString()) ? "same-origin" : "omit",
-      redirect: "follow"
+      redirect: "follow",
     });
   } catch {
     return req;
@@ -241,6 +247,19 @@ async function cacheFirst(req, cacheName, timeoutMs = 12000, fetchCacheMode = "n
   try {
     const res = await fetch(req, { signal: ctrl.signal, cache: fetchCacheMode });
     if (res && (res.ok || res.type === "opaque")) await putIfCacheable(cache, cacheKeyReq, res);
+    return res || new Response("", { status: 504, statusText: "Offline" });
+  } catch {
+    return new Response("", { status: 504, statusText: "Offline" });
+  } finally {
+    cancel();
+  }
+}
+
+// Terceros (Google GIS, etc.) => NO cache: evita “pegado” y evita llenar CACHE_RUNTIME con opaque
+async function networkOnly(req, timeoutMs = 12000, fetchCacheMode = "no-store") {
+  const { ctrl, cancel } = withTimeout(timeoutMs);
+  try {
+    const res = await fetch(req, { signal: ctrl.signal, cache: fetchCacheMode });
     return res || new Response("", { status: 504, statusText: "Offline" });
   } catch {
     return new Response("", { status: 504, statusText: "Offline" });
@@ -354,24 +373,30 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // FONTS (cache-first)
+  // FONTS (cache-first) — solo same-origin
   if (same && isFontAsset(url)) {
     event.respondWith(cacheFirst(req, CACHE_SHELL, 15000, "no-store"));
     return;
   }
 
-  // FEEDS / APIs / PROXIES
+  // FEEDS / APIs / PROXIES (incluye cross-origin)
   if (isFeedLike(url)) {
     event.respondWith(networkFirst(req, CACHE_FEEDS, 16000, "no-store"));
     return;
   }
 
-  // IMAGES / FAVICONS
+  // IMAGES / FAVICONS (incluye cross-origin)
   if (isImageLike(url)) {
     event.respondWith(staleWhileRevalidate(req, CACHE_IMAGES, 16000, "no-store"));
     return;
   }
 
-  // RESTO
+  // CROSS-ORIGIN: por defecto NO cache (evita GIS/third-party “pegado” + cache gigante)
+  if (!same) {
+    event.respondWith(networkOnly(req, 15000, "no-store"));
+    return;
+  }
+
+  // RESTO same-origin
   event.respondWith(staleWhileRevalidate(req, CACHE_RUNTIME, 15000, "no-store"));
 });
