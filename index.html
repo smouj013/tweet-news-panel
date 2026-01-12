@@ -1,12 +1,11 @@
-<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — FIXED HIDDEN + SW BOOT REPAIR + CONFIG BOOT + KOFI
-  ✅ 100% compatible con app.js v4.2.0 (IDs + modal feeds + ticker + X mock + botones)
-  ✅ FIX CLAVE: evita “doble ocultación” (hidden attr + .hidden) que rompía modales/gates si app.js solo quitaba una de las dos
-  ✅ AUTH: Login Google (GIS) + Gate opcional (si requireLogin=true)
-  ✅ MEMBERSHIP: FREE / PRO / ELITE (modal “Planes” listo)
-  ✅ Cache-bust controlado (BUILD_TAG) para evitar “app.js viejo” en GitHub Pages
-  ✅ SW register con updateViaCache:"none" + update() periódico + Repair (purge caches + unregister SW)
+<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CLEAN + NO INLINE CSS DUPES
+  ✅ 100% compatible con app.js v4.2.0 (IDs + modales + ticker + X mock + botones)
+  ✅ Evita “doble ocultación”: modales/gates usan SOLO .hidden (no hidden attr)
+  ✅ AUTH: Login Google (GIS) + Gate opcional
+  ✅ MEMBERSHIP: FREE / PRO / ELITE (modal “Planes”)
+  ✅ Cache-bust con BUILD_TAG + SW updateViaCache:"none" + Repair
   ✅ Carga /config/boot-config.js ANTES de app.js
-  ✅ Botón Ko-fi en la topbar
+  ✅ Ko-fi en topbar
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -53,75 +52,6 @@
 
   <!-- Google Identity Services (Login Google). app.js lo usa si auth.enabled=true -->
   <script async defer src="https://accounts.google.com/gsi/client"></script>
-
-  <!-- 🔧 Fallback: asegura que .hidden SIEMPRE oculta (evita dependencias de styles.css) -->
-  <style>
-    .hidden{ display:none !important; }
-  </style>
-
-  <!-- Mini CSS local SOLO para banner de reparación + gate + planes (no rompe tu styles.css) -->
-  <style>
-    .bootDiag{
-      position: fixed;
-      inset: auto calc(14px + env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) calc(14px + env(safe-area-inset-left, 0px));
-      z-index: 9999;
-      display: grid;
-      gap: 10px;
-      padding: 12px 14px;
-      border-radius: 16px;
-      border: 1px solid rgba(255,255,255,0.16);
-      background: rgba(8,12,20,0.92);
-      box-shadow: 0 14px 50px rgba(0,0,0,0.55);
-    }
-    .bootDiag__row{ display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
-    .bootDiag__title{ font-weight: 900; }
-    .bootDiag__msg{ color: rgba(231,233,234,0.70); font-size: 12px; line-height: 1.35; }
-    .bootDiag .btn{ white-space: nowrap; }
-
-    /* Gate (si requireLogin=true y hardGate=true) */
-    .authGate{
-      position: fixed;
-      inset: 0;
-      z-index: 9998;
-      display: grid;
-      place-items: center;
-      padding: 18px;
-      background: rgba(0,0,0,0.72);
-    }
-    .authGate__panel{
-      width: min(820px, 96vw);
-      border-radius: 18px;
-      border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(8,12,20,0.92);
-      box-shadow: 0 14px 50px rgba(0,0,0,0.55);
-      padding: 16px;
-    }
-    .authGate__title{ font-weight: 900; font-size: 16px; margin-bottom: 6px; }
-    .authGate__sub{ color: rgba(231,233,234,0.72); font-size: 12px; line-height: 1.35; margin-bottom: 12px; }
-
-    /* Planes */
-    .tierGrid{
-      display:grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-    }
-    @media (max-width: 860px){
-      .tierGrid{ grid-template-columns: 1fr; }
-    }
-    .tierCard{
-      border-radius: 16px;
-      border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(255,255,255,0.05);
-      padding: 12px;
-      min-width: 0;
-    }
-    .tierCard__head{ display:flex; align-items:baseline; justify-content: space-between; gap: 10px; }
-    .tierCard__name{ font-weight: 900; letter-spacing: .2px; }
-    .tierCard__price{ color: rgba(231,233,234,0.70); font-size: 12px; }
-    .tierCard__perks{ margin: 10px 0 12px; padding-left: 18px; color: rgba(231,233,234,0.80); font-size: 12px; line-height: 1.35; }
-    .tierCard__perks li{ margin: 4px 0; }
-    .tierCard__cta{ display:flex; gap: 10px; flex-wrap: wrap; }
-  </style>
 </head>
 
 <body>
@@ -133,12 +63,12 @@
       <div class="authGate__title">Inicia sesión para usar el panel</div>
       <div class="authGate__sub">
         Acceso con Google. Tu plan (FREE/PRO/ELITE) se aplica automáticamente.
-        <br/>Si estás en modo demo, el plan puede venir de <span style="font-family: ui-monospace, monospace;">localStorage tnp_membership_override</span>.
+        <br/>Si estás en modo demo, el plan puede venir de <span class="mono">localStorage tnp_membership_override</span>.
       </div>
-      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <div class="authGate__row">
         <button id="btnLoginGate" class="btn btn--primary" type="button">Entrar con Google</button>
         <button id="btnOpenPlansGate" class="btn" type="button">Ver planes</button>
-        <span id="authGateMsg" class="mini muted" style="margin-left:auto;"></span>
+        <span id="authGateMsg" class="mini muted authGate__msg"></span>
       </div>
     </div>
   </div>
@@ -154,7 +84,7 @@
         </div>
       </div>
 
-      <div class="topbar__controls">
+      <div class="topbar__controls" aria-label="Controles principales">
         <label class="field field--inline">
           <span class="field__label">Buscar</span>
           <input id="searchBox" class="input input--sm" type="search" placeholder="Buscar titular / medio…" autocomplete="off" />
@@ -165,18 +95,16 @@
           class="btn btn--primary btn--sm"
           type="button"
           title="Refrescar (Shift+click = force + reset backoff)"
-        >
-          Refrescar
-        </button>
+        >Refrescar</button>
 
         <button id="btnFeeds" class="btn btn--sm" type="button">Feeds</button>
         <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
         <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
 
-        <!-- ✅ Planes / Membresía -->
+        <!-- Planes / Membresía -->
         <button id="btnPricing" class="btn btn--sm" type="button" title="Ver planes FREE/PRO/ELITE">💎 Planes</button>
 
-        <!-- ✅ Ko-fi -->
+        <!-- Ko-fi -->
         <a
           id="btnKofi"
           class="btn btn--sm"
@@ -188,9 +116,8 @@
       </div>
     </div>
 
-    <div class="topbar__right" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
-      <!-- Membership/Auth box (app.js actualiza textos/visibilidad) -->
-      <div id="authBox" class="row row--wrap" style="gap:8px;">
+    <div class="topbar__right" aria-label="Estado de sesión y plan">
+      <div id="authBox" class="row row--wrap authBox">
         <span id="tierBadge" class="badge" title="Plan actual">FREE</span>
         <span id="authUser" class="mini muted" title="Usuario">Sin sesión</span>
         <button id="btnLogin" class="btn btn--sm" type="button">Entrar</button>
@@ -339,7 +266,7 @@
             <label class="field field--inline" title="Velocidad del ticker en píxeles por segundo (menos = más lento)">
               <span class="field__label">Ticker</span>
               <input id="tickerSpeed" class="input input--sm" type="number" min="10" max="220" value="28" />
-              <span id="tickerSpeedVal" class="mini muted" style="margin-left:8px;">28 pps</span>
+              <span id="tickerSpeedVal" class="mini muted tickerSpeedVal">28 pps</span>
             </label>
 
             <label class="field field--inline">
@@ -501,7 +428,7 @@
       </div>
 
       <div class="modal__body">
-        <div class="row row--wrap" style="margin-bottom:12px;">
+        <div class="row row--wrap membTopRow">
           <span class="badge" id="membCurrentBadge">Plan actual: FREE</span>
           <span class="mini muted" id="membMsg"></span>
           <div class="spacer"></div>
@@ -510,7 +437,7 @@
         </div>
 
         <div id="tierCards" class="tierGrid" aria-label="Tarjetas de planes">
-          <!-- app.js puede rellenar dinámicamente; estas cards son fallback visual -->
+          <!-- fallback visual (app.js puede reemplazar/ajustar) -->
           <div class="tierCard" data-tier="free">
             <div class="tierCard__head">
               <div class="tierCard__name">FREE</div>
@@ -560,8 +487,8 @@
         <hr class="hr" />
 
         <div class="mini muted">
-          Nota: en GitHub Pages, el plan “real” se confirma con backend (recomendado: Cloudflare Worker). En modo demo, puedes probar con:
-          <span style="font-family: ui-monospace, monospace;">localStorage.setItem("tnp_membership_override","pro")</span>
+          Nota: en GitHub Pages, el plan “real” se confirma con backend (recomendado: Cloudflare Worker). En modo demo, prueba:
+          <span class="mono">localStorage.setItem("tnp_membership_override","pro")</span>
         </div>
       </div>
     </div>
@@ -599,6 +526,8 @@
 
       var bootDiag = document.getElementById("bootDiag");
       var statusEl = document.getElementById("status");
+      var topbarEl = document.getElementById("topbar");
+      var tickerEl = document.getElementById("ticker");
       var repairBtn = document.getElementById("btnRepair");
       var forceBtn = document.getElementById("btnForceSwUpdate");
       var hideBtn = document.getElementById("btnHideDiag");
@@ -620,6 +549,20 @@
           bootDiag.setAttribute("aria-hidden", "true");
         } catch {}
       }
+
+      // 🔧 Ajusta --topbarH real para que el sticky del ticker nunca se pise (si la topbar crece por wrap)
+      function syncStickyHeights(){
+        try{
+          var h = (topbarEl && topbarEl.offsetHeight) ? topbarEl.offsetHeight : 76;
+          document.documentElement.style.setProperty("--topbarH", h + "px");
+          if (tickerEl && tickerEl.offsetHeight){
+            document.documentElement.style.setProperty("--tickerH", tickerEl.offsetHeight + "px");
+          }
+        }catch{}
+      }
+      window.addEventListener("resize", function(){ syncStickyHeights(); }, { passive:true });
+      window.addEventListener("load", function(){ syncStickyHeights(); }, { passive:true });
+      syncStickyHeights();
 
       // Captura errores tempranos
       window.addEventListener("error", function (e) {
@@ -683,11 +626,12 @@
 
       function appSeemsBooted() {
         var s = (statusEl && statusEl.textContent) ? String(statusEl.textContent).trim() : "";
+        // app.js suele poner “TNP listo …”
         if (s.indexOf("TNP listo") !== -1) return true;
         return false;
       }
 
-      // Diag: espera más para no molestar en redes lentas.
+      // Diag: espera un poco para no molestar en redes lentas.
       window.addEventListener("load", function () {
         setTimeout(function () {
           try {

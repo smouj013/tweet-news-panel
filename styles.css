@@ -1,13 +1,13 @@
-/* styles.css — TNP UI PRO (v4.2.x) — CLEAN + RESPONSIVE + MODALS + TICKER + NEWS LIST
-   ✅ Compatible con tu index.html actual (IDs + clases)
+/* styles.css — TNP UI PRO (v4.2.x) — CLEAN + RESPONSIVE + MODALS + TICKER + NEWS LIST + AUTH GATE + BOOT DIAG + PLANS
+   ✅ Compatible con index.html v4.2.0 (IDs + clases)
    ✅ Compatible con modales: #modal, #membModal, #memberModal (inyección)
-   ✅ Ticker con animación estable
-   ✅ Paneles responsive (2 columnas -> 1 columna móvil)
+   ✅ Sin pisadas: sin CSS inline requerido, todo centralizado aquí
 */
 
 :root{
   --bg0:#070A12;
   --bg1:#0A1020;
+
   --panel: rgba(255,255,255,0.06);
   --panel2: rgba(255,255,255,0.09);
   --stroke: rgba(255,255,255,0.14);
@@ -33,6 +33,7 @@
   --gap: 14px;
   --gap2: 10px;
 
+  /* Defaults (se recalculan en runtime por el script del index) */
   --topbarH: 76px;
   --tickerH: 44px;
 
@@ -85,30 +86,37 @@ a:hover{ text-decoration: underline; }
 .mini{ font-size: 12px; color: var(--muted); }
 .spacer{ flex:1 1 auto; }
 
+img, svg, video{ max-width: 100%; height: auto; }
+
 /* ───────────────────────── TOPBAR ───────────────────────── */
 .topbar{
   position: sticky;
   top: 0;
   z-index: 1200;
+
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+
+  padding:
+    10px calc(14px + env(safe-area-inset-right, 0px))
+    10px calc(14px + env(safe-area-inset-left, 0px));
+
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   background: rgba(7,10,18,0.74);
   border-bottom: 1px solid rgba(255,255,255,0.10);
 }
-#topbar{
-  min-height: var(--topbarH);
-}
-.topbar__left,
-.topbar__right{
-  padding:
-    10px calc(14px + env(safe-area-inset-right, 0px))
-    10px calc(14px + env(safe-area-inset-left, 0px));
+#topbar{ min-height: var(--topbarH); }
+
+.topbar__left{
   display:flex;
   align-items:center;
   gap: 12px;
-}
-.topbar__left{
-  justify-content: space-between;
+  flex: 1 1 auto;
+  min-width: 320px;
   flex-wrap: wrap;
 }
 .topbar__controls{
@@ -117,6 +125,21 @@ a:hover{ text-decoration: underline; }
   gap: 10px;
   flex-wrap: wrap;
 }
+
+.topbar__right{
+  display:flex;
+  align-items:center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 1 auto;
+  min-width: min(520px, 100%);
+  flex-wrap: wrap;
+}
+
+.authBox{ gap: 8px; }
+.tickerSpeedVal{ margin-left: 8px; }
+
+/* Brand */
 .brand{
   display:flex;
   gap: 10px;
@@ -193,6 +216,13 @@ a:hover{ text-decoration: underline; }
   border-color: rgba(255,255,255,0.22);
 }
 
+.btn[disabled],
+.btn:disabled{
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
 .status{
   padding: 8px 10px;
   border-radius: 14px;
@@ -260,6 +290,12 @@ a:hover{ text-decoration: underline; }
   min-height: 120px;
   line-height: 1.35;
 }
+.input[disabled],
+.input:disabled{
+  opacity: .60;
+  cursor: not-allowed;
+}
+
 .field{ display:grid; gap: 6px; }
 .field--inline{
   display:flex;
@@ -299,18 +335,37 @@ a:hover{ text-decoration: underline; }
 .row--3{ display:grid; grid-template-columns: 1fr 1.2fr auto; gap: 10px; }
 .row--4{ display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
 
+/* Select pulido */
+select.input{ padding-right: 34px; }
+select.input{
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(231,233,234,0.70) 50%),
+    linear-gradient(135deg, rgba(231,233,234,0.70) 50%, transparent 50%),
+    linear-gradient(to right, transparent, transparent);
+  background-position:
+    calc(100% - 18px) calc(50% - 2px),
+    calc(100% - 12px) calc(50% - 2px),
+    100% 0;
+  background-size: 6px 6px, 6px 6px, 2.5em 2.5em;
+  background-repeat: no-repeat;
+}
+select.input::-ms-expand{ display:none; }
+
 /* ───────────────────────── TICKER ───────────────────────── */
 .ticker{
   position: sticky;
   top: var(--topbarH);
   z-index: 1100;
+
   height: var(--tickerH);
   display:flex;
   align-items:center;
   gap: 10px;
+
   padding: 0 calc(14px + env(safe-area-inset-right, 0px)) 0 calc(14px + env(safe-area-inset-left, 0px));
   background: rgba(7,10,18,0.78);
   border-bottom: 1px solid rgba(255,255,255,0.10);
+
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -343,10 +398,11 @@ a:hover{ text-decoration: underline; }
   animation-duration: var(--tickerDur, 48s);
   font-size: 13px;
   color: rgba(231,233,234,0.88);
+  transform: translate3d(0,0,0);
 }
 @keyframes tnpTickerScroll{
-  0%{ transform: translateX(0); }
-  100%{ transform: translateX(-100%); }
+  0%{ transform: translate3d(0,0,0); }
+  100%{ transform: translate3d(-100%,0,0); }
 }
 .ticker__pop{
   padding: 6px 10px;
@@ -364,6 +420,11 @@ a:hover{ text-decoration: underline; }
 .ticker__pop.on{
   opacity: 1;
   transform: translateY(0);
+}
+
+/* Pausar ticker al hover para leer */
+.ticker__track:hover .ticker__inner{
+  animation-play-state: paused;
 }
 
 /* ───────────────────────── LAYOUT ───────────────────────── */
@@ -406,12 +467,8 @@ a:hover{ text-decoration: underline; }
   font-size: 12px;
   color: var(--muted);
 }
-.panel__body{
-  padding: 14px;
-}
-.panel__body--flush{
-  padding: 0;
-}
+.panel__body{ padding: 14px; }
+.panel__body--flush{ padding: 0; }
 
 /* Forms layout */
 .grid2{
@@ -471,15 +528,12 @@ a:hover{ text-decoration: underline; }
 .newsList{
   display:grid;
   gap: 0;
-  max-height: calc(100vh - var(--topbarH) - var(--tickerH) - 44px);
-  /* iOS/Android: dvh evita el “salto” por barras del navegador */
-  max-height: calc(100dvh - var(--topbarH) - var(--tickerH) - 44px);
+  /* Evita “cortes” raros: usa dvh + un margen razonable */
+  max-height: calc(100dvh - var(--topbarH) - var(--tickerH) - 26px);
   overflow:auto;
 }
 @media (max-width: 979px){
-  .newsList{
-    max-height: unset;
-  }
+  .newsList{ max-height: unset; }
 }
 .newsItem{
   display:grid;
@@ -491,9 +545,7 @@ a:hover{ text-decoration: underline; }
   transition: background .12s ease, border-color .12s ease;
   outline: none;
 }
-.newsItem:hover{
-  background: rgba(255,255,255,0.04);
-}
+.newsItem:hover{ background: rgba(255,255,255,0.04); }
 .newsItem:focus{
   background: rgba(29,155,240,0.10);
   box-shadow: inset 0 0 0 1px rgba(29,155,240,0.30);
@@ -502,9 +554,7 @@ a:hover{ text-decoration: underline; }
   background: rgba(29,155,240,0.12);
   box-shadow: inset 0 0 0 1px rgba(29,155,240,0.36);
 }
-.newsItem.used{
-  opacity: .62;
-}
+.newsItem.used{ opacity: .62; }
 
 .thumb{
   width: 54px;
@@ -545,6 +595,7 @@ a:hover{ text-decoration: underline; }
   line-height: 1.2;
   font-size: 14px;
   color: rgba(231,233,234,0.94);
+
   display:-webkit-box;
   line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -621,10 +672,6 @@ a:hover{ text-decoration: underline; }
   object-fit: cover;
   display:block;
 }
-.xMock__ph{
-  font-size: 12px;
-  color: rgba(231,233,234,0.50);
-}
 .xMock__cardMeta{
   padding: 10px 10px 10px 0;
   min-width:0;
@@ -632,6 +679,7 @@ a:hover{ text-decoration: underline; }
 .xMock__cardTitle{
   font-weight: 900;
   line-height: 1.2;
+
   display:-webkit-box;
   line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -684,12 +732,8 @@ a:hover{ text-decoration: underline; }
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
-.modal__title{
-  font-weight: 1000;
-}
-.modal__body{
-  padding: 14px;
-}
+.modal__title{ font-weight: 1000; }
+.modal__body{ padding: 14px; }
 
 /* Feeds list */
 .feedList{
@@ -722,6 +766,9 @@ a:hover{ text-decoration: underline; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+@media (max-width: 720px){
+  .feedRow{ grid-template-columns: 20px 1fr; }
+}
 
 /* Noscript */
 .noscript{
@@ -732,31 +779,79 @@ a:hover{ text-decoration: underline; }
   background: rgba(255,255,255,0.06);
 }
 
-/* Small tweaks */
-textarea.input{ line-height: 1.35; }
-
-/* Better mobile topbar flow */
-@media (max-width: 860px){
-  :root{ --topbarH: 92px; --tickerH: 46px; }
-  .topbar__left{ justify-content:flex-start; }
-  .brand{ min-width: unset; }
-  .row--4{ grid-template-columns: 1fr 1fr; }
-  .row--3{ grid-template-columns: 1fr; }
-  .ticker__label{ display:none; }
+/* ───────────────────────── AUTH GATE ───────────────────────── */
+.authGate{
+  position: fixed;
+  inset: 0;
+  z-index: 6500;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0,0,0,0.72);
 }
+.authGate__panel{
+  width: min(820px, 96vw);
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(8,12,20,0.92);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+.authGate__title{ font-weight: 900; font-size: 16px; margin-bottom: 6px; }
+.authGate__sub{ color: rgba(231,233,234,0.72); font-size: 12px; line-height: 1.35; margin-bottom: 12px; }
+.authGate__row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+.authGate__msg{ margin-left:auto; }
 
-/* ───────────────────────── ENHANCEMENTS (v4.2.x+) ─────────────────────────
-   A11y + rendimiento + mejoras móviles/scroll.
-   Estas reglas son compatibles con tu HTML/JS actual y solo añaden calidad.
-*/
+/* ───────────────────────── PLANS (Tier Cards) ───────────────────────── */
+.tierGrid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 860px){
+  .tierGrid{ grid-template-columns: 1fr; }
+}
+.tierCard{
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.05);
+  padding: 12px;
+  min-width: 0;
+}
+.tierCard__head{ display:flex; align-items:baseline; justify-content: space-between; gap: 10px; }
+.tierCard__name{ font-weight: 900; letter-spacing: .2px; }
+.tierCard__price{ color: rgba(231,233,234,0.70); font-size: 12px; }
+.tierCard__perks{
+  margin: 10px 0 12px;
+  padding-left: 18px;
+  color: rgba(231,233,234,0.80);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.tierCard__perks li{ margin: 4px 0; }
+.tierCard__cta{ display:flex; gap: 10px; flex-wrap: wrap; }
+.membTopRow{ margin-bottom: 12px; }
 
-/* Tap highlight off (móvil) */
+/* ───────────────────────── BOOT DIAG ───────────────────────── */
+.bootDiag{
+  position: fixed;
+  inset: auto calc(14px + env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) calc(14px + env(safe-area-inset-left, 0px));
+  z-index: 9999;
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(8,12,20,0.92);
+  box-shadow: 0 14px 50px rgba(0,0,0,0.55);
+}
+.bootDiag__row{ display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+.bootDiag__title{ font-weight: 900; }
+.bootDiag__msg{ color: rgba(231,233,234,0.70); font-size: 12px; line-height: 1.35; }
+
+/* ───────────────────────── A11y + PERF ───────────────────────── */
 *{ -webkit-tap-highlight-color: transparent; }
 
-/* Imágenes seguras */
-img, svg, video{ max-width: 100%; height: auto; }
-
-/* Focus visible (mejor UX teclado). Mantiene :focus como fallback */
 :where(a,button,input,select,textarea,[tabindex]):focus-visible{
   outline: none;
   box-shadow: 0 0 0 4px rgba(29,155,240,0.22);
@@ -766,36 +861,7 @@ img, svg, video{ max-width: 100%; height: auto; }
   box-shadow: none;
 }
 
-/* Botones / inputs deshabilitados */
-.btn[disabled],
-.btn:disabled{
-  opacity: .55;
-  cursor: not-allowed;
-  transform: none !important;
-}
-.input[disabled],
-.input:disabled{
-  opacity: .60;
-  cursor: not-allowed;
-}
-
-/* Select: pequeño pulido */
-select.input{ padding-right: 34px; }
-select.input{
-  background-image:
-    linear-gradient(45deg, transparent 50%, rgba(231,233,234,0.70) 50%),
-    linear-gradient(135deg, rgba(231,233,234,0.70) 50%, transparent 50%),
-    linear-gradient(to right, transparent, transparent);
-  background-position:
-    calc(100% - 18px) calc(50% - 2px),
-    calc(100% - 12px) calc(50% - 2px),
-    100% 0;
-  background-size: 6px 6px, 6px 6px, 2.5em 2.5em;
-  background-repeat: no-repeat;
-}
-select.input::-ms-expand{ display:none; }
-
-/* Scrollbars (suave y pro, sin forzar colores del tema) */
+/* Scrollbars */
 .newsList, .modal__panel{
   scrollbar-width: thin;
   scrollbar-color: rgba(255,255,255,0.18) transparent;
@@ -816,23 +882,13 @@ select.input::-ms-expand{ display:none; }
   background: rgba(255,255,255,0.22);
 }
 
-/* Pausar ticker al hover (útil para leer) */
-.ticker__track:hover .ticker__inner{
-  animation-play-state: paused;
-}
-
-/* Backdrop-filter fallback (navegadores sin blur) */
+/* Backdrop-filter fallback */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-  .topbar,
-  .ticker{
-    background: rgba(7,10,18,0.92);
-  }
-  .modal__head{
-    background: rgba(8,12,20,0.98);
-  }
+  .topbar, .ticker{ background: rgba(7,10,18,0.92); }
+  .modal__head{ background: rgba(8,12,20,0.98); }
 }
 
-/* Reduce motion (accesibilidad) */
+/* Reduce motion */
 @media (prefers-reduced-motion: reduce){
   *{
     animation-duration: 0.001ms !important;
@@ -843,19 +899,10 @@ select.input::-ms-expand{ display:none; }
   .ticker__inner{ padding-left: 0; }
 }
 
-/* Mejor “overscroll” en móviles dentro de paneles */
+/* Better overscroll */
 .newsList, .modal__panel{ overscroll-behavior: contain; }
 
-/* Utilidad: screen-reader only (por si lo necesitas en futuros cambios) */
-.srOnly{
-  position:absolute !important;
-  width:1px; height:1px;
-  padding:0; margin:-1px;
-  overflow:hidden; clip:rect(0,0,0,0);
-  white-space:nowrap; border:0;
-}
-
-/* Pequeño extra: kbd bonito */
+/* kbd bonito */
 kbd{
   font-family: var(--mono);
   font-size: 12px;
@@ -864,4 +911,15 @@ kbd{
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(255,255,255,0.06);
   color: rgba(231,233,234,0.90);
+}
+
+/* Mobile tuning */
+@media (max-width: 860px){
+  .brand{ min-width: unset; }
+  .row--4{ grid-template-columns: 1fr 1fr; }
+  .row--3{ grid-template-columns: 1fr; }
+  .ticker__label{ display:none; }
+
+  /* En móvil, evita que la topbar crezca demasiado: controles con wrap suave */
+  .topbar__left{ min-width: unset; }
 }
