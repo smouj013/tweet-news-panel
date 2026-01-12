@@ -1,22 +1,19 @@
-/* app.js — TNP v4.1.2 — DIRECT RSS + HARDENED + LAG FIX + CONFIG READY
+/* app.js — TNP v4.1.3 — MEMBERSHIP + GOOGLE LOGIN (GIS) + 3 TIERS + HARDENED
    ✅ 100% compatible con tu index.html (IDs + modal + ticker + X mock + botones)
-   ✅ FIX CLAVE (LAG/CONGELADOS): NO re-renderiza lista al escribir en composer
-   ✅ Selección de noticia: SIEMPRE reemplaza Titular/URL/hashtags + updatePreview inmediato
-   ✅ Auto-repara Template si el usuario “rompe” {{HEADLINE}}
-   ✅ Anti-cache: fetch no-store + cache-bust en proxys (sin headers raros)
-   ✅ CORS PRO: proxy-pool + retry suave + hint por feed
-   ✅ RSS/Atom: imágenes (media/enclosure/img) + OG best-effort
-   ✅ Backoff por feed + batch configurable
-   ✅ TICKER SPEED: configurable (pps) + duración automática por ancho
-   ✅ CONFIG READY: lee window.TNP_CONFIG (desde /config/boot-config.js)
+   ✅ Login con Google (GIS) SIN cuentas propias
+   ✅ 3 tipos de membresía visibles: Básica / Pro / Elite (configurable)
+   ✅ Gating suave (Free funciona, Pro sube límites)
+   ✅ Soporta verificación por:
+      A) Endpoint (Cloudflare Worker recomendado) -> BOOT.membershipEndpoint
+      B) Allowlist estática (GitHub Pages) con hash -> BOOT.membershipAllowlistUrl (+salt)
+   ✅ Inyecta botón “Membresía” + modal (no rompe tu CSS)
 */
 
 (() => {
   "use strict";
 
-  const APP_VERSION = "tnp-v4.1.2";
-  // Cambia BUILD_ID cuando publiques (fuerza self-heal cache/SW)
-  const BUILD_ID = "2026-01-12b";
+  const APP_VERSION = "tnp-v4.1.3";
+  const BUILD_ID = "2026-01-12c";
 
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
   const DEFAULT_TEMPLATE =
@@ -32,45 +29,93 @@ Fuente:
   const DEFAULT_LIVE_LINE = "🔴#ENVIVO >>> {{LIVE_URL}}";
 
   /* ───────────────────────────── BOOT CONFIG (/config/boot-config.js) ───────────────────────────── */
-  // Puedes sobreescribir cosas sin tocar app.js:
-  // window.TNP_CONFIG = { proxyFirst, customProxyTemplate, defaultLiveUrl, defaultTemplate, defaultFeeds, ... }
+  // window.TNP_CONFIG = {
+  //   buildTag, googleClientId,
+  //   kofiTiersUrl, membershipEndpoint OR membershipAllowlistUrl,
+  //   membershipSalt, tiers:[{id,name,price,perks[]},...]
+  // }
   const BOOT = (() => {
     const c = (window.TNP_CONFIG || window.TNP_BOOT_CONFIG || window.__TNP_CONFIG__ || null);
     const cfg = (c && typeof c === "object" && !Array.isArray(c)) ? c : {};
-
-    const buildTag = String(cfg.buildTag || `${APP_VERSION}_${BUILD_ID}`).trim();
 
     const num = (v, fb) => {
       const n = Number(v);
       return Number.isFinite(n) ? n : fb;
     };
 
+    const buildTag = String(cfg.buildTag || `${APP_VERSION}_${BUILD_ID}`).trim();
+
+    const tiersDefault = [
+      {
+        id: "basic",
+        name: "Básica",
+        price: "3€/mes",
+        perks: ["Más límites", "Más feeds activos", "Más items por refresh"]
+      },
+      {
+        id: "pro",
+        name: "Pro",
+        price: "7€/mes",
+        perks: ["Auto-refresh más rápido", "Más OG imágenes", "Más cap de items"]
+      },
+      {
+        id: "elite",
+        name: "Elite",
+        price: "15€/mes",
+        perks: ["Máximos límites", "Mejor rendimiento", "Prioridad / features pro"]
+      }
+    ];
+
+    const tiers = Array.isArray(cfg.tiers) && cfg.tiers.length === 3 ? cfg.tiers : tiersDefault;
+
     return {
       buildTag,
 
       // Proxy
-      customProxyTemplate: String(cfg.customProxyTemplate || "").trim(), // "https://tuworker.workers.dev/?url={{ENCODED_URL}}"
+      customProxyTemplate: String(cfg.customProxyTemplate || "").trim(),
       proxyFirst: (cfg.proxyFirst !== false),
 
       // Defaults composer
       defaultLiveUrl: String(cfg.defaultLiveUrl || "https://twitch.tv/globaleyetv").trim(),
       defaultHashtags: String(cfg.defaultHashtags || "").trim(),
 
-      // Defaults plantilla (si quieres cambiar tu plantilla base sin tocar app.js)
       defaultTemplate: String(cfg.defaultTemplate || DEFAULT_TEMPLATE),
       defaultLiveLine: String(cfg.defaultLiveLine || DEFAULT_LIVE_LINE),
 
       // Traducción
       trEnabledDefault: (cfg.trEnabledDefault !== false),
 
-      // Feeds: si defines defaultFeeds (array), reemplaza DEFAULT_FEEDS
+      // Feeds defaults
       defaultFeeds: Array.isArray(cfg.defaultFeeds) ? cfg.defaultFeeds : null,
 
-      // Límites opcionales
+      // Límites
       maxItemsKeep: Math.max(200, Math.min(5000, num(cfg.maxItemsKeep, 900))),
       visibleTranslateLimit: Math.max(20, Math.min(200, num(cfg.visibleTranslateLimit, 80))),
+
+      // Membership / Monetización
+      googleClientId: String(cfg.googleClientId || "").trim(), // REQUIRED para login real
+      kofiTiersUrl: String(cfg.kofiTiersUrl || "").trim(),     // e.g. https://ko-fi.com/TUUSER/tiers
+      membershipEndpoint: String(cfg.membershipEndpoint || "").trim(), // Worker recomendado
+      membershipAllowlistUrl: String(cfg.membershipAllowlistUrl || "").trim(), // e.g. ./config/members.json
+      membershipSalt: String(cfg.membershipSalt || "tnp").trim(),
+      tiers,
     };
   })();
+
+  /* ───────────────────────────── MEMBERSHIP TIERS (LIMITS) ───────────────────────────── */
+  // “Free” = sin membresía (por defecto). Tiers: basic/pro/elite.
+  const TIER_LIMITS = {
+    free:  { maxEnabledFeeds: 10, fetchCapMax: 240, showLimitMax: 120, batchMax: 12, autoMinSec: 60, resolveLimit: 60, ogLimit: 60 },
+    basic: { maxEnabledFeeds: 25, fetchCapMax: 600, showLimitMax: 200, batchMax: 20, autoMinSec: 45, resolveLimit: 90, ogLimit: 110 },
+    pro:   { maxEnabledFeeds: 60, fetchCapMax: 1400, showLimitMax: 350, batchMax: 35, autoMinSec: 30, resolveLimit: 140, ogLimit: 170 },
+    elite: { maxEnabledFeeds: 140, fetchCapMax: 2000, showLimitMax: 500, batchMax: 50, autoMinSec: 20, resolveLimit: 220, ogLimit: 260 },
+  };
+
+  function normTier(t){
+    t = String(t || "").toLowerCase().trim();
+    if (t === "basic" || t === "pro" || t === "elite") return t;
+    return "free";
+  }
 
   /* ───────────────────────────── PROXY CONFIG ───────────────────────────── */
   const CUSTOM_PROXY_TEMPLATE = BOOT.customProxyTemplate;
@@ -88,8 +133,11 @@ Fuente:
 
   const LS_BUILD_ID = "tnp_build_id_v4";
 
+  // Membership session
+  const LS_MEMBER = "tnp_member_v1"; // {tier,email,name,picture,expMs,sub}
+
   /* ───────────────────────────── TRANSLATE (ES) ───────────────────────────── */
-  const TR_ENABLED_DEFAULT = true; // base (luego BOOT puede apagar)
+  const TR_ENABLED_DEFAULT = true;
   const TR_CONCURRENCY = 2;
   const TR_VISIBLE_LIMIT = BOOT.visibleTranslateLimit;
   const TR_CACHE_LIMIT = 2000;
@@ -100,7 +148,6 @@ Fuente:
   /* ───────────────────────────── HELPERS ───────────────────────────── */
   const $ = (id) => document.getElementById(id);
   const nowMs = () => Date.now();
-
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
@@ -246,6 +293,119 @@ Fuente:
     if (bd) bd.hidden = true;
   }
 
+  /* ───────────────────────────── MEMBERSHIP HELPERS ───────────────────────────── */
+  function loadMember(){
+    const raw = safeParseJSON(localStorage.getItem(LS_MEMBER));
+    const m = asObject(raw, {});
+    const expMs = Number(m.expMs || 0);
+    const tier = normTier(m.tier);
+    if (!expMs || expMs < nowMs() || tier === "free"){
+      return { tier:"free", email:"", name:"", picture:"", expMs:0, sub:"" };
+    }
+    return {
+      tier,
+      email: String(m.email || ""),
+      name: String(m.name || ""),
+      picture: String(m.picture || ""),
+      expMs,
+      sub: String(m.sub || "")
+    };
+  }
+
+  function saveMember(m){
+    localStorage.setItem(LS_MEMBER, JSON.stringify(asObject(m, {})));
+  }
+
+  function clearMember(){
+    try{ localStorage.removeItem(LS_MEMBER); }catch{}
+  }
+
+  function base64UrlToUtf8(s){
+    try{
+      s = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
+      const pad = s.length % 4;
+      if (pad) s += "=".repeat(4 - pad);
+      const bin = atob(s);
+      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+      const dec = new TextDecoder("utf-8");
+      return dec.decode(bytes);
+    }catch{ return ""; }
+  }
+
+  function decodeJwtPayload(jwt){
+    try{
+      const parts = String(jwt || "").split(".");
+      if (parts.length < 2) return null;
+      const json = base64UrlToUtf8(parts[1]);
+      const obj = JSON.parse(json);
+      return obj && typeof obj === "object" ? obj : null;
+    }catch{ return null; }
+  }
+
+  async function sha256Hex(str){
+    const data = new TextEncoder().encode(String(str || ""));
+    const buf = await crypto.subtle.digest("SHA-256", data);
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
+  }
+
+  async function verifyMembership({ email, credential }){
+    email = String(email || "").toLowerCase().trim();
+    if (!email) return { tier:"free" };
+
+    // A) Endpoint (recomendado)
+    if (BOOT.membershipEndpoint){
+      try{
+        const r = await fetch(BOOT.membershipEndpoint, {
+          method: "POST",
+          headers: { "Content-Type":"application/json" },
+          cache: "no-store",
+          credentials: "omit",
+          body: JSON.stringify({
+            email,
+            credential: String(credential || ""),
+            app: APP_VERSION,
+            build: BUILD_ID
+          })
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+        const tier = normTier(j.tier);
+        const expMs = Number(j.expMs || 0);
+        return { tier, expMs: Number.isFinite(expMs) ? expMs : 0, raw: j };
+      }catch{
+        return { tier:"free" };
+      }
+    }
+
+    // B) Allowlist (estático) con hash (GitHub Pages)
+    if (BOOT.membershipAllowlistUrl){
+      try{
+        const r = await fetch(BOOT.membershipAllowlistUrl, { cache:"no-store", credentials:"omit" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+        const salt = String(j.salt || BOOT.membershipSalt || "tnp");
+        const members = Array.isArray(j.members) ? j.members : [];
+        const h = await sha256Hex(`${salt}:${email}`);
+        const hit = members.find(x => String(x.h || "").toLowerCase() === h);
+        const tier = normTier(hit?.tier);
+        const expMs = Number(hit?.expMs || 0);
+        return { tier, expMs: Number.isFinite(expMs) ? expMs : 0, raw: hit || null };
+      }catch{
+        return { tier:"free" };
+      }
+    }
+
+    return { tier:"free" };
+  }
+
+  function tierTitle(t){
+    t = normTier(t);
+    if (t === "basic") return "BÁSICA";
+    if (t === "pro") return "PRO";
+    if (t === "elite") return "ELITE";
+    return "FREE";
+  }
+
   /* ───────────────────────────── DEFAULT FEEDS ───────────────────────────── */
   const DIRECT_FEEDS = [
     { name:"RTVE — Portada (RSS)", url:"https://www.rtve.es/api/noticias.rss", enabled:true, cat:"spain" },
@@ -289,7 +449,6 @@ Fuente:
     { name:"Google News — World (Top) [OFF]", url:"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", enabled:false, cat:"world" },
   ];
 
-  // Si BOOT.defaultFeeds existe => sustituye defaults
   const DEFAULT_FEEDS = Array.isArray(BOOT.defaultFeeds) && BOOT.defaultFeeds.length
     ? BOOT.defaultFeeds
     : [...DIRECT_FEEDS];
@@ -382,7 +541,7 @@ Fuente:
     s.sortBy = s.sortBy || "impact";
 
     s.optOnlyReady    = (s.optOnlyReady === true);
-    s.optOnlySpanish  = (s.optOnlySpanish !== false); // ON por defecto
+    s.optOnlySpanish  = (s.optOnlySpanish !== false);
     s.optResolveLinks = (s.optResolveLinks !== false);
     s.optShowOriginal = (s.optShowOriginal !== false);
     s.optHideUsed     = (s.optHideUsed !== false);
@@ -395,10 +554,8 @@ Fuente:
 
     s.catFilter = s.catFilter || "all";
 
-    // Traducción ES (best-effort)
     s.trEnabled = (s.trEnabled !== false) && TR_ENABLED_DEFAULT && (BOOT.trEnabledDefault !== false);
 
-    // Hashtags default opcional (solo si no hay nada guardado)
     if (!s.defaultHashtags && BOOT.defaultHashtags) s.defaultHashtags = BOOT.defaultHashtags;
 
     return s;
@@ -417,7 +574,6 @@ Fuente:
   function loadTemplate(){
     const t = localStorage.getItem(LS_TEMPLATE);
     if (t && t.trim()) return t;
-    // Si no hay guardado, usa el default del BOOT (si existe)
     return (BOOT.defaultTemplate && String(BOOT.defaultTemplate).trim())
       ? String(BOOT.defaultTemplate)
       : DEFAULT_TEMPLATE;
@@ -451,23 +607,73 @@ Fuente:
 
     lastTickerSig: "",
     lastTickerPps: null,
-    lastFetchReport: { ok:0, fail:0, total:0 },
 
     swReg: null,
-
     proxyHint: new Map(),
 
-    // Traducción
     trQueueRunning: false,
     trInFlight: new Set(),
     trDebounceTimer: null,
 
-    // Composer
     lastBuiltTweet: "",
-
-    // Render signature (para evitar rerenders innecesarios)
     lastRenderSig: "",
+
+    // Membership
+    member: loadMember(),
+    memberUi: { btn:null, pill:null, modal:null },
   };
+
+  function tierLimits(){
+    return TIER_LIMITS[normTier(state.member.tier)] || TIER_LIMITS.free;
+  }
+
+  function applyTierLimitsToUi(){
+    const lim = tierLimits();
+
+    // Clamp UI settings quietly
+    const clampInput = (el, min, max) => {
+      if (!el) return;
+      const v = clamp(numOr(el.value, numOr(el.getAttribute("value"), min)), min, max);
+      el.value = String(v);
+    };
+
+    // fetchCap/showLimit/batch/refreshSec
+    clampInput(els.fetchCap, 80, lim.fetchCapMax);
+    clampInput(els.showLimit, 10, lim.showLimitMax);
+    clampInput(els.batchFeeds, 4, lim.batchMax);
+
+    // auto min sec
+    if (els.refreshSec){
+      const v = clamp(numOr(els.refreshSec.value, settings.refreshSec || 60), lim.autoMinSec, 600);
+      els.refreshSec.value = String(v);
+    }
+
+    // Update internal settings
+    settings.fetchCap = clamp(numOr(els.fetchCap?.value, settings.fetchCap), 80, lim.fetchCapMax);
+    settings.showLimit = clamp(numOr(els.showLimit?.value, settings.showLimit), 10, lim.showLimitMax);
+    settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 4, lim.batchMax);
+    settings.refreshSec = clamp(numOr(els.refreshSec?.value, settings.refreshSec), lim.autoMinSec, 600);
+    saveSettings(settings);
+
+    // Enforce enabled feeds max
+    enforceEnabledFeedsLimit();
+  }
+
+  function enforceEnabledFeedsLimit(){
+    const lim = tierLimits();
+    const enabled = state.feeds.filter(f => f.enabled);
+    if (enabled.length <= lim.maxEnabledFeeds) return;
+
+    // Disable extras from the bottom
+    let toDisable = enabled.length - lim.maxEnabledFeeds;
+    for (let i = state.feeds.length - 1; i >= 0 && toDisable > 0; i--){
+      if (state.feeds[i].enabled){
+        state.feeds[i].enabled = false;
+        toDisable--;
+      }
+    }
+    try{ localStorage.setItem(LS_FEEDS, JSON.stringify(state.feeds)); }catch{}
+  }
 
   function loadUsed(){
     const raw = safeParseJSON(localStorage.getItem(LS_USED));
@@ -555,10 +761,11 @@ Fuente:
   }
 
   function saveFeeds(){
+    enforceEnabledFeedsLimit();
     localStorage.setItem(LS_FEEDS, JSON.stringify(state.feeds));
   }
 
-  /* ───────────────────────────── MODAL ───────────────────────────── */
+  /* ───────────────────────────── MODAL FEEDS ───────────────────────────── */
   function setModalOpen(open){
     if (!els.modal) return;
     els.modal.classList.toggle("hidden", !open);
@@ -580,6 +787,10 @@ Fuente:
     if (!els.feedList) return;
     els.feedList.innerHTML = "";
 
+    const lim = tierLimits();
+
+    let enabledCount = state.feeds.filter(f => f.enabled).length;
+
     for (let i=0;i<state.feeds.length;i++){
       const f = state.feeds[i];
 
@@ -589,7 +800,18 @@ Fuente:
       const cb = document.createElement("input");
       cb.type = "checkbox";
       cb.checked = !!f.enabled;
-      cb.addEventListener("change", () => { f.enabled = cb.checked; });
+
+      cb.addEventListener("change", () => {
+        // Enforce membership feed limit
+        if (cb.checked && enabledCount >= lim.maxEnabledFeeds){
+          cb.checked = false;
+          f.enabled = false;
+          setStatus(`🔒 Límite de feeds activos: ${lim.maxEnabledFeeds} (${tierTitle(state.member.tier)}).`);
+          return;
+        }
+        f.enabled = cb.checked;
+        enabledCount = state.feeds.filter(x => x.enabled).length;
+      });
 
       const meta = document.createElement("div");
       meta.className = "meta";
@@ -1195,15 +1417,15 @@ Fuente:
       out.sort((a,b) => b.dateMs - a.dateMs);
     }
 
-    const lim = clamp(numOr(els.showLimit?.value, settings.showLimit || 120), 10, 500);
-    out = out.slice(0, lim);
+    const lim = tierLimits();
+    const showLim = clamp(numOr(els.showLimit?.value, settings.showLimit || 120), 10, lim.showLimitMax);
+    out = out.slice(0, showLim);
 
     state.filtered = out;
     renderNewsList(out);
     updateTicker();
     updateTrendsPop();
 
-    // Traducción best-effort sin bloquear (idle si existe)
     try{
       if ("requestIdleCallback" in window) window.requestIdleCallback(() => kickTranslateVisible(), { timeout: 900 });
       else setTimeout(kickTranslateVisible, 120);
@@ -1219,7 +1441,6 @@ Fuente:
 
     const sig = list.map(x => x.id).join("|");
     if (sig === state.lastRenderSig){
-      // No reconstruimos DOM si es la misma lista; solo aseguramos sel/used
       patchSelectedRow(state.selectedId);
       return;
     }
@@ -1381,13 +1602,9 @@ Fuente:
   }
 
   function stripSourceBlock(text){
-    // Borra bloque “Fuente:” + línea de URL si existe
     let out = String(text || "");
-    // Caso estándar
     out = out.replace(/\n?Fuente:\s*\n[ \t]*https?:\/\/[^\s]+/i, "");
-    // Si queda “Fuente:” suelta
     out = out.replace(/\n?Fuente:\s*\n?/i, "");
-    // Limpia saltos
     out = out.replace(/\n{3,}/g, "\n\n");
     return out.trim();
   }
@@ -1490,8 +1707,6 @@ Fuente:
         els.warn.textContent = existing + " · " + overflowMsg;
       } else if (!existing.startsWith("⚠️ Tu Template no tenía")){
         els.warn.textContent = overflowMsg || "";
-      } else if (existing.startsWith("⚠️ Tu Template no tenía") && !overflowMsg){
-        // mantenemos warning de template
       }
     }
 
@@ -1523,12 +1738,10 @@ Fuente:
 
     state.selectedId = id;
 
-    // ✅ Siempre reemplaza (no “mezcla” con lo que hubiera)
     if (els.headline) els.headline.value = normSpace(it.title || it.originalTitle || "");
     const src = (els.optShowOriginal?.checked) ? (it.resolvedUrl || it.link) : it.link;
     if (els.sourceUrl) els.sourceUrl.value = normSpace(src || "");
 
-    // Hashtags: si hay default en BOOT y usuario no tiene nada, lo añadimos al final
     const sug = suggestHashtags(it.title || it.originalTitle, it.cat);
     const def = normSpace(settings.defaultHashtags || "");
     if (els.hashtags){
@@ -1536,8 +1749,6 @@ Fuente:
     }
 
     updatePreview();
-
-    // ✅ FIX LAG: NO re-render lista aquí
     patchSelectedRow(id);
   }
 
@@ -1596,8 +1807,8 @@ Fuente:
     if (!els.tnpTickerInner) return;
 
     const pps = getTickerPps();
-
     const top10 = state.filtered.slice(0, 10);
+
     if (!top10.length){
       els.tnpTickerInner.textContent = "Sin noticias aún…";
       requestAnimationFrame(() => {
@@ -1681,10 +1892,8 @@ Fuente:
     clearInterval(state.uiTickTimer);
     state.uiTickTimer = setInterval(() => {
       try{
-        // Actualiza “edad” en la lista sin reconstruir DOM
         if (els.newsList && state.filtered.length){
           const now = nowMs();
-          // Solo actualiza los visibles actuales
           for (const it of state.filtered){
             const row = els.newsList.querySelector(`.newsItem[data-id="${CSS.escape(it.id)}"]`);
             if (!row) continue;
@@ -1695,7 +1904,6 @@ Fuente:
             }
           }
         }
-        // Mantén el contador de caracteres “fresco” sin tocar lista
         if (document.activeElement === els.headline || document.activeElement === els.template || document.activeElement === els.hashtags || document.activeElement === els.sourceUrl){
           updatePreview();
         }
@@ -1732,7 +1940,6 @@ Fuente:
       state.swReg = null;
     }
 
-    // Si index.html ya lo registró con ?v=..., NO forzamos otro distinto salvo que no exista
     if (!state.swReg){
       try{
         const swUrl = "./sw.js?v=" + encodeURIComponent(BOOT.buildTag);
@@ -1823,6 +2030,7 @@ Fuente:
       localStorage.removeItem(LS_OG_CACHE);
       localStorage.removeItem(LS_TR_CACHE);
       localStorage.removeItem(LS_BUILD_ID);
+      localStorage.removeItem(LS_MEMBER);
     }catch{}
 
     try{
@@ -1882,7 +2090,6 @@ Fuente:
     state.refreshAbort = new AbortController();
     const signal = state.refreshAbort.signal;
 
-    // ✅ Mejora UX: NO vaciamos lista si ya había contenido (evita parpadeo/lag)
     if (!state.items.length){
       renderNewsList([]);
       updateTicker();
@@ -1892,8 +2099,9 @@ Fuente:
     setStatus(force ? "Refrescando (force)…" : "Refrescando…");
 
     try{
-      const cap = clamp(numOr(els.fetchCap?.value, settings.fetchCap || 240), 80, 2000);
-      const batchSize = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds || 12), 4, 50);
+      const lim = tierLimits();
+      const cap = clamp(numOr(els.fetchCap?.value, settings.fetchCap || 240), 80, lim.fetchCapMax);
+      const batchSize = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds || 12), 4, lim.batchMax);
 
       const allItems = [];
       const enabledFeeds = feeds.slice();
@@ -1957,11 +2165,12 @@ Fuente:
 
       clean.sort((a,b) => b.dateMs - a.dateMs);
 
-      // ✅ Limita memoria global (evita crecimiento infinito)
       state.items = clean.slice(0, Math.max(cap, BOOT.maxItemsKeep));
 
+      // Resolve/OG limits dependen de tier
+      const lim2 = tierLimits();
       if (els.optResolveLinks?.checked){
-        const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 80);
+        const need = state.items.filter(it => shouldResolve(it.link)).slice(0, lim2.resolveLimit);
         await mapLimit(need, 6, async (it) => {
           it.resolvedUrl = await resolveUrl(it.link, signal);
         }, signal);
@@ -1969,7 +2178,7 @@ Fuente:
 
       const needImg = state.items
         .filter(it => !it.img && (it.resolvedUrl || it.link))
-        .slice(0, 80);
+        .slice(0, lim2.ogLimit);
 
       await mapLimit(needImg, 6, async (it) => {
         const u = it.resolvedUrl || it.link;
@@ -2004,16 +2213,275 @@ Fuente:
     clearInterval(state.autoTimer);
     if (!els.optAutoRefresh?.checked) return;
 
-    const sec = clamp(numOr(els.refreshSec?.value, settings.refreshSec || 60), 20, 600);
+    const lim = tierLimits();
+    const sec = clamp(numOr(els.refreshSec?.value, settings.refreshSec || 60), lim.autoMinSec, 600);
+
     state.autoTimer = setInterval(() => {
       if (document.hidden) return;
       refreshAll({ force:false, user:false }).catch(()=>{});
     }, sec * 1000);
   }
 
+  /* ───────────────────────────── MEMBERSHIP UI + GOOGLE LOGIN ───────────────────────────── */
+  function injectMembershipUi(){
+    const topRight = document.querySelector(".topbar__right") || (els.status?.parentElement || null);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn--sm";
+    btn.id = "btnMember";
+    btn.textContent = "Membresía";
+
+    const pill = document.createElement("span");
+    pill.className = "status";
+    pill.id = "memberPill";
+    pill.style.marginLeft = "8px";
+    pill.textContent = `Membresía: ${tierTitle(state.member.tier)}`;
+
+    // Insert next to status
+    if (topRight){
+      topRight.prepend(btn);
+      topRight.appendChild(pill);
+    } else {
+      document.body.appendChild(btn);
+      document.body.appendChild(pill);
+    }
+
+    const modal = document.createElement("div");
+    modal.id = "memberModal";
+    modal.className = "modal hidden";
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden","true");
+    modal.setAttribute("aria-modal","true");
+    modal.setAttribute("role","dialog");
+    modal.setAttribute("aria-label","Membresía");
+
+    const kofiUrl = BOOT.kofiTiersUrl || "";
+    const tierCardsHtml = BOOT.tiers.map(t => {
+      const perks = (Array.isArray(t.perks) ? t.perks : []).slice(0, 6).map(p => `<li>${String(p)}</li>`).join("");
+      const buy = kofiUrl ? `<a class="btn btn--primary btn--sm" href="${kofiUrl}" target="_blank" rel="noopener noreferrer">Unirme en Ko-fi</a>` : "";
+      return `
+        <div style="border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:12px; background:rgba(255,255,255,0.04);">
+          <div style="display:flex; align-items:baseline; justify-content:space-between; gap:10px;">
+            <div style="font-weight:900;">${String(t.name || "").toUpperCase()}</div>
+            <div class="mini muted">${String(t.price || "")}</div>
+          </div>
+          <ul class="mini muted" style="margin:10px 0 12px; padding-left:18px;">
+            ${perks || "<li>Ventajas Pro</li>"}
+          </ul>
+          ${buy}
+        </div>
+      `;
+    }).join("");
+
+    modal.innerHTML = `
+      <div class="modal__panel">
+        <div class="modal__head">
+          <div>
+            <div class="modal__title">Membresía</div>
+            <div class="mini muted">Login con Google para activar tu tier (sin cuentas propias).</div>
+          </div>
+          <button id="btnCloseMemberModal" class="btn btn--sm" type="button">Cerrar</button>
+        </div>
+        <div class="modal__body">
+          <div style="display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:10px;">
+            ${tierCardsHtml}
+          </div>
+
+          <hr class="hr" />
+
+          <div class="panel__title panel__title--sm">Tu estado</div>
+          <div class="row row--wrap">
+            <span class="badge ok" id="memberTierBadge">${tierTitle(state.member.tier)}</span>
+            <span class="mini muted" id="memberEmail">${state.member.email ? state.member.email : "Sin sesión"}</span>
+            <span class="mini muted" id="memberExp">${state.member.expMs ? ("exp: " + new Date(state.member.expMs).toLocaleString()) : ""}</span>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="panel__title panel__title--sm">Login</div>
+          <div class="mini muted" style="margin-bottom:10px;">
+            ${BOOT.googleClientId ? "Pulsa para iniciar sesión con Google." : "⚠️ Falta googleClientId en config/boot-config.js (login desactivado)."}
+          </div>
+
+          <div class="row row--wrap">
+            <div id="gsiBtn"></div>
+            <button id="btnMemberSignOut" class="btn btn--danger btn--sm" type="button">Cerrar sesión</button>
+            ${kofiUrl ? `<a class="btn btn--x btn--sm" href="${kofiUrl}" target="_blank" rel="noopener noreferrer">Ver tiers en Ko-fi</a>` : ""}
+          </div>
+
+          <div id="memberMsg" class="warn" style="margin-top:10px;"></div>
+
+          <div class="mini muted" style="margin-top:12px;">
+            Tip: si usas allowlist (GitHub Pages), añade tu email con hash (SHA-256) en config/members.json.
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    state.memberUi = { btn, pill, modal };
+
+    btn.addEventListener("click", () => setMemberModalOpen(true));
+    modal.addEventListener("click", (e) => { if (e.target === modal) setMemberModalOpen(false); });
+    modal.querySelector("#btnCloseMemberModal")?.addEventListener("click", () => setMemberModalOpen(false));
+    modal.querySelector("#btnMemberSignOut")?.addEventListener("click", () => {
+      clearMember();
+      state.member = loadMember();
+      updateMemberUi("Sesión cerrada.");
+      applyTierLimitsToUi();
+      startAuto();
+      applyFiltersDebounced();
+    });
+  }
+
+  function setMemberModalOpen(open){
+    const m = state.memberUi.modal;
+    if (!m) return;
+    m.classList.toggle("hidden", !open);
+    m.hidden = !open;
+    m.setAttribute("aria-hidden", open ? "false" : "true");
+    if (open){
+      updateMemberUi();
+      // Render GIS button if ready
+      try{ maybeInitGoogleSignIn(); }catch{}
+    }
+  }
+
+  function updateMemberUi(msg){
+    const { pill, modal } = state.memberUi;
+    if (pill) pill.textContent = `Membresía: ${tierTitle(state.member.tier)}`;
+
+    if (modal){
+      const badge = modal.querySelector("#memberTierBadge");
+      const email = modal.querySelector("#memberEmail");
+      const exp = modal.querySelector("#memberExp");
+      const box = modal.querySelector("#memberMsg");
+
+      if (badge) badge.textContent = tierTitle(state.member.tier);
+      if (email) email.textContent = state.member.email || "Sin sesión";
+      if (exp) exp.textContent = state.member.expMs ? ("exp: " + new Date(state.member.expMs).toLocaleString()) : "";
+      if (box) box.textContent = msg ? String(msg) : "";
+    }
+  }
+
+  function ensureGsiScript(){
+    if (!BOOT.googleClientId) return Promise.resolve(false);
+    if (window.google && window.google.accounts && window.google.accounts.id) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      const s = document.createElement("script");
+      s.src = "https://accounts.google.com/gsi/client";
+      s.async = true;
+      s.defer = true;
+      s.onload = () => resolve(true);
+      s.onerror = () => resolve(false);
+      document.head.appendChild(s);
+    });
+  }
+
+  let gsiInited = false;
+
+  async function maybeInitGoogleSignIn(){
+    if (gsiInited) return;
+    if (!BOOT.googleClientId) return;
+
+    const ok = await ensureGsiScript();
+    if (!ok) return;
+
+    if (!(window.google && window.google.accounts && window.google.accounts.id)) return;
+
+    try{
+      window.google.accounts.id.initialize({
+        client_id: BOOT.googleClientId,
+        callback: async (resp) => {
+          const credential = resp && resp.credential ? String(resp.credential) : "";
+          if (!credential){
+            updateMemberUi("❌ No llegó credential.");
+            return;
+          }
+
+          const payload = decodeJwtPayload(credential);
+          const email = String(payload?.email || "").toLowerCase().trim();
+          const name = String(payload?.name || "");
+          const picture = String(payload?.picture || "");
+          const sub = String(payload?.sub || "");
+          const jwtExp = Number(payload?.exp || 0) * 1000;
+
+          if (!email){
+            updateMemberUi("❌ No se pudo leer el email del token.");
+            return;
+          }
+
+          updateMemberUi("Verificando membresía…");
+
+          const res = await verifyMembership({ email, credential });
+          const tier = normTier(res.tier);
+          const expMs = Number(res.expMs || jwtExp || 0);
+
+          state.member = {
+            tier,
+            email,
+            name,
+            picture,
+            sub,
+            expMs: expMs && expMs > nowMs() ? expMs : (nowMs() + 7*24*60*60*1000) // fallback 7d
+          };
+          saveMember(state.member);
+
+          updateMemberUi(tier !== "free"
+            ? `✅ Membresía activada: ${tierTitle(tier)}`
+            : "ℹ️ Sesión OK, pero no hay tier activo (Free)."
+          );
+
+          applyTierLimitsToUi();
+          startAuto();
+          applyFiltersDebounced();
+        }
+      });
+
+      // Render button inside modal
+      const host = state.memberUi.modal?.querySelector("#gsiBtn");
+      if (host){
+        host.innerHTML = "";
+        window.google.accounts.id.renderButton(host, {
+          theme: "outline",
+          size: "large",
+          shape: "pill",
+          text: "signin_with",
+          locale: "es"
+        });
+      }
+
+      // One Tap opcional (solo si no hay sesión)
+      if (state.member.tier === "free"){
+        try{ window.google.accounts.id.prompt(); }catch{}
+      }
+
+      gsiInited = true;
+    }catch{
+      // ignore
+    }
+  }
+
+  // Debug helper: genera hash para allowlist (en consola: TNP.debugHash("tuemail@gmail.com"))
+  window.TNP = window.TNP || {};
+  window.TNP.debugHash = async (email) => {
+    const e = String(email || "").toLowerCase().trim();
+    const h = await sha256Hex(`${BOOT.membershipSalt}:${e}`);
+    console.log("hash:", h);
+    return h;
+  };
+
   /* ───────────────────────────── UI BIND ───────────────────────────── */
   function bindUI(){
     hideBootDiag();
+
+    // Inject membership UI
+    injectMembershipUi();
+    updateMemberUi();
+    applyTierLimitsToUi();
 
     if (els.liveUrl) els.liveUrl.value = settings.liveUrl;
     if (els.template) els.template.value = loadTemplate();
@@ -2043,7 +2511,6 @@ Fuente:
       if (els.tickerSpeedVal) els.tickerSpeedVal.textContent = `${els.tickerSpeed.value} pps`;
     }
 
-    // Si no hay hashtags escritos, aplica default
     if (els.hashtags && !els.hashtags.value && settings.defaultHashtags){
       els.hashtags.value = settings.defaultHashtags;
     }
@@ -2051,7 +2518,9 @@ Fuente:
     const saveFilterSettings = () => {
       settings.delayMin   = clamp(numOr(els.delayMin?.value, settings.delayMin), 0, 60);
       settings.timeFilter = clamp(numOr(els.timeFilter?.value, settings.timeFilter), 1, 24*60);
-      settings.showLimit  = clamp(numOr(els.showLimit?.value, settings.showLimit), 10, 500);
+
+      const lim = tierLimits();
+      settings.showLimit  = clamp(numOr(els.showLimit?.value, settings.showLimit), 10, lim.showLimitMax);
 
       settings.sortBy = els.sortBy?.value || settings.sortBy;
 
@@ -2068,14 +2537,16 @@ Fuente:
     };
 
     const saveRefreshSettings = () => {
-      settings.fetchCap   = clamp(numOr(els.fetchCap?.value, settings.fetchCap), 80, 2000);
-      settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 4, 50);
+      const lim = tierLimits();
+      settings.fetchCap   = clamp(numOr(els.fetchCap?.value, settings.fetchCap), 80, lim.fetchCapMax);
+      settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 4, lim.batchMax);
       saveSettings(settings);
     };
 
     const saveAutoSettings = () => {
+      const lim = tierLimits();
       settings.optAutoRefresh = !!els.optAutoRefresh?.checked;
-      settings.refreshSec = clamp(numOr(els.refreshSec?.value, settings.refreshSec), 20, 600);
+      settings.refreshSec = clamp(numOr(els.refreshSec?.value, settings.refreshSec), lim.autoMinSec, 600);
       saveSettings(settings);
       startAuto();
     };
@@ -2112,7 +2583,10 @@ Fuente:
     });
 
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeModal();
+      if (e.key === "Escape") {
+        closeModal();
+        setMemberModalOpen(false);
+      }
     });
 
     els.btnAddFeed?.addEventListener("click", () => {
@@ -2124,6 +2598,7 @@ Fuente:
       if (!nf) return;
 
       state.feeds.unshift(nf);
+      enforceEnabledFeedsLimit();
       renderFeedsModal();
       if (els.newFeedName) els.newFeedName.value = "";
       if (els.newFeedUrl) els.newFeedUrl.value = "";
@@ -2153,12 +2628,14 @@ Fuente:
         return;
       }
       state.feeds = cleaned;
+      enforceEnabledFeedsLimit();
       renderFeedsModal();
       setStatus("Import OK.");
     });
 
     els.btnRestoreDefaultFeeds?.addEventListener("click", () => {
       state.feeds = DEFAULT_FEEDS.map(normalizeFeed).filter(Boolean);
+      enforceEnabledFeedsLimit();
       renderFeedsModal();
       setStatus("Defaults restaurados (no olvides Guardar).");
     });
@@ -2217,28 +2694,22 @@ Fuente:
     els.btnCheckUpdate?.addEventListener("click", forceUpdateNow);
     els.btnHardReset?.addEventListener("click", hardResetEverything);
 
-    // 🔥 Bindings (separados para evitar LAG)
     const bind = (el, onChange, onInput = onChange) => {
       if (!el) return;
       el.addEventListener("change", onChange);
       el.addEventListener("input", onInput);
     };
 
-    // Filtros (re-render lista)
     [els.delayMin, els.timeFilter, els.sortBy, els.showLimit, els.optOnlyReady, els.optOnlySpanish,
      els.optResolveLinks, els.optShowOriginal, els.optHideUsed, els.catFilter
     ].forEach(el => bind(el, saveFilterSettings));
 
-    // Search (debounced)
     els.searchBox?.addEventListener("input", () => applyFiltersDebounced());
 
-    // Refresh settings (no re-render lista)
     [els.fetchCap, els.batchFeeds].forEach(el => bind(el, saveRefreshSettings));
 
-    // Auto refresh
     [els.optAutoRefresh, els.refreshSec].forEach(el => bind(el, saveAutoSettings));
 
-    // Composer (NO re-render lista)
     [els.liveUrl, els.template, els.headline, els.sourceUrl, els.hashtags, els.optIncludeLive, els.optIncludeSource, els.tickerSpeed]
       .forEach(el => bind(el, saveComposerSettings, debounce(saveComposerSettings, 60)));
 
@@ -2284,6 +2755,7 @@ Fuente:
     loadCaches();
 
     state.feeds = loadFeeds();
+    enforceEnabledFeedsLimit();
     saveFeeds();
 
     bindUI();
@@ -2294,6 +2766,9 @@ Fuente:
 
     applyFilters();
     startAuto();
+
+    // Optional: init GIS in background (no bloquea)
+    try{ setTimeout(() => maybeInitGoogleSignIn(), 400); }catch{}
 
     refreshAll({ force:true, user:false }).catch(()=>{});
   }
