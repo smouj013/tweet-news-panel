@@ -1,9 +1,11 @@
-<!-- index.html — TNP v4.1.2 (COMPAT app.js) — CACHE-BUST + SW BOOT REPAIR + CONFIG BOOT + KOFI
-  ✅ 100% compatible con app.js v4.1.2 (IDs exactos)
+<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CACHE-BUST + SW BOOT REPAIR + CONFIG BOOT + KOFI
+  ✅ 100% compatible con app.js v4.2.0 (IDs + modal feeds + ticker + X mock + botones)
+  ✅ AUTH: Login Google (GIS) + Gate opcional (si requireLogin=true)
+  ✅ MEMBERSHIP: FREE / PRO / ELITE (modal “Planes” listo)
   ✅ Cache-bust controlado (BUILD_TAG) para evitar “app.js viejo” en GitHub Pages
   ✅ SW register con updateViaCache:"none" + update() periódico + Repair (purge caches + unregister SW)
-  ✅ (Opcional) Carga /config/boot-config.js ANTES de app.js (no rompe si app.js no lo usa)
-  ✅ Botón Ko-fi (tu link real) en la topbar (no rompe CSS: usa .btn)
+  ✅ Carga /config/boot-config.js ANTES de app.js
+  ✅ Botón Ko-fi en la topbar
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -12,7 +14,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#070A12" />
-  <meta name="description" content="Panel PRO para extraer noticias (RSS/Atom), resolver link original, imágenes y generar plantilla lista para X." />
+  <meta name="description" content="Panel PRO para extraer noticias (RSS/Atom), resolver links reales, imágenes y generar plantilla lista para X. Incluye login y membresías." />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <meta name="robots" content="noindex,nofollow" />
 
@@ -45,7 +47,10 @@
 
   <title>News → Tweet Template Panel</title>
 
-  <!-- Mini CSS local SOLO para banner de reparación (no rompe tu styles.css) -->
+  <!-- Google Identity Services (Login Google). app.js lo usa si auth.enabled=true -->
+  <script async defer src="https://accounts.google.com/gsi/client"></script>
+
+  <!-- Mini CSS local SOLO para banner de reparación + gate + planes (no rompe tu styles.css) -->
   <style>
     .bootDiag{
       position: fixed;
@@ -63,11 +68,71 @@
     .bootDiag__title{ font-weight: 900; }
     .bootDiag__msg{ color: rgba(231,233,234,0.70); font-size: 12px; line-height: 1.35; }
     .bootDiag .btn{ white-space: nowrap; }
+
+    /* Gate (si requireLogin=true y hardGate=true) */
+    .authGate{
+      position: fixed;
+      inset: 0;
+      z-index: 9998;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(0,0,0,0.72);
+    }
+    .authGate__panel{
+      width: min(820px, 96vw);
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(8,12,20,0.92);
+      box-shadow: 0 14px 50px rgba(0,0,0,0.55);
+      padding: 16px;
+    }
+    .authGate__title{ font-weight: 900; font-size: 16px; margin-bottom: 6px; }
+    .authGate__sub{ color: rgba(231,233,234,0.72); font-size: 12px; line-height: 1.35; margin-bottom: 12px; }
+
+    /* Planes */
+    .tierGrid{
+      display:grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    @media (max-width: 860px){
+      .tierGrid{ grid-template-columns: 1fr; }
+    }
+    .tierCard{
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.05);
+      padding: 12px;
+      min-width: 0;
+    }
+    .tierCard__head{ display:flex; align-items:baseline; justify-content: space-between; gap: 10px; }
+    .tierCard__name{ font-weight: 900; letter-spacing: .2px; }
+    .tierCard__price{ color: rgba(231,233,234,0.70); font-size: 12px; }
+    .tierCard__perks{ margin: 10px 0 12px; padding-left: 18px; color: rgba(231,233,234,0.80); font-size: 12px; line-height: 1.35; }
+    .tierCard__perks li{ margin: 4px 0; }
+    .tierCard__cta{ display:flex; gap: 10px; flex-wrap: wrap; }
   </style>
 </head>
 
 <body>
   <a class="skipLink" href="#main">Saltar a contenido</a>
+
+  <!-- AUTH GATE (app.js lo mostrará/ocultará; por defecto hidden) -->
+  <div id="authGate" class="authGate hidden" hidden aria-hidden="true">
+    <div class="authGate__panel" role="dialog" aria-label="Acceso requerido">
+      <div class="authGate__title">Inicia sesión para usar el panel</div>
+      <div class="authGate__sub">
+        Acceso con Google. Tu plan (FREE/PRO/ELITE) se aplica automáticamente.
+        <br/>Si estás en modo demo, el plan puede venir de <span style="font-family: ui-monospace, monospace;">localStorage tnp_membership_override</span>.
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <button id="btnLoginGate" class="btn btn--primary" type="button">Entrar con Google</button>
+        <button id="btnOpenPlansGate" class="btn" type="button">Ver planes</button>
+        <span id="authGateMsg" class="mini muted" style="margin-left:auto;"></span>
+      </div>
+    </div>
+  </div>
 
   <!-- TOPBAR -->
   <header class="topbar" id="topbar">
@@ -76,7 +141,7 @@
         <div class="brand__logo" aria-hidden="true">🛰️</div>
         <div class="brand__txt">
           <div class="brand__title">News → Tweet Panel</div>
-          <div class="brand__sub">PRO · RSS directos · Links reales · Imágenes</div>
+          <div class="brand__sub">RSS directos · Links reales · Imágenes · Login · Membresía</div>
         </div>
       </div>
 
@@ -99,7 +164,10 @@
         <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
         <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
 
-        <!-- ✅ Ko-fi (link real) -->
+        <!-- ✅ Planes / Membresía -->
+        <button id="btnPricing" class="btn btn--sm" type="button" title="Ver planes FREE/PRO/ELITE">💎 Planes</button>
+
+        <!-- ✅ Ko-fi -->
         <a
           id="btnKofi"
           class="btn btn--sm"
@@ -111,7 +179,17 @@
       </div>
     </div>
 
-    <div class="topbar__right">
+    <div class="topbar__right" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+      <!-- Membership/Auth box (app.js actualiza textos/visibilidad) -->
+      <div id="authBox" class="row row--wrap" style="gap:8px;">
+        <span id="tierBadge" class="badge" title="Plan actual">FREE</span>
+        <span id="authUser" class="mini muted" title="Usuario">Sin sesión</span>
+        <button id="btnLogin" class="btn btn--sm" type="button">Entrar</button>
+        <button id="btnLogout" class="btn btn--sm" type="button" hidden>Salir</button>
+        <button id="btnUpgrade" class="btn btn--primary btn--sm" type="button">Mejorar</button>
+        <button id="btnManage" class="btn btn--sm" type="button" hidden>Gestionar</button>
+      </div>
+
       <div id="status" class="status" role="status" aria-live="polite">Listo</div>
     </div>
   </header>
@@ -396,6 +474,92 @@
     </div>
   </div>
 
+  <!-- MODAL MEMBERSHIP (Planes FREE/PRO/ELITE) -->
+  <div
+    id="membModal"
+    class="modal hidden"
+    hidden
+    aria-hidden="true"
+    aria-modal="true"
+    role="dialog"
+    aria-label="Planes de membresía"
+  >
+    <div class="modal__panel">
+      <div class="modal__head">
+        <div>
+          <div class="modal__title">Planes</div>
+          <div class="mini muted">FREE · PRO · ELITE — la app aplica límites y opciones según tu plan.</div>
+        </div>
+        <button id="btnCloseMembModal" class="btn btn--sm" type="button">Cerrar</button>
+      </div>
+
+      <div class="modal__body">
+        <div class="row row--wrap" style="margin-bottom:12px;">
+          <span class="badge" id="membCurrentBadge">Plan actual: FREE</span>
+          <span class="mini muted" id="membMsg"></span>
+          <div class="spacer"></div>
+          <button id="btnMembLogin" class="btn btn--sm" type="button">Entrar</button>
+          <button id="btnMembManage" class="btn btn--sm" type="button" hidden>Gestionar</button>
+        </div>
+
+        <div id="tierCards" class="tierGrid" aria-label="Tarjetas de planes">
+          <!-- app.js puede rellenar dinámicamente; estas cards son fallback visual -->
+          <div class="tierCard" data-tier="free">
+            <div class="tierCard__head">
+              <div class="tierCard__name">FREE</div>
+              <div class="tierCard__price">0€</div>
+            </div>
+            <ul class="tierCard__perks">
+              <li>RSS + ticker básico</li>
+              <li>Resolver links (best-effort)</li>
+              <li>Copiar plantilla + abrir en X</li>
+            </ul>
+            <div class="tierCard__cta">
+              <button class="btn btn--sm" type="button" data-tier-choose="free">Usar FREE</button>
+            </div>
+          </div>
+
+          <div class="tierCard" data-tier="pro">
+            <div class="tierCard__head">
+              <div class="tierCard__name">PRO</div>
+              <div class="tierCard__price">4.99€/mes</div>
+            </div>
+            <ul class="tierCard__perks">
+              <li>Más feeds + más items</li>
+              <li>Auto-refresh más rápido</li>
+              <li>Más imágenes/OG + cachés</li>
+            </ul>
+            <div class="tierCard__cta">
+              <button class="btn btn--primary btn--sm" type="button" data-tier-choose="pro">Mejorar a PRO</button>
+            </div>
+          </div>
+
+          <div class="tierCard" data-tier="elite">
+            <div class="tierCard__head">
+              <div class="tierCard__name">ELITE</div>
+              <div class="tierCard__price">9.99€/mes</div>
+            </div>
+            <ul class="tierCard__perks">
+              <li>Máximo rendimiento (límite alto)</li>
+              <li>Auto-refresh ultra</li>
+              <li>Más extracción OG</li>
+            </ul>
+            <div class="tierCard__cta">
+              <button class="btn btn--primary btn--sm" type="button" data-tier-choose="elite">Mejorar a ELITE</button>
+            </div>
+          </div>
+        </div>
+
+        <hr class="hr" />
+
+        <div class="mini muted">
+          Nota: en GitHub Pages, el plan “real” se confirma con backend (recomendado: Cloudflare Worker). En modo demo, puedes probar con:
+          <span style="font-family: ui-monospace, monospace;">localStorage.setItem("tnp_membership_override","pro")</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <noscript>
     <div class="noscript">Necesitas JavaScript para usar esta app.</div>
   </noscript>
@@ -419,9 +583,11 @@
     (function () {
       "use strict";
 
-      // 👇 MISMO tag que usas en app.js (APP_VERSION + BUILD_ID) al publicar
-      // Importante: debe coincidir con el app.js que estás sirviendo abajo.
-      var BUILD_TAG = "tnp-v4.1.2_2026-01-12a";
+      // 👇 Debe coincidir con:
+      // - window.TNP_CONFIG.buildTag (boot-config.js)
+      // - query ?v=... de boot-config.js y app.js (abajo)
+      // - app.js (APP_VERSION + BUILD_ID)
+      var BUILD_TAG = "tnp-v4.2.0_2026-01-12c";
 
       // Cache-bust en SW (nuevo URL => browser re-evalúa SW)
       var SW_URL = "./sw.js?v=" + encodeURIComponent(BUILD_TAG);
@@ -436,7 +602,7 @@
         try { if (statusEl) statusEl.textContent = msg; } catch {}
       }
 
-      // Captura errores tempranos (incluye scripts defer)
+      // Captura errores tempranos
       window.addEventListener("error", function (e) {
         try {
           var m = (e && (e.message || (e.error && e.error.message)))
@@ -498,7 +664,7 @@
 
       function shouldShowDiag() {
         var s = (statusEl && statusEl.textContent) ? statusEl.textContent.trim() : "";
-        // app.js pone: "TNP listo (tnp-v4.1.2)"
+        // app.js pone: "TNP listo (tnp-vX.Y.Z)"
         if (s.indexOf("TNP listo") !== -1) return false;
         // Si hay estado “trabajando…” no muestres diag
         if (s && s !== "Listo" && s.indexOf("❌") === -1) return false;
@@ -567,10 +733,10 @@
     })();
   </script>
 
-  <!-- (OPCIONAL) Config boot: deja window.TNP_* listo antes de app.js -->
-  <script defer src="./config/boot-config.js?v=tnp-v4.1.2_2026-01-12a"></script>
+  <!-- Config boot (ANTES de app.js) -->
+  <script defer src="./config/boot-config.js?v=tnp-v4.2.0_2026-01-12c"></script>
 
-  <!-- app.js v4.1.2 (NO module) — cache-bust controlado -->
-  <script defer src="./app.js?v=tnp-v4.1.2_2026-01-12a"></script>
+  <!-- app.js v4.2.0 — cache-bust controlado -->
+  <script defer src="./app.js?v=tnp-v4.2.0_2026-01-12c"></script>
 </body>
 </html>
