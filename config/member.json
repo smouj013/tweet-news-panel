@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "updated": "2026-01-12T00:00:00Z",
+  "mode": "allowlist",
+  "allow": [
+    "hecpoley11@gmail.com"
+  ],
+  "deny": [],
+  "roles": {
+    "hecpoley11@gmail.com": "admin"
+  },
+  "notes": "Usa emails en lowercase. Este archivo es público si lo sirves en GitHub Pages."
+}
