@@ -12,8 +12,8 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "tnp-v4.1.3";
-  const BUILD_ID = "2026-01-12c";
+  const APP_VERSION = "tnp-v4.2.0";
+  const BUILD_ID = "2026-01-12d";
 
   // Guard anti-doble-carga (SW / recargas parciales / inline scripts duplicados)
   try{

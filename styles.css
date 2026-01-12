@@ -36,6 +36,9 @@
   --topbarH: 76px;
   --tickerH: 44px;
 
+  /* ticker duration fallback (JS puede setear --tickerDur en #ticker o :root) */
+  --tickerDur: 48s;
+
   --maxW: 1320px;
 
   --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
@@ -337,7 +340,7 @@ a:hover{ text-decoration: underline; }
   white-space: nowrap;
   will-change: transform;
   animation: tnpTickerScroll linear infinite;
-  animation-duration: 48s;
+  animation-duration: var(--tickerDur, 48s);
   font-size: 13px;
   color: rgba(231,233,234,0.88);
 }
@@ -469,6 +472,8 @@ a:hover{ text-decoration: underline; }
   display:grid;
   gap: 0;
   max-height: calc(100vh - var(--topbarH) - var(--tickerH) - 44px);
+  /* iOS/Android: dvh evita el “salto” por barras del navegador */
+  max-height: calc(100dvh - var(--topbarH) - var(--tickerH) - 44px);
   overflow:auto;
 }
 @media (max-width: 979px){
@@ -541,7 +546,7 @@ a:hover{ text-decoration: underline; }
   font-size: 14px;
   color: rgba(231,233,234,0.94);
   display:-webkit-box;
-  -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow:hidden;
 }
@@ -628,7 +633,7 @@ a:hover{ text-decoration: underline; }
   font-weight: 900;
   line-height: 1.2;
   display:-webkit-box;
-  -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow:hidden;
 }
@@ -738,4 +743,125 @@ textarea.input{ line-height: 1.35; }
   .row--4{ grid-template-columns: 1fr 1fr; }
   .row--3{ grid-template-columns: 1fr; }
   .ticker__label{ display:none; }
+}
+
+/* ───────────────────────── ENHANCEMENTS (v4.2.x+) ─────────────────────────
+   A11y + rendimiento + mejoras móviles/scroll.
+   Estas reglas son compatibles con tu HTML/JS actual y solo añaden calidad.
+*/
+
+/* Tap highlight off (móvil) */
+*{ -webkit-tap-highlight-color: transparent; }
+
+/* Imágenes seguras */
+img, svg, video{ max-width: 100%; height: auto; }
+
+/* Focus visible (mejor UX teclado). Mantiene :focus como fallback */
+:where(a,button,input,select,textarea,[tabindex]):focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(29,155,240,0.22);
+  border-color: rgba(29,155,240,0.50);
+}
+:where(a,button,input,select,textarea,[tabindex]):focus:not(:focus-visible){
+  box-shadow: none;
+}
+
+/* Botones / inputs deshabilitados */
+.btn[disabled],
+.btn:disabled{
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none !important;
+}
+.input[disabled],
+.input:disabled{
+  opacity: .60;
+  cursor: not-allowed;
+}
+
+/* Select: pequeño pulido */
+select.input{ padding-right: 34px; }
+select.input{
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(231,233,234,0.70) 50%),
+    linear-gradient(135deg, rgba(231,233,234,0.70) 50%, transparent 50%),
+    linear-gradient(to right, transparent, transparent);
+  background-position:
+    calc(100% - 18px) calc(50% - 2px),
+    calc(100% - 12px) calc(50% - 2px),
+    100% 0;
+  background-size: 6px 6px, 6px 6px, 2.5em 2.5em;
+  background-repeat: no-repeat;
+}
+select.input::-ms-expand{ display:none; }
+
+/* Scrollbars (suave y pro, sin forzar colores del tema) */
+.newsList, .modal__panel{
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.18) transparent;
+}
+.newsList::-webkit-scrollbar,
+.modal__panel::-webkit-scrollbar{
+  width: 10px;
+}
+.newsList::-webkit-scrollbar-thumb,
+.modal__panel::-webkit-scrollbar-thumb{
+  background: rgba(255,255,255,0.16);
+  border-radius: 999px;
+  border: 2px solid rgba(0,0,0,0);
+  background-clip: padding-box;
+}
+.newsList::-webkit-scrollbar-thumb:hover,
+.modal__panel::-webkit-scrollbar-thumb:hover{
+  background: rgba(255,255,255,0.22);
+}
+
+/* Pausar ticker al hover (útil para leer) */
+.ticker__track:hover .ticker__inner{
+  animation-play-state: paused;
+}
+
+/* Backdrop-filter fallback (navegadores sin blur) */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
+  .topbar,
+  .ticker{
+    background: rgba(7,10,18,0.92);
+  }
+  .modal__head{
+    background: rgba(8,12,20,0.98);
+  }
+}
+
+/* Reduce motion (accesibilidad) */
+@media (prefers-reduced-motion: reduce){
+  *{
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .ticker__inner{ padding-left: 0; }
+}
+
+/* Mejor “overscroll” en móviles dentro de paneles */
+.newsList, .modal__panel{ overscroll-behavior: contain; }
+
+/* Utilidad: screen-reader only (por si lo necesitas en futuros cambios) */
+.srOnly{
+  position:absolute !important;
+  width:1px; height:1px;
+  padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0,0,0,0);
+  white-space:nowrap; border:0;
+}
+
+/* Pequeño extra: kbd bonito */
+kbd{
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  color: rgba(231,233,234,0.90);
 }

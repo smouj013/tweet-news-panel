@@ -16,8 +16,8 @@
 "use strict";
 
 /* ───────────────────────────── CONFIG ───────────────────────────── */
-const SW_VERSION  = "tnp-v4.1.3";
-const SW_BUILD_ID = "2026-01-12c"; // 👈 alineado con app.js / index.html
+const SW_VERSION  = "tnp-v4.2.0";
+const SW_BUILD_ID = "2026-01-12d";
 
 const CACHE_PREFIX = "tnp";
 

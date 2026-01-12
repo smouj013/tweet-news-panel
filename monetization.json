@@ -3,7 +3,7 @@
   "app": {
     "name": "TNP",
     "version": "tnp-v4.2.0",
-    "buildId": "2026-01-12c"
+    "buildId": "2026-01-12d"
   },
   "webMonetization": {
     "enabled": false,
