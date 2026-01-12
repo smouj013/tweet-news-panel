@@ -1,4 +1,9 @@
 {
+  "_meta": {
+    "app": "tnp",
+    "version": "tnp-v4.2.0",
+    "buildId": "2026-01-12d"
+  },
   "order": [
     "corsproxy",
     "allorigins",

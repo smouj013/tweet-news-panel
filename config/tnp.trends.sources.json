@@ -1,4 +1,9 @@
 {
+  "_meta": {
+    "app": "tnp",
+    "version": "tnp-v4.2.0",
+    "buildId": "2026-01-12d"
+  },
   "enabled": true,
   "sources": [
     {
@@ -41,7 +46,13 @@
     "maxKeep": 24,
     "maxShown": 6,
     "minLen": 2,
-    "banContains": ["porn", "sexo explícito"],
+    "banContains": [
+      "porn",
+      "porno",
+      "sexo explícito",
+      "xxx",
+      "onlyfans"
+    ],
     "hashtagify": true
   }
 }

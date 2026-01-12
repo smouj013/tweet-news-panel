@@ -1,6 +1,11 @@
 {
+  "_meta": {
+    "app": "tnp",
+    "version": "tnp-v4.2.0",
+    "buildId": "2026-01-12d"
+  },
   "liveUrlDefault": "https://twitch.tv/globaleyetv",
-  "hashtagsDefault": "#ÚltimaHora #España",
+  "hashtagsDefault": "#UltimaHora #España",
   "uiDefaults": {
     "timeFilterMin": 60,
     "delayMin": 0,

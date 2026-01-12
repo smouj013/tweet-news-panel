@@ -14,7 +14,7 @@
   window.TNP_CONFIG = {
     // Debe coincidir con tu deploy (cache-bust coherente)
     // TIP: pon este mismo string en el BUILD_TAG de index.html para que SW/app vayan alineados.
-    buildTag: "tnp-v4.2.0_2026-01-12c",
+    buildTag: "tnp-v4.2.0_2026-01-12d",
 
     /* ───────────────────────────── PROXIES ───────────────────────────── */
     proxyFirst: true,

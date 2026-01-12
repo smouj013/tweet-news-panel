@@ -1,4 +1,9 @@
 {
+  "_meta": {
+    "app": "tnp",
+    "version": "tnp-v4.2.0",
+    "buildId": "2026-01-12d"
+  },
   "impact": {
     "boostWords": {
       "última hora": 5,
@@ -7,7 +12,11 @@
       "confirmado": 3,
       "atentado": 5,
       "explosión": 5,
+      "incendio": 4,
+      "apagón": 4,
       "terremoto": 5,
+      "tsunami": 5,
+      "inundación": 4,
       "muerte": 4,
       "dimite": 4,
       "detenido": 3,
