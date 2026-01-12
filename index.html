@@ -1,8 +1,9 @@
-<!-- index.html — TNP v4.1.1 (COMPAT app.js) — CACHE-BUST + SW BOOT REPAIR + CONFIG BOOT
-  ✅ 100% compatible con app.js v4.1.1 (IDs exactos)
+<!-- index.html — TNP v4.1.2 (COMPAT app.js) — CACHE-BUST + SW BOOT REPAIR + CONFIG BOOT + KOFI
+  ✅ 100% compatible con app.js v4.1.2 (IDs exactos)
   ✅ Cache-bust controlado (BUILD_TAG) para evitar “app.js viejo” en GitHub Pages
   ✅ SW register con updateViaCache:"none" + update() periódico + Repair (purge caches + unregister SW)
   ✅ (Opcional) Carga /config/boot-config.js ANTES de app.js (no rompe si app.js no lo usa)
+  ✅ Botón Ko-fi (tu link real) en la topbar (no rompe CSS: usa .btn)
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -97,6 +98,16 @@
         <button id="btnFeeds" class="btn btn--sm" type="button">Feeds</button>
         <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
         <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
+
+        <!-- ✅ Ko-fi (link real) -->
+        <a
+          id="btnKofi"
+          class="btn btn--sm"
+          href="https://ko-fi.com/global_eye"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Apoya el proyecto en Ko-fi"
+        >☕ Ko-fi</a>
       </div>
     </div>
 
@@ -408,11 +419,11 @@
     (function () {
       "use strict";
 
-      // 👇 MISMO tag que usas en app.js/sw.js al publicar.
-      // Si cambias esto, fuerzas refresco controlado (sin random cada carga).
-      var BUILD_TAG = "tnp-v4.1.1_2026-01-11b";
+      // 👇 MISMO tag que usas en app.js (APP_VERSION + BUILD_ID) al publicar
+      // Importante: debe coincidir con el app.js que estás sirviendo abajo.
+      var BUILD_TAG = "tnp-v4.1.2_2026-01-12a";
 
-      // Cache-bust en SW (crea “nuevo script URL” => browser re-evalúa SW)
+      // Cache-bust en SW (nuevo URL => browser re-evalúa SW)
       var SW_URL = "./sw.js?v=" + encodeURIComponent(BUILD_TAG);
 
       var bootDiag = document.getElementById("bootDiag");
@@ -477,7 +488,7 @@
           location.reload();
         });
 
-        // “Auto update” en GH Pages
+        // Auto update (GH Pages)
         setInterval(function () {
           try { if (swReg) swReg.update(); } catch {}
         }, 60 * 1000);
@@ -487,9 +498,9 @@
 
       function shouldShowDiag() {
         var s = (statusEl && statusEl.textContent) ? statusEl.textContent.trim() : "";
-        // app.js suele poner: "TNP listo (tnp-v4.1.1)"
+        // app.js pone: "TNP listo (tnp-v4.1.2)"
         if (s.indexOf("TNP listo") !== -1) return false;
-        // Si hay un estado “trabajando…” no muestres diag
+        // Si hay estado “trabajando…” no muestres diag
         if (s && s !== "Listo" && s.indexOf("❌") === -1) return false;
         return true;
       }
@@ -557,9 +568,9 @@
   </script>
 
   <!-- (OPCIONAL) Config boot: deja window.TNP_* listo antes de app.js -->
-  <script defer src="./config/boot-config.js?v=tnp-v4.1.1_2026-01-11b"></script>
+  <script defer src="./config/boot-config.js?v=tnp-v4.1.2_2026-01-12a"></script>
 
-  <!-- app.js v4.1.1 (NO module) — cache-bust controlado -->
-  <script defer src="./app.js?v=tnp-v4.1.1_2026-01-11b"></script>
+  <!-- app.js v4.1.2 (NO module) — cache-bust controlado -->
+  <script defer src="./app.js?v=tnp-v4.1.2_2026-01-12a"></script>
 </body>
 </html>

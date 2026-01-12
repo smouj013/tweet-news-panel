@@ -1,8 +1,9 @@
-/* styles.css — TNP v4.1.1 — NEWSROOM PRO (Dark)
-   ✅ Compat total con index.html + app.js v4.1.1
+/* styles.css — TNP v4.1.2 — NEWSROOM PRO (Dark)
+   ✅ Compat total con index.html + app.js v4.1.2 (IDs/clases exactos)
    ✅ FIX: modal SIEMPRE ocultable (.hidden y [hidden])
    ✅ Mejoras: focus-visible, responsive, safe-area iOS, scrollbars, micro-UX sin romper nada
    ✅ Extra: ticker con duración configurable vía CSS var (--tickerDur) sin romper JS
+   ✅ Extra: soporte opcional para botón Ko-fi (si usas .btn--kofi)
 */
 
 :root{
@@ -227,8 +228,8 @@ button{ -webkit-tap-highlight-color: transparent; }
   will-change: transform;
 }
 @keyframes ticker{
-  0%{ transform: translateX(0); }
-  100%{ transform: translateX(-100%); }
+  0%{ transform: translate3d(0,0,0); }
+  100%{ transform: translate3d(-100%,0,0); }
 }
 
 /* Pausa sutil al hover (desktop) sin afectar móviles */
@@ -283,6 +284,11 @@ button{ -webkit-tap-highlight-color: transparent; }
 .mono{ font-family: var(--mono); }
 
 .btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap: 8px;
+
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.14);
@@ -291,6 +297,7 @@ button{ -webkit-tap-highlight-color: transparent; }
   cursor:pointer;
   transition: transform .10s ease, background .12s ease, border-color .12s ease, box-shadow .12s ease;
   user-select: none;
+  white-space: nowrap;
 }
 .btn:hover{
   background: rgba(255,255,255,0.09);
@@ -332,6 +339,16 @@ button{ -webkit-tap-highlight-color: transparent; }
 .btn--x:hover{
   background: rgba(29,155,240,0.16);
   border-color: rgba(29,155,240,0.44);
+}
+
+/* (Opcional) Ko-fi look — si en index pones class="btn btn--sm btn--kofi" */
+.btn--kofi{
+  border-color: rgba(255,92,122,0.30);
+  background: rgba(255,92,122,0.10);
+}
+.btn--kofi:hover{
+  background: rgba(255,92,122,0.14);
+  border-color: rgba(255,92,122,0.40);
 }
 
 .row{ display:flex; align-items:center; gap: 10px; }
@@ -648,6 +665,7 @@ button{ -webkit-tap-highlight-color: transparent; }
   width: min(980px, 96vw);
   max-height: min(86vh, 920px);
   overflow:auto;
+  -webkit-overflow-scrolling: touch;
   border-radius: 18px;
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(8,12,20,0.92);
