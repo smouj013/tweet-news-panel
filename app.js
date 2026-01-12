@@ -1,38 +1,22 @@
-/* app.js — TNP v4.1.1 — DIRECT RSS + HARDENED + ES TRANSLATE FIX (compat index.html)
+/* app.js — TNP v4.1.2 — DIRECT RSS + HARDENED + LAG FIX + CONFIG READY
    ✅ 100% compatible con tu index.html (IDs + modal + ticker + X mock + botones)
-   ✅ FIX: Traducción ES (títulos) con caché + concurrencia + proxy-pool (best-effort)
-   ✅ FIX: Al elegir noticia SIEMPRE reemplaza Titular/URL/hashtags (y refresca preview antes de abrir X)
-   ✅ FIX CLAVE: si el usuario “rompe” el Template (sin {{HEADLINE}}) -> auto-repara (evita tweet anterior pegado)
-   ✅ FIX: “Abrir X” ya NO usa texto antiguo (force updatePreview + buildTweet con plantilla validada)
-   ✅ Anti-cache: fetch no-store + cache-bust en PROXIES (sin headers que provoquen preflight)
-   ✅ CORS PRO: proxy-pool (corsproxy -> allorigins -> codetabs -> thingproxy -> jina) + retry suave
-   ✅ RSS/Atom: extracción de imágenes (media/enclosure + <img>) + OG best-effort
+   ✅ FIX CLAVE (LAG/CONGELADOS): NO re-renderiza lista al escribir en composer
+   ✅ Selección de noticia: SIEMPRE reemplaza Titular/URL/hashtags + updatePreview inmediato
+   ✅ Auto-repara Template si el usuario “rompe” {{HEADLINE}}
+   ✅ Anti-cache: fetch no-store + cache-bust en proxys (sin headers raros)
+   ✅ CORS PRO: proxy-pool + retry suave + hint por feed
+   ✅ RSS/Atom: imágenes (media/enclosure/img) + OG best-effort
    ✅ Backoff por feed + batch configurable
-   ✅ TICKER SPEED: configurable (pps) + duración automática por ancho del texto
+   ✅ TICKER SPEED: configurable (pps) + duración automática por ancho
+   ✅ CONFIG READY: lee window.TNP_CONFIG (desde /config/boot-config.js)
 */
 
 (() => {
   "use strict";
 
-  const APP_VERSION = "tnp-v4.1.1";
+  const APP_VERSION = "tnp-v4.1.2";
   // Cambia BUILD_ID cuando publiques (fuerza self-heal cache/SW)
-  const BUILD_ID = "2026-01-11b";
-
-  /* ───────────────────────────── PROXY CONFIG ───────────────────────────── */
-  const CUSTOM_PROXY_TEMPLATE = ""; // p.ej: "https://tuworker.workers.dev/?url={{ENCODED_URL}}"
-  const PROXY_FIRST = true;
-
-  /* ───────────────────────────── STORAGE ───────────────────────────── */
-  const LS_FEEDS    = "tnp_feeds_v4";
-  const LS_TEMPLATE = "tnp_template_v4";
-  const LS_SETTINGS = "tnp_settings_v4";
-  const LS_USED     = "tnp_used_v4";
-
-  const LS_RESOLVE_CACHE = "tnp_resolve_cache_v4";
-  const LS_OG_CACHE      = "tnp_og_cache_v4";
-  const LS_TR_CACHE      = "tnp_tr_cache_v4";
-
-  const LS_BUILD_ID = "tnp_build_id_v4";
+  const BUILD_ID = "2026-01-12b";
 
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
   const DEFAULT_TEMPLATE =
@@ -47,16 +31,69 @@ Fuente:
 
   const DEFAULT_LIVE_LINE = "🔴#ENVIVO >>> {{LIVE_URL}}";
 
-  /* ───────────────────────────── TRANSLATE (ES) ─────────────────────────────
-     - Best-effort (puede fallar según proxies / rate)
-     - Se usa solo para títulos NO españoles cuando “ES prioridad” está activado.
-  */
-  const TR_ENABLED_DEFAULT = true;
+  /* ───────────────────────────── BOOT CONFIG (/config/boot-config.js) ───────────────────────────── */
+  // Puedes sobreescribir cosas sin tocar app.js:
+  // window.TNP_CONFIG = { proxyFirst, customProxyTemplate, defaultLiveUrl, defaultTemplate, defaultFeeds, ... }
+  const BOOT = (() => {
+    const c = (window.TNP_CONFIG || window.TNP_BOOT_CONFIG || window.__TNP_CONFIG__ || null);
+    const cfg = (c && typeof c === "object" && !Array.isArray(c)) ? c : {};
+
+    const buildTag = String(cfg.buildTag || `${APP_VERSION}_${BUILD_ID}`).trim();
+
+    const num = (v, fb) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fb;
+    };
+
+    return {
+      buildTag,
+
+      // Proxy
+      customProxyTemplate: String(cfg.customProxyTemplate || "").trim(), // "https://tuworker.workers.dev/?url={{ENCODED_URL}}"
+      proxyFirst: (cfg.proxyFirst !== false),
+
+      // Defaults composer
+      defaultLiveUrl: String(cfg.defaultLiveUrl || "https://twitch.tv/globaleyetv").trim(),
+      defaultHashtags: String(cfg.defaultHashtags || "").trim(),
+
+      // Defaults plantilla (si quieres cambiar tu plantilla base sin tocar app.js)
+      defaultTemplate: String(cfg.defaultTemplate || DEFAULT_TEMPLATE),
+      defaultLiveLine: String(cfg.defaultLiveLine || DEFAULT_LIVE_LINE),
+
+      // Traducción
+      trEnabledDefault: (cfg.trEnabledDefault !== false),
+
+      // Feeds: si defines defaultFeeds (array), reemplaza DEFAULT_FEEDS
+      defaultFeeds: Array.isArray(cfg.defaultFeeds) ? cfg.defaultFeeds : null,
+
+      // Límites opcionales
+      maxItemsKeep: Math.max(200, Math.min(5000, num(cfg.maxItemsKeep, 900))),
+      visibleTranslateLimit: Math.max(20, Math.min(200, num(cfg.visibleTranslateLimit, 80))),
+    };
+  })();
+
+  /* ───────────────────────────── PROXY CONFIG ───────────────────────────── */
+  const CUSTOM_PROXY_TEMPLATE = BOOT.customProxyTemplate;
+  const PROXY_FIRST = BOOT.proxyFirst;
+
+  /* ───────────────────────────── STORAGE ───────────────────────────── */
+  const LS_FEEDS    = "tnp_feeds_v4";
+  const LS_TEMPLATE = "tnp_template_v4";
+  const LS_SETTINGS = "tnp_settings_v4";
+  const LS_USED     = "tnp_used_v4";
+
+  const LS_RESOLVE_CACHE = "tnp_resolve_cache_v4";
+  const LS_OG_CACHE      = "tnp_og_cache_v4";
+  const LS_TR_CACHE      = "tnp_tr_cache_v4";
+
+  const LS_BUILD_ID = "tnp_build_id_v4";
+
+  /* ───────────────────────────── TRANSLATE (ES) ───────────────────────────── */
+  const TR_ENABLED_DEFAULT = true; // base (luego BOOT puede apagar)
   const TR_CONCURRENCY = 2;
-  const TR_VISIBLE_LIMIT = 80;
+  const TR_VISIBLE_LIMIT = BOOT.visibleTranslateLimit;
   const TR_CACHE_LIMIT = 2000;
 
-  // Endpoint Google Translate (gtx) (se llama vía proxies)
   const TR_ENDPOINT = (text) =>
     `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=${encodeURIComponent(text)}`;
 
@@ -66,6 +103,14 @@ Fuente:
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+
+  function debounce(fn, ms){
+    let t = null;
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn(...args), ms);
+    };
+  }
 
   function numOr(v, fallback){
     const n = Number(v);
@@ -244,7 +289,10 @@ Fuente:
     { name:"Google News — World (Top) [OFF]", url:"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", enabled:false, cat:"world" },
   ];
 
-  const DEFAULT_FEEDS = [...DIRECT_FEEDS];
+  // Si BOOT.defaultFeeds existe => sustituye defaults
+  const DEFAULT_FEEDS = Array.isArray(BOOT.defaultFeeds) && BOOT.defaultFeeds.length
+    ? BOOT.defaultFeeds
+    : [...DIRECT_FEEDS];
 
   /* ───────────────────────────── UI REFS ───────────────────────────── */
   const els = {
@@ -322,7 +370,7 @@ Fuente:
     const raw = safeParseJSON(localStorage.getItem(LS_SETTINGS));
     const s = asObject(raw, {});
 
-    s.liveUrl = s.liveUrl || "https://twitch.tv/globaleyetv";
+    s.liveUrl = s.liveUrl || BOOT.defaultLiveUrl || "https://twitch.tv/globaleyetv";
 
     s.delayMin   = numOr(s.delayMin, 0);
     s.timeFilter = numOr(s.timeFilter, 60);
@@ -348,7 +396,10 @@ Fuente:
     s.catFilter = s.catFilter || "all";
 
     // Traducción ES (best-effort)
-    s.trEnabled = (s.trEnabled !== false) && TR_ENABLED_DEFAULT;
+    s.trEnabled = (s.trEnabled !== false) && TR_ENABLED_DEFAULT && (BOOT.trEnabledDefault !== false);
+
+    // Hashtags default opcional (solo si no hay nada guardado)
+    if (!s.defaultHashtags && BOOT.defaultHashtags) s.defaultHashtags = BOOT.defaultHashtags;
 
     return s;
   }
@@ -365,7 +416,11 @@ Fuente:
 
   function loadTemplate(){
     const t = localStorage.getItem(LS_TEMPLATE);
-    return (t && t.trim()) ? t : DEFAULT_TEMPLATE;
+    if (t && t.trim()) return t;
+    // Si no hay guardado, usa el default del BOOT (si existe)
+    return (BOOT.defaultTemplate && String(BOOT.defaultTemplate).trim())
+      ? String(BOOT.defaultTemplate)
+      : DEFAULT_TEMPLATE;
   }
   function saveTemplate(t){
     localStorage.setItem(LS_TEMPLATE, String(t || DEFAULT_TEMPLATE));
@@ -386,6 +441,7 @@ Fuente:
 
     autoTimer: null,
     trendsTimer: null,
+    uiTickTimer: null,
 
     resolveCache: new Map(),
     ogCache: new Map(),
@@ -408,6 +464,9 @@ Fuente:
 
     // Composer
     lastBuiltTweet: "",
+
+    // Render signature (para evitar rerenders innecesarios)
+    lastRenderSig: "",
   };
 
   function loadUsed(){
@@ -441,31 +500,33 @@ Fuente:
     }
   }
 
-  function saveCaches(){
-    const rsOut = {};
-    let i = 0;
-    for (const [k,v] of state.resolveCache.entries()){
-      rsOut[k] = v;
-      if (++i > 2000) break;
-    }
-    localStorage.setItem(LS_RESOLVE_CACHE, JSON.stringify(rsOut));
+  const saveCachesThrottled = debounce(() => {
+    try{
+      const rsOut = {};
+      let i = 0;
+      for (const [k,v] of state.resolveCache.entries()){
+        rsOut[k] = v;
+        if (++i > 2000) break;
+      }
+      localStorage.setItem(LS_RESOLVE_CACHE, JSON.stringify(rsOut));
 
-    const ogOut = {};
-    i = 0;
-    for (const [k,v] of state.ogCache.entries()){
-      ogOut[k] = v;
-      if (++i > 1200) break;
-    }
-    localStorage.setItem(LS_OG_CACHE, JSON.stringify(ogOut));
+      const ogOut = {};
+      i = 0;
+      for (const [k,v] of state.ogCache.entries()){
+        ogOut[k] = v;
+        if (++i > 1200) break;
+      }
+      localStorage.setItem(LS_OG_CACHE, JSON.stringify(ogOut));
 
-    const trOut = {};
-    i = 0;
-    for (const [k,v] of state.trCache.entries()){
-      trOut[k] = v;
-      if (++i > TR_CACHE_LIMIT) break;
-    }
-    localStorage.setItem(LS_TR_CACHE, JSON.stringify(trOut));
-  }
+      const trOut = {};
+      i = 0;
+      for (const [k,v] of state.trCache.entries()){
+        trOut[k] = v;
+        if (++i > TR_CACHE_LIMIT) break;
+      }
+      localStorage.setItem(LS_TR_CACHE, JSON.stringify(trOut));
+    }catch{}
+  }, 600);
 
   /* ───────────────────────────── FEEDS CRUD ───────────────────────────── */
   function normalizeFeed(f){
@@ -711,7 +772,6 @@ Fuente:
   }
 
   async function fetchJsonSmart(targetUrl, signal){
-    // se usa para Translate (JSON). Acept no provoca preflight en simple GET.
     const accept = "application/json, text/plain, */*;q=0.8";
     const proxies = makeProxyCandidates(targetUrl);
     const candidates = PROXY_FIRST ? [...proxies, targetUrl] : [targetUrl, ...proxies];
@@ -720,11 +780,15 @@ Fuente:
     for (const u of candidates){
       try{
         const txt = await fetchText(u, signal, accept);
-        const raw = String(txt || "").trim();
-        // algunos proxies devuelven basura antes del JSON
-        const start = raw.indexOf("[");
-        const start2 = raw.indexOf("{");
-        const s = (start >= 0 && (start2 < 0 || start < start2)) ? raw.slice(start) : (start2 >= 0 ? raw.slice(start2) : raw);
+        let raw = String(txt || "").trim();
+        raw = raw.replace(/^\)\]\}'\s*\n?/, "").trim();
+
+        const startArr = raw.indexOf("[");
+        const startObj = raw.indexOf("{");
+        const s = (startArr >= 0 && (startObj < 0 || startArr < startObj))
+          ? raw.slice(startArr)
+          : (startObj >= 0 ? raw.slice(startObj) : raw);
+
         return JSON.parse(s);
       }catch(e){
         lastErr = e;
@@ -734,13 +798,14 @@ Fuente:
     throw lastErr || new Error("json_fetch_failed");
   }
 
-  async function mapLimit(arr, limit, fn){
+  async function mapLimit(arr, limit, fn, signal){
     const a = Array.isArray(arr) ? arr : [];
     const out = new Array(a.length);
     let idx = 0;
 
     const workers = new Array(Math.max(1, limit)).fill(0).map(async () => {
       while (idx < a.length){
+        if (signal?.aborted) return;
         const i = idx++;
         try { out[i] = await fn(a[i], i); }
         catch { out[i] = undefined; }
@@ -911,6 +976,8 @@ Fuente:
     }catch{
       state.ogCache.set(k, null);
       return null;
+    } finally {
+      saveCachesThrottled();
     }
   }
 
@@ -947,7 +1014,6 @@ Fuente:
   }
 
   function parseGtXResponse(json){
-    // gtx típico: [ [ ["texto", "...", ...], ... ], null, "auto", ... ]
     try{
       const chunks = json?.[0];
       if (!Array.isArray(chunks)) return "";
@@ -976,6 +1042,8 @@ Fuente:
     }catch{
       state.trCache.set(k, null);
       return "";
+    } finally {
+      saveCachesThrottled();
     }
   }
 
@@ -988,17 +1056,13 @@ Fuente:
   }
 
   function kickTranslateVisible(){
-    // Solo si ES prioridad y traducción activada
     const preferEs = !!els.optOnlySpanish?.checked;
     if (!preferEs) return;
     if (!settings.trEnabled) return;
 
     if (!state.filtered.length) return;
-
-    // Evitar spam: si ya está corriendo, salimos
     if (state.trQueueRunning) return;
 
-    // Candidatos: visibles y NO españoles
     const candidates = [];
     for (const it of state.filtered){
       if (candidates.length >= TR_VISIBLE_LIMIT) break;
@@ -1006,7 +1070,6 @@ Fuente:
       if (it.translated) continue;
       if (likelySpanish(it.title, it.feedName, it.cat)) continue;
 
-      // si ya hay cache para ese texto y es string vacío/null, no insistimos
       const k = trKeyFor(it.title);
       if (state.trCache.has(k) && !state.trCache.get(k)) continue;
 
@@ -1041,7 +1104,6 @@ Fuente:
 
         patchRenderedTitle(it.id, it.title);
 
-        // Si está seleccionado y el usuario NO ha tocado el titular, lo actualizamos
         if (state.selectedId === it.id && els.headline){
           const cur = normSpace(els.headline.value);
           const orig = normSpace(it.originalTitle);
@@ -1050,7 +1112,6 @@ Fuente:
           }
         }
 
-        // Actualiza ticker con debounce
         if (state.trDebounceTimer) clearTimeout(state.trDebounceTimer);
         state.trDebounceTimer = setTimeout(() => {
           try{
@@ -1062,9 +1123,8 @@ Fuente:
       }
 
       state.trInFlight.delete(id);
-    }).finally(() => {
+    }, signal).finally(() => {
       state.trQueueRunning = false;
-      try{ saveCaches(); }catch{}
     });
   }
 
@@ -1143,12 +1203,28 @@ Fuente:
     updateTicker();
     updateTrendsPop();
 
-    // ⬇️ Traducción best-effort: después de renderizar para poder parchear títulos en DOM
-    kickTranslateVisible();
+    // Traducción best-effort sin bloquear (idle si existe)
+    try{
+      if ("requestIdleCallback" in window) window.requestIdleCallback(() => kickTranslateVisible(), { timeout: 900 });
+      else setTimeout(kickTranslateVisible, 120);
+    }catch{
+      kickTranslateVisible();
+    }
   }
+
+  const applyFiltersDebounced = debounce(applyFilters, 90);
 
   function renderNewsList(list){
     if (!els.newsList) return;
+
+    const sig = list.map(x => x.id).join("|");
+    if (sig === state.lastRenderSig){
+      // No reconstruimos DOM si es la misma lista; solo aseguramos sel/used
+      patchSelectedRow(state.selectedId);
+      return;
+    }
+    state.lastRenderSig = sig;
+
     els.newsList.innerHTML = "";
 
     if (!list.length){
@@ -1202,11 +1278,11 @@ Fuente:
       meta.className = "newsMeta";
 
       const b1 = document.createElement("span");
-      b1.className = "badge";
+      b1.className = "badge domain";
       b1.textContent = it.domain || "fuente";
 
       const b2 = document.createElement("span");
-      b2.className = "badge";
+      b2.className = "badge age";
       b2.textContent = fmtAge(it.dateMs);
 
       meta.appendChild(b1);
@@ -1283,25 +1359,37 @@ Fuente:
       picks.push("#" + w);
     }
 
-    return [...base, ...picks].join(" ");
+    const out = [...base, ...picks].join(" ");
+    return out.trim();
   }
 
   function ensureTemplateValid(){
     if (!els.template) return;
 
     const t = String(els.template.value || "").trim();
-    // Si NO tiene {{HEADLINE}} => no es plantilla usable => se queda pegado el tweet anterior.
     if (!t.includes("{{HEADLINE}}")){
       const saved = loadTemplate();
-      const fallback = (saved && saved.includes("{{HEADLINE}}")) ? saved : DEFAULT_TEMPLATE;
+      const fallback = (saved && saved.includes("{{HEADLINE}}")) ? saved : (BOOT.defaultTemplate || DEFAULT_TEMPLATE);
 
       els.template.value = fallback;
       saveTemplate(fallback);
 
       if (els.warn){
-        els.warn.textContent = "⚠️ Tu Template no tenía {{HEADLINE}} (parecía un tweet ya relleno). Se ha restaurado la plantilla para evitar que se quede la noticia anterior.";
+        els.warn.textContent = "⚠️ Tu Template no tenía {{HEADLINE}}. Se ha restaurado la plantilla para evitar que se quede la noticia anterior.";
       }
     }
+  }
+
+  function stripSourceBlock(text){
+    // Borra bloque “Fuente:” + línea de URL si existe
+    let out = String(text || "");
+    // Caso estándar
+    out = out.replace(/\n?Fuente:\s*\n[ \t]*https?:\/\/[^\s]+/i, "");
+    // Si queda “Fuente:” suelta
+    out = out.replace(/\n?Fuente:\s*\n?/i, "");
+    // Limpia saltos
+    out = out.replace(/\n{3,}/g, "\n\n");
+    return out.trim();
   }
 
   function buildTweet(){
@@ -1315,7 +1403,7 @@ Fuente:
     const tags = normSpace(els.hashtags?.value);
 
     const liveLine = (els.optIncludeLive?.checked)
-      ? DEFAULT_LIVE_LINE.replace("{{LIVE_URL}}", liveUrl)
+      ? (BOOT.defaultLiveLine || DEFAULT_LIVE_LINE).replace("{{LIVE_URL}}", liveUrl)
       : "";
 
     let out = tpl
@@ -1325,17 +1413,18 @@ Fuente:
       .replaceAll("{{SOURCE_URL}}", sourceUrl)
       .replaceAll("{{HASHTAGS}}", tags);
 
-    // si optIncludeSource está desactivado, intentamos quitar sección "Fuente"
     if (els.optIncludeSource && !els.optIncludeSource.checked){
-      out = out
-        .replace(/\n?Fuente:\s*\n\s*https?:\/\/[^\s]+/i, "")
-        .replace(/\n?Fuente:\s*\n\s*\{\{SOURCE_URL\}\}/i, "")
-        .replace(/\n{3,}/g, "\n\n");
+      out = stripSourceBlock(out);
     }
 
     out = out.trim();
     state.lastBuiltTweet = out;
     return out;
+  }
+
+  function getSelectedItem(){
+    if (!state.selectedId) return null;
+    return state.items.find(x => x.id === state.selectedId) || state.filtered.find(x => x.id === state.selectedId) || null;
   }
 
   function renderXMockCard(it){
@@ -1393,10 +1482,17 @@ Fuente:
     const len = estimateXChars(t);
     if (els.charCount) els.charCount.textContent = `${len} / 280`;
 
-    // OJO: si ensureTemplateValid escribió warn, no lo pisamos si hay overflow
     if (els.warn){
+      const existing = String(els.warn.textContent || "");
       const overflowMsg = (len > 280) ? `⚠️ Se pasa de 280 (sobran ${len - 280})` : "";
-      if (overflowMsg) els.warn.textContent = overflowMsg;
+
+      if (existing.startsWith("⚠️ Tu Template no tenía") && overflowMsg){
+        els.warn.textContent = existing + " · " + overflowMsg;
+      } else if (!existing.startsWith("⚠️ Tu Template no tenía")){
+        els.warn.textContent = overflowMsg || "";
+      } else if (existing.startsWith("⚠️ Tu Template no tenía") && !overflowMsg){
+        // mantenemos warning de template
+      }
     }
 
     if (els.xMockText) els.xMockText.textContent = t;
@@ -1411,9 +1507,14 @@ Fuente:
     return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut) + "…";
   }
 
-  function getSelectedItem(){
-    if (!state.selectedId) return null;
-    return state.items.find(x => x.id === state.selectedId) || state.filtered.find(x => x.id === state.selectedId) || null;
+  function patchSelectedRow(newId){
+    if (!els.newsList) return;
+    const prev = els.newsList.querySelector(".newsItem.sel");
+    if (prev) prev.classList.remove("sel");
+
+    if (!newId) return;
+    const row = els.newsList.querySelector(`.newsItem[data-id="${CSS.escape(newId)}"]`);
+    if (row) row.classList.add("sel");
   }
 
   function selectItem(id){
@@ -1422,24 +1523,33 @@ Fuente:
 
     state.selectedId = id;
 
-    // ✅ SIEMPRE sustituye (evita quedarse con lo anterior)
+    // ✅ Siempre reemplaza (no “mezcla” con lo que hubiera)
     if (els.headline) els.headline.value = normSpace(it.title || it.originalTitle || "");
     const src = (els.optShowOriginal?.checked) ? (it.resolvedUrl || it.link) : it.link;
     if (els.sourceUrl) els.sourceUrl.value = normSpace(src || "");
-    if (els.hashtags) els.hashtags.value = suggestHashtags(it.title || it.originalTitle, it.cat);
 
-    // ✅ Forzar preview antes de cualquier otra cosa (clave para Abrir X)
+    // Hashtags: si hay default en BOOT y usuario no tiene nada, lo añadimos al final
+    const sug = suggestHashtags(it.title || it.originalTitle, it.cat);
+    const def = normSpace(settings.defaultHashtags || "");
+    if (els.hashtags){
+      els.hashtags.value = (def && !sug.includes(def)) ? `${sug} ${def}`.trim() : sug;
+    }
+
     updatePreview();
 
-    // Re-render lista para marcar seleccionado
-    applyFilters();
+    // ✅ FIX LAG: NO re-render lista aquí
+    patchSelectedRow(id);
   }
 
   function markSelectedUsed(){
     if (!state.selectedId) return;
     state.used.add(state.selectedId);
     saveUsed();
-    applyFilters();
+
+    const row = els.newsList?.querySelector(`.newsItem[data-id="${CSS.escape(state.selectedId)}"]`);
+    if (row) row.classList.add("used");
+
+    if (els.optHideUsed?.checked) applyFiltersDebounced();
   }
 
   /* ───────────────────────────── TICKER SPEED HELPERS ───────────────────────────── */
@@ -1566,6 +1676,33 @@ Fuente:
     }, 4200);
   }
 
+  /* ───────────────────────────── UI TICK (sin re-render) ───────────────────────────── */
+  function startUiTick(){
+    clearInterval(state.uiTickTimer);
+    state.uiTickTimer = setInterval(() => {
+      try{
+        // Actualiza “edad” en la lista sin reconstruir DOM
+        if (els.newsList && state.filtered.length){
+          const now = nowMs();
+          // Solo actualiza los visibles actuales
+          for (const it of state.filtered){
+            const row = els.newsList.querySelector(`.newsItem[data-id="${CSS.escape(it.id)}"]`);
+            if (!row) continue;
+            const ageEl = row.querySelector(".badge.age");
+            if (ageEl){
+              const m = Math.floor(Math.max(0, now - it.dateMs) / 60000);
+              ageEl.textContent = (m < 1) ? "ahora" : (m < 60 ? `${m}m` : fmtAge(it.dateMs));
+            }
+          }
+        }
+        // Mantén el contador de caracteres “fresco” sin tocar lista
+        if (document.activeElement === els.headline || document.activeElement === els.template || document.activeElement === els.hashtags || document.activeElement === els.sourceUrl){
+          updatePreview();
+        }
+      }catch{}
+    }, 10000);
+  }
+
   /* ───────────────────────────── BACKOFF ───────────────────────────── */
   function shouldSkipFeed(feedUrl, force){
     if (force) return false;
@@ -1595,9 +1732,11 @@ Fuente:
       state.swReg = null;
     }
 
+    // Si index.html ya lo registró con ?v=..., NO forzamos otro distinto salvo que no exista
     if (!state.swReg){
       try{
-        state.swReg = await navigator.serviceWorker.register("./sw.js", { updateViaCache:"none" });
+        const swUrl = "./sw.js?v=" + encodeURIComponent(BOOT.buildTag);
+        state.swReg = await navigator.serviceWorker.register(swUrl, { updateViaCache:"none" });
       }catch{
         state.swReg = null;
       }
@@ -1743,11 +1882,12 @@ Fuente:
     state.refreshAbort = new AbortController();
     const signal = state.refreshAbort.signal;
 
-    state.items = [];
-    state.filtered = [];
-    renderNewsList([]);
-    updateTicker();
-    updateTrendsPop();
+    // ✅ Mejora UX: NO vaciamos lista si ya había contenido (evita parpadeo/lag)
+    if (!state.items.length){
+      renderNewsList([]);
+      updateTicker();
+      updateTrendsPop();
+    }
 
     setStatus(force ? "Refrescando (force)…" : "Refrescando…");
 
@@ -1794,7 +1934,6 @@ Fuente:
         await sleep(60);
       }
 
-      state.lastFetchReport = { ok, fail, total: enabledFeeds.length };
       await emergencyRepairIfAllFailed(enabledFeeds.length, ok);
 
       if (signal.aborted || mySeq !== state.refreshSeq) throw new Error("Abort");
@@ -1817,13 +1956,15 @@ Fuente:
       const clean = dedup.filter(it => (now - it.dateMs) >= 0);
 
       clean.sort((a,b) => b.dateMs - a.dateMs);
-      state.items = clean.slice(0, cap);
+
+      // ✅ Limita memoria global (evita crecimiento infinito)
+      state.items = clean.slice(0, Math.max(cap, BOOT.maxItemsKeep));
 
       if (els.optResolveLinks?.checked){
         const need = state.items.filter(it => shouldResolve(it.link)).slice(0, 80);
         await mapLimit(need, 6, async (it) => {
           it.resolvedUrl = await resolveUrl(it.link, signal);
-        });
+        }, signal);
       }
 
       const needImg = state.items
@@ -1834,13 +1975,12 @@ Fuente:
         const u = it.resolvedUrl || it.link;
         const og = await fetchOgImage(u, signal);
         if (og && og.img) it.img = og.img;
-      });
+      }, signal);
 
       for (const it of state.items){
         it.ready = !!(it.title && (it.resolvedUrl || it.link));
       }
 
-      saveCaches();
       setStatus(`OK · ${state.items.length} noticias · feeds OK:${ok} FAIL:${fail}`);
 
       applyFilters();
@@ -1903,15 +2043,15 @@ Fuente:
       if (els.tickerSpeedVal) els.tickerSpeedVal.textContent = `${els.tickerSpeed.value} pps`;
     }
 
-    const saveSettingFrom = () => {
-      settings.liveUrl = normSpace(els.liveUrl?.value || settings.liveUrl);
+    // Si no hay hashtags escritos, aplica default
+    if (els.hashtags && !els.hashtags.value && settings.defaultHashtags){
+      els.hashtags.value = settings.defaultHashtags;
+    }
 
+    const saveFilterSettings = () => {
       settings.delayMin   = clamp(numOr(els.delayMin?.value, settings.delayMin), 0, 60);
       settings.timeFilter = clamp(numOr(els.timeFilter?.value, settings.timeFilter), 1, 24*60);
       settings.showLimit  = clamp(numOr(els.showLimit?.value, settings.showLimit), 10, 500);
-      settings.fetchCap   = clamp(numOr(els.fetchCap?.value, settings.fetchCap), 80, 2000);
-      settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 4, 50);
-      settings.refreshSec = clamp(numOr(els.refreshSec?.value, settings.refreshSec), 20, 600);
 
       settings.sortBy = els.sortBy?.value || settings.sortBy;
 
@@ -1920,12 +2060,30 @@ Fuente:
       settings.optResolveLinks = !!els.optResolveLinks?.checked;
       settings.optShowOriginal = !!els.optShowOriginal?.checked;
       settings.optHideUsed     = !!els.optHideUsed?.checked;
-      settings.optAutoRefresh  = !!els.optAutoRefresh?.checked;
-
-      settings.optIncludeLive   = !!els.optIncludeLive?.checked;
-      settings.optIncludeSource = !!els.optIncludeSource?.checked;
 
       settings.catFilter = els.catFilter?.value || "all";
+
+      saveSettings(settings);
+      applyFiltersDebounced();
+    };
+
+    const saveRefreshSettings = () => {
+      settings.fetchCap   = clamp(numOr(els.fetchCap?.value, settings.fetchCap), 80, 2000);
+      settings.batchFeeds = clamp(numOr(els.batchFeeds?.value, settings.batchFeeds), 4, 50);
+      saveSettings(settings);
+    };
+
+    const saveAutoSettings = () => {
+      settings.optAutoRefresh = !!els.optAutoRefresh?.checked;
+      settings.refreshSec = clamp(numOr(els.refreshSec?.value, settings.refreshSec), 20, 600);
+      saveSettings(settings);
+      startAuto();
+    };
+
+    const saveComposerSettings = () => {
+      settings.liveUrl = normSpace(els.liveUrl?.value || settings.liveUrl);
+      settings.optIncludeLive   = !!els.optIncludeLive?.checked;
+      settings.optIncludeSource = !!els.optIncludeSource?.checked;
 
       if (els.tickerSpeed){
         settings.tickerPps = clamp(numOr(els.tickerSpeed.value, settings.tickerPps || 30), 10, 220);
@@ -1935,9 +2093,6 @@ Fuente:
       if (els.template) saveTemplate(els.template.value || DEFAULT_TEMPLATE);
 
       updatePreview();
-      applyFilters();
-      startAuto();
-
       requestAnimationFrame(() => {
         applyTickerSpeed();
         restartTickerAnim();
@@ -2044,7 +2199,6 @@ Fuente:
     });
 
     els.btnX?.addEventListener("click", () => {
-      // ✅ CLAVE: fuerza el preview + buildTweet en el momento (evita “noticia anterior”)
       updatePreview();
       const t = buildTweet();
       const url = "https://x.com/intent/tweet?text=" + encodeURIComponent(t);
@@ -2054,8 +2208,8 @@ Fuente:
 
     els.btnResetTemplate?.addEventListener("click", () => {
       if (!els.template) return;
-      els.template.value = DEFAULT_TEMPLATE;
-      saveTemplate(DEFAULT_TEMPLATE);
+      els.template.value = (BOOT.defaultTemplate || DEFAULT_TEMPLATE);
+      saveTemplate(els.template.value);
       updatePreview();
       setStatus("Plantilla reseteada.");
     });
@@ -2063,22 +2217,30 @@ Fuente:
     els.btnCheckUpdate?.addEventListener("click", forceUpdateNow);
     els.btnHardReset?.addEventListener("click", hardResetEverything);
 
-    const bind = (el) => {
+    // 🔥 Bindings (separados para evitar LAG)
+    const bind = (el, onChange, onInput = onChange) => {
       if (!el) return;
-      el.addEventListener("change", saveSettingFrom);
-      el.addEventListener("input", saveSettingFrom);
+      el.addEventListener("change", onChange);
+      el.addEventListener("input", onInput);
     };
 
-    [
-      els.liveUrl, els.template, els.delayMin, els.timeFilter, els.sortBy, els.showLimit,
-      els.fetchCap, els.batchFeeds, els.refreshSec,
-      els.optOnlyReady, els.optOnlySpanish, els.optResolveLinks, els.optShowOriginal,
-      els.optHideUsed, els.optAutoRefresh, els.catFilter,
-      els.headline, els.sourceUrl, els.hashtags, els.optIncludeLive, els.optIncludeSource,
-      els.tickerSpeed
-    ].forEach(bind);
+    // Filtros (re-render lista)
+    [els.delayMin, els.timeFilter, els.sortBy, els.showLimit, els.optOnlyReady, els.optOnlySpanish,
+     els.optResolveLinks, els.optShowOriginal, els.optHideUsed, els.catFilter
+    ].forEach(el => bind(el, saveFilterSettings));
 
-    els.searchBox?.addEventListener("input", () => applyFilters());
+    // Search (debounced)
+    els.searchBox?.addEventListener("input", () => applyFiltersDebounced());
+
+    // Refresh settings (no re-render lista)
+    [els.fetchCap, els.batchFeeds].forEach(el => bind(el, saveRefreshSettings));
+
+    // Auto refresh
+    [els.optAutoRefresh, els.refreshSec].forEach(el => bind(el, saveAutoSettings));
+
+    // Composer (NO re-render lista)
+    [els.liveUrl, els.template, els.headline, els.sourceUrl, els.hashtags, els.optIncludeLive, els.optIncludeSource, els.tickerSpeed]
+      .forEach(el => bind(el, saveComposerSettings, debounce(saveComposerSettings, 60)));
 
     document.addEventListener("visibilitychange", () => {
       if (!els.optAutoRefresh?.checked) return;
@@ -2094,6 +2256,8 @@ Fuente:
       applyTickerSpeed();
       restartTickerAnim();
     });
+
+    startUiTick();
   }
 
   /* ───────────────────────────── INIT ───────────────────────────── */

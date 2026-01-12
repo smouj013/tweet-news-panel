@@ -1,5 +1,5 @@
 /* sw.js — News → Tweet Template Panel (tnp-v4.1.1) — PWA Service Worker (AUTO-UPDATE REAL, HARDENED)
-   ✅ En GitHub Pages: evita quedarte pegado con app.js viejo
+   ✅ GitHub Pages friendly: evita quedarte pegado con app.js viejo
    ✅ NAV/HTML: Network-first (cache fallback)
    ✅ Shell CRÍTICO (index/app/styles/manifest): Network-first + cache:"reload"
    ✅ Shell no crítico: Stale-while-revalidate
@@ -8,15 +8,14 @@
    ✅ Limpieza automática de caches antiguos
    ✅ skipWaiting + clients.claim
    ✅ message: SKIP_WAITING / CLEAR_CACHES
-   ✅ Anti-explosión de cache: normaliza cache-key quitando ?__tnp=
+   ✅ Anti-explosión de cache: normaliza cache-key quitando ?__tnp= y ?v= (y otros cb comunes)
 */
 
 "use strict";
 
 /* ───────────────────────────── CONFIG ───────────────────────────── */
-const SW_VERSION = "tnp-v4.1.1";
-/* Bump aquí si quieres “forzar” nueva familia de caches sin tocar SW_VERSION */
-const SW_BUILD_ID = "2026-01-11b";
+const SW_VERSION  = "tnp-v4.1.1";
+const SW_BUILD_ID = "2026-01-11b"; // 👈 mantenlo alineado con app.js / index.html
 
 const CACHE_PREFIX = "tnp";
 
@@ -111,7 +110,7 @@ function isFeedLike(reqUrl) {
   const h = u.hostname.toLowerCase();
   const qs = u.search.toLowerCase();
 
-  // Proxies usados por app.js (incluye corsproxy + jina)
+  // Proxies usados por app.js
   if (h.includes("corsproxy.io")) return true;
   if (h.includes("allorigins.win")) return true;
   if (h.includes("codetabs.com")) return true;
@@ -145,20 +144,20 @@ function isImageLike(reqUrl) {
   );
 }
 
-/* ───────────────────────────── CACHE KEY NORMALIZATION ───────────────────────────── */
+/* ───────────────────────────── CACHE KEY NORMALIZATION ─────────────────────────────
+   IMPORTANT:
+   - index.html carga app.js con `?v=...` para bustear caché (GH Pages).
+   - Si NO normalizamos `v`, se crean MIL entradas (una por build).
+*/
 function normalizeCacheKeyRequest(req) {
   try {
     const url = new URL(req.url);
 
-    // Evita que cache-bust __tnp cree miles de entradas
-    if (url.searchParams.has("__tnp")) {
-      url.searchParams.delete("__tnp");
-      if ([...url.searchParams.keys()].length === 0) url.search = "";
+    // Evita que cache-bust cree miles de entradas
+    const killParams = ["__tnp", "v", "_", "cb", "ts", "t", "cachebust"];
+    for (const k of killParams) {
+      if (url.searchParams.has(k)) url.searchParams.delete(k);
     }
-
-    // Normaliza basura común (por si acaso)
-    if (url.searchParams.has("_")) url.searchParams.delete("_");
-    if (url.searchParams.has("cb")) url.searchParams.delete("cb");
     if ([...url.searchParams.keys()].length === 0) url.search = "";
 
     return new Request(url.toString(), {
@@ -319,7 +318,6 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (!req || req.method !== "GET") return;
 
-  // ignora esquemas raros
   const u = safeUrl(req.url);
   if (!u) return;
   if (u.protocol !== "http:" && u.protocol !== "https:") return;
@@ -335,7 +333,6 @@ self.addEventListener("fetch", (event) => {
       if (fresh && fresh.ok) return fresh;
 
       const shell = await caches.open(CACHE_SHELL);
-      // Fallback robusto
       return (
         (await shell.match(normalizeCacheKeyRequest(new Request("./index.html")))) ||
         (await shell.match(normalizeCacheKeyRequest(new Request("./")))) ||
@@ -345,7 +342,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // SAME-ORIGIN: Shell CRÍTICO (SIEMPRE intento red primero)
+  // SAME-ORIGIN: Shell CRÍTICO (siempre red primero)
   if (same && isCriticalShellAsset(url)) {
     event.respondWith(networkFirst(req, CACHE_SHELL, 15000, "reload"));
     return;

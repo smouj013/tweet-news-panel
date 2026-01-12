@@ -1,0 +1,47 @@
+[
+  { "name":"Google News — ES Portada", "url":"https://news.google.com/rss?hl=es&gl=ES&ceid=ES:es", "enabled": true, "cat":"spain", "lang":"es" },
+  { "name":"Google News — World (EN)", "url":"https://news.google.com/rss?hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"world", "lang":"en" },
+
+  { "name":"ES — Última hora", "url":"https://news.google.com/rss/search?q=%C3%BAltima%20hora&hl=es&gl=ES&ceid=ES:es", "enabled": true, "cat":"spain", "lang":"es" },
+  { "name":"ES — España", "url":"https://news.google.com/rss/search?q=Espa%C3%B1a&hl=es&gl=ES&ceid=ES:es", "enabled": true, "cat":"spain", "lang":"es" },
+  { "name":"ES — Madrid", "url":"https://news.google.com/rss/search?q=Madrid&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"spain", "lang":"es" },
+  { "name":"ES — Barcelona", "url":"https://news.google.com/rss/search?q=Barcelona&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"spain", "lang":"es" },
+  { "name":"ES — Política", "url":"https://news.google.com/rss/search?q=pol%C3%ADtica%20Espa%C3%B1a&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"spain", "lang":"es" },
+  { "name":"ES — Tribunal / Juzgado", "url":"https://news.google.com/rss/search?q=juzgado%20OR%20tribunal%20OR%20condena&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"crime", "lang":"es" },
+
+  { "name":"WORLD — Breaking News", "url":"https://news.google.com/rss/search?q=breaking%20news&hl=en&gl=US&ceid=US:en", "enabled": true, "cat":"world", "lang":"en" },
+  { "name":"WORLD — Ukraine", "url":"https://news.google.com/rss/search?q=Ukraine&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"world", "lang":"en" },
+  { "name":"WORLD — Gaza", "url":"https://news.google.com/rss/search?q=Gaza&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"world", "lang":"en" },
+  { "name":"WORLD — China", "url":"https://news.google.com/rss/search?q=China&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"world", "lang":"en" },
+
+  { "name":"ECON — Economía España", "url":"https://news.google.com/rss/search?q=econom%C3%ADa%20Espa%C3%B1a&hl=es&gl=ES&ceid=ES:es", "enabled": true, "cat":"economy", "lang":"es" },
+  { "name":"ECON — IBEX 35", "url":"https://news.google.com/rss/search?q=IBEX%2035&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"economy", "lang":"es" },
+  { "name":"ECON — Inflación", "url":"https://news.google.com/rss/search?q=inflaci%C3%B3n%20OR%20IPC%20OR%20precios&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"economy", "lang":"es" },
+  { "name":"ECON — BCE", "url":"https://news.google.com/rss/search?q=BCE%20OR%20Banco%20Central%20Europeo%20tipos&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"economy", "lang":"es" },
+  { "name":"ECON — Mercados (EN)", "url":"https://news.google.com/rss/search?q=markets%20OR%20stocks%20OR%20bonds&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"economy", "lang":"en" },
+
+  { "name":"TECH — IA", "url":"https://news.google.com/rss/search?q=inteligencia%20artificial%20OR%20IA&hl=es&gl=ES&ceid=ES:es", "enabled": true, "cat":"tech", "lang":"es" },
+  { "name":"TECH — OpenAI", "url":"https://news.google.com/rss/search?q=OpenAI&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"tech", "lang":"en" },
+  { "name":"TECH — Ciberseguridad", "url":"https://news.google.com/rss/search?q=ciberseguridad%20OR%20hack%20OR%20brecha%20de%20datos&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"tech", "lang":"es" },
+  { "name":"TECH — Apple", "url":"https://news.google.com/rss/search?q=Apple&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"tech", "lang":"en" },
+  { "name":"TECH — Google", "url":"https://news.google.com/rss/search?q=Google&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"tech", "lang":"en" },
+
+  { "name":"HEALTH — Salud España", "url":"https://news.google.com/rss/search?q=salud%20Espa%C3%B1a%20OR%20alerta%20sanitaria%20OR%20brote&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"health", "lang":"es" },
+  { "name":"HEALTH — WHO / OMS (EN)", "url":"https://news.google.com/rss/search?q=WHO%20OR%20World%20Health%20Organization&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"health", "lang":"en" },
+
+  { "name":"SPORTS — Deportes", "url":"https://news.google.com/rss/search?q=deportes%20OR%20LaLiga%20OR%20Champions&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"sports", "lang":"es" },
+  { "name":"SPORTS — Real Madrid", "url":"https://news.google.com/rss/search?q=Real%20Madrid&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"sports", "lang":"es" },
+  { "name":"SPORTS — Barcelona", "url":"https://news.google.com/rss/search?q=FC%20Barcelona&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"sports", "lang":"es" },
+  { "name":"SPORTS — F1", "url":"https://news.google.com/rss/search?q=Formula%201%20OR%20F1&hl=en&gl=US&ceid=US:en", "enabled": false, "cat":"sports", "lang":"en" },
+
+  { "name":"CRIME — Sucesos", "url":"https://news.google.com/rss/search?q=sucesos%20OR%20tiroteo%20OR%20asesinato%20OR%20detenido&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"crime", "lang":"es" },
+  { "name":"CRIME — Policía", "url":"https://news.google.com/rss/search?q=polic%C3%ADa%20OR%20guardia%20civil%20OR%20mossos&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"crime", "lang":"es" },
+
+  { "name":"ENT — Cultura / TV", "url":"https://news.google.com/rss/search?q=Netflix%20OR%20HBO%20OR%20serie%20OR%20estreno&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"ent", "lang":"es" },
+  { "name":"ENT — Música", "url":"https://news.google.com/rss/search?q=m%C3%BAsica%20OR%20festival%20OR%20concierto&hl=es&gl=ES&ceid=ES:es", "enabled": false, "cat":"ent", "lang":"es" },
+
+  { "name":"DW Español (RSS)", "url":"https://rss.dw.com/rdf/rss-es-all", "enabled": true, "cat":"world", "lang":"es" },
+  { "name":"Euronews (MRSS)", "url":"https://www.euronews.com/rss?format=mrss", "enabled": true, "cat":"world", "lang":"es" },
+  { "name":"BBC World (RSS)", "url":"https://feeds.bbci.co.uk/news/world/rss.xml", "enabled": false, "cat":"world", "lang":"en" },
+  { "name":"Al Jazeera (RSS)", "url":"https://www.aljazeera.com/xml/rss/all.xml", "enabled": false, "cat":"world", "lang":"en" }
+]

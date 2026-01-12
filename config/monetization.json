@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "app": {
+    "name": "TNP",
+    "version": "tnp-v4.1.2",
+    "buildId": "2026-01-12a"
+  },
+  "webMonetization": {
+    "enabled": false,
+    "paymentPointer": "",
+    "metaTagName": "monetization",
+    "autoInjectMeta": false
+  },
+  "donations": {
+    "enabled": true,
+    "links": {
+      "githubSponsors": "",
+      "paypal": "",
+      "kofi": "https://ko-fi.com/global_eye",
+      "patreon": ""
+    }
+  },
+  "ui": {
+    "showSupportBadge": true,
+    "supportBadgeText": "Apoya el proyecto ☕",
+    "supportUrl": "https://ko-fi.com/global_eye"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "app": "tnp",
+  "version": "tnp-v4.1.1",
+  "buildId": "2026-01-12a",
+  "notes": "Config pack para separar defaults del front. Si cambias buildId, fuerzas refresco lógico de config."
+}

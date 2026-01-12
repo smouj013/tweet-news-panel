@@ -1,0 +1,38 @@
+{
+  "impact": {
+    "boostWords": {
+      "última hora": 5,
+      "urgente": 4,
+      "breaking": 4,
+      "confirmado": 3,
+      "atentado": 5,
+      "explosión": 5,
+      "terremoto": 5,
+      "muerte": 4,
+      "dimite": 4,
+      "detenido": 3,
+      "condena": 3,
+      "ataque": 4,
+      "crisis": 3,
+      "alerta": 3,
+      "oficial": 2
+    },
+    "penaltyWords": {
+      "opinión": -2,
+      "review": -2,
+      "trailer": -2,
+      "rumor": -2,
+      "galería": -1
+    }
+  },
+  "categories": {
+    "spain": ["españa", "madrid", "barcelona", "valencia", "sevilla", "andalucía", "cataluña"],
+    "world": ["eeuu", "usa", "ucrania", "rusia", "israel", "gaza", "china", "onu", "nato"],
+    "economy": ["ibex", "bolsa", "bce", "fed", "inflación", "pib", "paro", "tipo de interés", "mercados"],
+    "tech": ["ia", "inteligencia artificial", "openai", "google", "apple", "microsoft", "chip", "hack", "ciberseguridad"],
+    "health": ["salud", "hospital", "virus", "vacuna", "brotes", "alerta sanitaria"],
+    "sports": ["liga", "champions", "real madrid", "barça", "atlético", "f1", "motogp", "nba"],
+    "crime": ["suceso", "policía", "tiroteo", "asesinato", "robos", "juzgado", "tribunal"],
+    "ent": ["netflix", "hbo", "prime video", "estreno", "serie", "cine", "festival", "música"]
+  }
+}

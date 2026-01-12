@@ -1,3 +1,9 @@
+<!-- index.html — TNP v4.1.1 (COMPAT app.js) — CACHE-BUST + SW BOOT REPAIR + CONFIG BOOT
+  ✅ 100% compatible con app.js v4.1.1 (IDs exactos)
+  ✅ Cache-bust controlado (BUILD_TAG) para evitar “app.js viejo” en GitHub Pages
+  ✅ SW register con updateViaCache:"none" + update() periódico + Repair (purge caches + unregister SW)
+  ✅ (Opcional) Carga /config/boot-config.js ANTES de app.js (no rompe si app.js no lo usa)
+-->
 <!doctype html>
 <html lang="es" data-theme="dark">
 <head>
@@ -32,6 +38,7 @@
   <link rel="dns-prefetch" href="https://thingproxy.freeboard.io" />
   <link rel="dns-prefetch" href="https://r.jina.ai" />
 
+  <!-- CSS -->
   <link rel="preload" href="./styles.css" as="style" />
   <link rel="stylesheet" href="./styles.css" />
 
@@ -41,7 +48,7 @@
   <style>
     .bootDiag{
       position: fixed;
-      inset: auto 14px 14px 14px;
+      inset: auto calc(14px + env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) calc(14px + env(safe-area-inset-left, 0px));
       z-index: 9999;
       display: grid;
       gap: 10px;
@@ -94,7 +101,6 @@
     </div>
 
     <div class="topbar__right">
-      <!-- aria-live para que cambios de estado se anuncien (accesibilidad) -->
       <div id="status" class="status" role="status" aria-live="polite">Listo</div>
     </div>
   </header>
@@ -232,7 +238,6 @@
               </select>
             </label>
 
-            <!-- Control de velocidad del ticker (pps) -->
             <label class="field field--inline" title="Velocidad del ticker en píxeles por segundo (menos = más lento)">
               <span class="field__label">Ticker</span>
               <input id="tickerSpeed" class="input input--sm" type="number" min="10" max="220" value="28" />
@@ -403,7 +408,13 @@
     (function () {
       "use strict";
 
-      var SW_URL = "./sw.js";
+      // 👇 MISMO tag que usas en app.js/sw.js al publicar.
+      // Si cambias esto, fuerzas refresco controlado (sin random cada carga).
+      var BUILD_TAG = "tnp-v4.1.1_2026-01-11b";
+
+      // Cache-bust en SW (crea “nuevo script URL” => browser re-evalúa SW)
+      var SW_URL = "./sw.js?v=" + encodeURIComponent(BUILD_TAG);
+
       var bootDiag = document.getElementById("bootDiag");
       var statusEl = document.getElementById("status");
       var repairBtn = document.getElementById("btnRepair");
@@ -414,9 +425,12 @@
         try { if (statusEl) statusEl.textContent = msg; } catch {}
       }
 
+      // Captura errores tempranos (incluye scripts defer)
       window.addEventListener("error", function (e) {
         try {
-          var m = (e && (e.message || (e.error && e.error.message))) ? (e.message || e.error.message) : "Error JS";
+          var m = (e && (e.message || (e.error && e.error.message)))
+            ? (e.message || e.error.message)
+            : "Error JS";
           setStatusSafe("❌ " + m);
         } catch {}
       });
@@ -430,6 +444,7 @@
         try {
           swReg = await navigator.serviceWorker.register(SW_URL, { updateViaCache: "none" });
         } catch (e) {
+          // Si falla SW, la app sigue funcionando sin PWA
           return;
         }
 
@@ -462,6 +477,7 @@
           location.reload();
         });
 
+        // “Auto update” en GH Pages
         setInterval(function () {
           try { if (swReg) swReg.update(); } catch {}
         }, 60 * 1000);
@@ -471,7 +487,9 @@
 
       function shouldShowDiag() {
         var s = (statusEl && statusEl.textContent) ? statusEl.textContent.trim() : "";
+        // app.js suele poner: "TNP listo (tnp-v4.1.1)"
         if (s.indexOf("TNP listo") !== -1) return false;
+        // Si hay un estado “trabajando…” no muestres diag
         if (s && s !== "Listo" && s.indexOf("❌") === -1) return false;
         return true;
       }
@@ -481,10 +499,11 @@
           try {
             if (bootDiag && shouldShowDiag()) bootDiag.hidden = false;
           } catch {}
-        }, 3000);
+        }, 3200);
       });
 
       async function purgeAllTnpCachesAndSw() {
+        // Unregister SWs
         try {
           if ("serviceWorker" in navigator) {
             var regs = await navigator.serviceWorker.getRegistrations();
@@ -492,6 +511,7 @@
           }
         } catch {}
 
+        // Delete SOLO caches tnp-*
         try {
           if ("caches" in window) {
             var keys = await caches.keys();
@@ -536,7 +556,10 @@
     })();
   </script>
 
-  <!-- app.js v4.1.1 (NO module) -->
-  <script defer src="./app.js"></script>
+  <!-- (OPCIONAL) Config boot: deja window.TNP_* listo antes de app.js -->
+  <script defer src="./config/boot-config.js?v=tnp-v4.1.1_2026-01-11b"></script>
+
+  <!-- app.js v4.1.1 (NO module) — cache-bust controlado -->
+  <script defer src="./app.js?v=tnp-v4.1.1_2026-01-11b"></script>
 </body>
 </html>

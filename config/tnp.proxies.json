@@ -1,0 +1,36 @@
+{
+  "order": [
+    "corsproxy",
+    "allorigins",
+    "codetabs",
+    "thingproxy",
+    "jina"
+  ],
+  "providers": {
+    "corsproxy": {
+      "name": "CorsProxy.io",
+      "wrap": "https://corsproxy.io/?{url}",
+      "mode": "plain"
+    },
+    "allorigins": {
+      "name": "AllOrigins",
+      "wrap": "https://api.allorigins.win/raw?url={url}",
+      "mode": "plain"
+    },
+    "codetabs": {
+      "name": "CodeTabs",
+      "wrap": "https://api.codetabs.com/v1/proxy?quest={url}",
+      "mode": "plain"
+    },
+    "thingproxy": {
+      "name": "ThingProxy",
+      "wrap": "https://thingproxy.freeboard.io/fetch/{url}",
+      "mode": "plain"
+    },
+    "jina": {
+      "name": "Jina AI Reader",
+      "wrap": "https://r.jina.ai/http://{urlNoProto}",
+      "mode": "jina"
+    }
+  }
+}

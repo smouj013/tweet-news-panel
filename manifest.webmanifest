@@ -1,19 +1,20 @@
 {
   "name": "News → Tweet Template Panel",
-  "short_name": "TweetNews",
-  "description": "Panel PRO para extraer noticias (RSS/Atom), resolver link original, imágenes y generar plantilla lista para X.",
-  "start_url": "./?source=pwa",
+  "short_name": "TNP",
+  "description": "Panel PRO para extraer noticias (RSS/Atom), resolver links originales, imágenes y generar plantilla lista para X.",
+  "lang": "es",
+  "dir": "ltr",
+
+  "start_url": "./?v=tnp-v4.1.2_2026-01-12a",
   "scope": "./",
-  "id": "./?app=TweetNews",
+
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
-  "background_color": "#070A12",
-  "theme_color": "#070A12",
-  "lang": "es-ES",
-  "dir": "ltr",
   "orientation": "any",
-  "categories": ["news", "productivity", "utilities"],
-  "prefer_related_applications": false,
+
+  "theme_color": "#070A12",
+  "background_color": "#070A12",
+
   "icons": [
     {
       "src": "./assets/icons/favicon-32.png",
@@ -46,22 +47,20 @@
       "purpose": "maskable"
     },
     {
-      "src": "./assets/icons/apple-touch-icon-152.png",
-      "sizes": "152x152",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "./assets/icons/apple-touch-icon-167.png",
-      "sizes": "167x167",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
       "src": "./assets/icons/apple-touch-icon-180.png",
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
     }
-  ]
+  ],
+
+  "categories": ["news", "productivity", "utilities"],
+
+  "prefer_related_applications": false,
+  "related_applications": [],
+
+  "tnp": {
+    "version": "tnp-v4.1.2",
+    "buildId": "2026-01-12a"
+  }
 }

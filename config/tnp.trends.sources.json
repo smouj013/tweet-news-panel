@@ -1,0 +1,47 @@
+{
+  "enabled": true,
+  "sources": [
+    {
+      "name": "Google Trends — Realtime ES",
+      "url": "https://trends.google.com/trends/trendingsearches/realtime/rss?geo=ES&category=all",
+      "geo": "ES",
+      "kind": "rss",
+      "enabled": true
+    },
+    {
+      "name": "Google Trends — Daily ES",
+      "url": "https://trends.google.com/trends/trendingsearches/daily/rss?geo=ES",
+      "geo": "ES",
+      "kind": "rss",
+      "enabled": true
+    },
+    {
+      "name": "Google Trends — Realtime US",
+      "url": "https://trends.google.com/trends/trendingsearches/realtime/rss?geo=US&category=all",
+      "geo": "US",
+      "kind": "rss",
+      "enabled": false
+    },
+    {
+      "name": "Google Trends — Realtime AR",
+      "url": "https://trends.google.com/trends/trendingsearches/realtime/rss?geo=AR&category=all",
+      "geo": "AR",
+      "kind": "rss",
+      "enabled": false
+    },
+    {
+      "name": "Google Trends — Realtime MX",
+      "url": "https://trends.google.com/trends/trendingsearches/realtime/rss?geo=MX&category=all",
+      "geo": "MX",
+      "kind": "rss",
+      "enabled": false
+    }
+  ],
+  "rules": {
+    "maxKeep": 24,
+    "maxShown": 6,
+    "minLen": 2,
+    "banContains": ["porn", "sexo explícito"],
+    "hashtagify": true
+  }
+}

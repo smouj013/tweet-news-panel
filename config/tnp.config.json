@@ -1,0 +1,38 @@
+{
+  "liveUrlDefault": "https://twitch.tv/globaleyetv",
+  "hashtagsDefault": "#ÚltimaHora #España",
+  "uiDefaults": {
+    "timeFilterMin": 60,
+    "delayMin": 0,
+    "sortBy": "impact",
+    "tickerSpeedPps": 28,
+    "optAutoRefresh": true,
+    "refreshSec": 60,
+    "optResolveLinks": true,
+    "optShowOriginal": true,
+    "optHideUsed": true,
+    "optOnlyReady": false,
+    "optOnlySpanish": true,
+    "catFilter": "all",
+    "showLimit": 120,
+    "fetchCap": 240,
+    "batchFeeds": 12
+  },
+  "ticker": {
+    "maxItems": 18,
+    "separator": " · ",
+    "popTrends": true,
+    "popDurationMs": 4500
+  },
+  "network": {
+    "fetchTimeoutMs": 16000,
+    "maxConcurrentFeeds": 6,
+    "maxConcurrentResolve": 4,
+    "maxConcurrentOg": 4
+  },
+  "features": {
+    "enableTrends": true,
+    "enableOgImages": true,
+    "enableFavicons": true
+  }
+}
