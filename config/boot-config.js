@@ -1,20 +1,40 @@
-/* config/boot-config.js — TNP BOOT CONFIG (AUTH + MEMBERSHIP)
+/* config/boot-config.js — TNP BOOT CONFIG (AUTH + MEMBERSHIP) — v4.2.0 (2026-01-12d)
    Carga ANTES de app.js.
 
    ✅ Google GIS client_id configurado
    ✅ 3 tiers visibles: FREE / PRO / ELITE
    ✅ Config “real” (API) o “demo” (override local)
-   ✅ Alias de compatibilidad: TNP_CONFIG.googleClientId (por si tu app.js lo usa en raíz)
+   ✅ Alias compat: TNP_CONFIG.googleClientId
+   ✅ URLs de config JSON (version/config/proxies/trends/feeds/keywords) para carga dinámica
 */
 (() => {
   "use strict";
 
-  const GOOGLE_CLIENT_ID = "96486611781-9o20cpbk3vqt0r5qb6deifmjvk10sk67.apps.googleusercontent.com";
+  const APP_VERSION = "tnp-v4.2.0";
+  const BUILD_ID = "2026-01-12d";
+  const BUILD_TAG = `${APP_VERSION}_${BUILD_ID}`;
+
+  const GOOGLE_CLIENT_ID =
+    "96486611781-9o20cpbk3vqt0r5qb6deifmjvk10sk67.apps.googleusercontent.com";
+
+  // Base para tus JSON (si los tienes en raíz, deja "./")
+  const CONFIG_BASE = "./";
 
   window.TNP_CONFIG = {
-    // Debe coincidir con tu deploy (cache-bust coherente)
-    // TIP: pon este mismo string en el BUILD_TAG de index.html para que SW/app vayan alineados.
-    buildTag: "tnp-v4.2.0_2026-01-12d",
+    // Debe coincidir con tu deploy (cache-bust coherente con index.html / sw.js)
+    buildTag: BUILD_TAG,
+
+    /* ───────────────────────────── CONFIG URLS (JSON) ───────────────────────────── */
+    // Si tu app.js soporta cargar config externa, aquí tienes rutas coherentes.
+    // Puedes moverlos a /config/ si quieres: cambia CONFIG_BASE.
+    configUrls: {
+      version: `${CONFIG_BASE}tnp.version.json`,
+      config: `${CONFIG_BASE}tnp.config.json`,
+      proxies: `${CONFIG_BASE}tnp.proxies.json`,
+      trendsSources: `${CONFIG_BASE}tnp.trends.sources.json`,
+      feedsDefaults: `${CONFIG_BASE}tnp.feeds.defaults.json`,
+      keywords: `${CONFIG_BASE}tnp.keywords.json`
+    },
 
     /* ───────────────────────────── PROXIES ───────────────────────────── */
     proxyFirst: true,
@@ -23,10 +43,13 @@
 
     /* ───────────────────────────── DEFAULTS COMPOSER ───────────────────────────── */
     defaultLiveUrl: "https://twitch.tv/globaleyetv",
-    defaultHashtags: "#ÚltimaHora #España",
+    // Recomendación: sin acentos en hashtag para evitar rarezas (#ÚltimaHora -> #UltimaHora)
+    defaultHashtags: "#UltimaHora #España",
 
-    // defaultTemplate: `🚨 ÚLTIMA HORA: {{HEADLINE}}\n\n{{LIVE_LINE}}\n\nFuente:\n{{SOURCE_URL}}\n\n{{HASHTAGS}}`,
-    // defaultLiveLine: "🔴#ENVIVO >>> {{LIVE_URL}}",
+    // Plantilla si tu app.js la soporta (si no, se ignora)
+    defaultTemplate:
+      "🚨 ÚLTIMA HORA: {{HEADLINE}}\n\n{{LIVE_LINE}}\n\nFuente:\n{{SOURCE_URL}}\n\n{{HASHTAGS}}",
+    defaultLiveLine: "🔴#ENVIVO >>> {{LIVE_URL}}",
 
     /* ───────────────────────────── TRADUCCIÓN ───────────────────────────── */
     trEnabledDefault: true,
@@ -39,7 +62,7 @@
     auth: {
       enabled: true,
 
-      // “obligar login”
+      // Obligar login
       requireLogin: true,
 
       provider: "google",
@@ -47,11 +70,11 @@
       // ✅ TU CLIENT ID (GIS)
       googleClientId: GOOGLE_CLIENT_ID,
 
-      // Auto prompt (One Tap) si el navegador lo permite
+      // One Tap (si el navegador lo permite)
       autoPrompt: true,
 
-      // Guardar sesión (sessionStorage). Si true, dura hasta cerrar la pestaña.
-      rememberSession: true,
+      // Persistencia de sesión (si tu app.js lo usa)
+      rememberSession: true
 
       // Opcional: restringir dominio (solo cuentas @tuempresa.com)
       // hd: "tuempresa.com",
@@ -65,10 +88,14 @@
       // apiBase: "https://tu-worker.workers.dev",
       apiBase: "",
 
+      // Allowlist local (opcional). Si tu app.js lo soporta, puedes usar member.json.
+      // allowlistUrl: `${CONFIG_BASE}member.json`,
+      allowlistUrl: "",
+      allowLocalOverride: true,
+
       // Demo override:
       // localStorage.setItem("tnp_membership_override", "pro")
       // localStorage.setItem("tnp_membership_override", "elite")
-      allowLocalOverride: true,
 
       // URLs si NO usas apiBase (Stripe/Gumroad/Ko-fi/etc.)
       checkoutUrlTemplate: "https://tusitio.com/checkout?tier={{TIER}}",
@@ -84,7 +111,7 @@
           perks: [
             "RSS + ticker básico",
             "Resolver links (best-effort)",
-            "Copiar plantilla + abrir en X",
+            "Copiar plantilla + abrir en X"
           ],
           limits: {
             maxFeedsEnabled: 40,
@@ -92,7 +119,7 @@
             showLimitMax: 180,
             minAutoRefreshSec: 60,
             ogLookupsMax: 50,
-            resolveMax: 60,
+            resolveMax: 60
           }
         },
         {
@@ -104,8 +131,8 @@
           perks: [
             "Más feeds + más items",
             "Auto-refresh más rápido",
-            "Más OG/imagenes + cachés",
-            "Prioridad en proxies (si api)",
+            "Más OG/imágenes + cachés",
+            "Prioridad en proxies (si api)"
           ],
           limits: {
             maxFeedsEnabled: 90,
@@ -113,7 +140,7 @@
             showLimitMax: 300,
             minAutoRefreshSec: 25,
             ogLookupsMax: 120,
-            resolveMax: 160,
+            resolveMax: 160
           }
         },
         {
@@ -126,7 +153,7 @@
             "Máximo rendimiento (límite alto)",
             "Auto-refresh ultra",
             "Más extracción OG",
-            "Ready para features premium (tendencias API, etc.)",
+            "Ready para features premium (tendencias API, etc.)"
           ],
           limits: {
             maxFeedsEnabled: 200,
@@ -134,10 +161,10 @@
             showLimitMax: 500,
             minAutoRefreshSec: 15,
             ogLookupsMax: 220,
-            resolveMax: 260,
+            resolveMax: 260
           }
         }
-      ],
+      ]
     },
 
     /* ───────────────────────────── UI ───────────────────────────── */
@@ -145,16 +172,20 @@
       showMembershipBar: true,
       showTierCards: true,
       // si true, bloquea la app hasta login (además de requireLogin)
-      hardGate: true,
-    },
-
-    /* ───────────────────────────── (OPCIONAL) DEFAULT FEEDS ───────────────────────────── */
-    // defaultFeeds: [ { name:"...", url:"https://...", enabled:true, cat:"spain" } ],
+      hardGate: true
+    }
   };
 
   // ───────────────────────────── COMPAT SHIM ─────────────────────────────
   // Por si tu app.js (o versiones previas) leen googleClientId en raíz:
   if (!window.TNP_CONFIG.googleClientId) {
-    window.TNP_CONFIG.googleClientId = window.TNP_CONFIG.auth?.googleClientId || "";
+    window.TNP_CONFIG.googleClientId =
+      (window.TNP_CONFIG.auth && window.TNP_CONFIG.auth.googleClientId) || "";
   }
+
+  // Exponer build de forma cómoda (no rompe nada si no se usa)
+  window.TNP_BUILD = { version: APP_VERSION, buildId: BUILD_ID, tag: BUILD_TAG };
+
+  // Opcional: “congelar” config para evitar mutaciones accidentales (si rompe algo, coméntalo)
+  try { Object.freeze(window.TNP_CONFIG); } catch (_) {}
 })();
