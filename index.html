@@ -1,9 +1,8 @@
-<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CLEAN + PRO UI (NO INLINE CSS DUPES)
+<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CLEAN + PRO UI (NO DUPES)
   ✅ 100% compatible con app.js v4.2.0 (IDs + modales + ticker + X mock + botones)
-  ✅ Evita “doble ocultación”: NO usa atributo hidden (solo .hidden)
-  ✅ FIX login UI: botones de sesión ya NO quedan “pegados” por hidden attr
-  ✅ FIX “botones duplicados”: dejamos UN CTA visible de planes (btnPricing) y mantenemos placeholders ocultos
-  ✅ Logo real en header (usa tus icons ya existentes)
+  ✅ Logo real en header (icon-192) en vez de emoji
+  ✅ FIX botones duplicados: se elimina la UI “Planes/Membresía” del HTML (app.js ya la inyecta)
+  ✅ FIX “no se actualiza al login”: ahora verás la UI REAL que maneja app.js (btnMember / memberPill / memberModal inyectados)
   ✅ Cache-bust con BUILD_TAG + SW updateViaCache:"none" + Repair
   ✅ Carga /config/boot-config.js ANTES de app.js
   ✅ Ko-fi en topbar
@@ -40,6 +39,9 @@
   <link rel="icon" href="./assets/icons/icon-192.png" sizes="192x192" />
   <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon-180.png" sizes="180x180" />
 
+  <!-- Preload logo (para que se vea instantáneo en header) -->
+  <link rel="preload" href="./assets/icons/icon-192.png" as="image" />
+
   <!-- Proxies (anti-CORS) usados por app.js -->
   <link rel="preconnect" href="https://corsproxy.io" crossorigin />
   <link rel="preconnect" href="https://api.allorigins.win" crossorigin />
@@ -69,31 +71,11 @@
 <body>
   <a class="skipLink" href="#main">Saltar a contenido</a>
 
-  <!-- AUTH GATE (app.js lo mostrará/ocultará; por defecto oculto SOLO por .hidden) -->
-  <div id="authGate" class="authGate hidden" aria-hidden="true">
-    <div class="authGate__panel" role="dialog" aria-modal="true" aria-label="Acceso requerido">
-      <div class="authGate__title">Inicia sesión para usar el panel</div>
-      <div class="authGate__sub">
-        Acceso con Google. Tu plan (FREE/PRO/ELITE) se aplica automáticamente.
-        <br />Si estás en modo demo, el plan puede venir de <span class="mono">localStorage tnp_membership_override</span>.
-      </div>
-
-      <!-- (Opcional) Mount para GIS si app.js decide pintar botón oficial -->
-      <div id="gsiBtnMount" class="hidden" aria-hidden="true"></div>
-
-      <div class="authGate__row">
-        <button id="btnLoginGate" class="btn btn--primary" type="button">Entrar con Google</button>
-        <button id="btnOpenPlansGate" class="btn" type="button" aria-controls="membModal" aria-expanded="false">Ver planes</button>
-        <span id="authGateMsg" class="mini muted authGate__msg"></span>
-      </div>
-    </div>
-  </div>
-
   <!-- TOPBAR -->
   <header class="topbar" id="topbar" role="banner">
     <div class="topbar__left">
       <div class="brand" aria-label="Marca">
-        <!-- LOGO real (usa tus assets ya existentes) -->
+        <!-- LOGO real -->
         <div class="brand__logo" aria-hidden="true">
           <img
             src="./assets/icons/icon-192.png"
@@ -135,16 +117,6 @@
         <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
         <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
 
-        <!-- Planes / Membresía (ÚNICO CTA visible en header para evitar “duplicados”) -->
-        <button
-          id="btnPricing"
-          class="btn btn--sm"
-          type="button"
-          title="Ver planes FREE/PRO/ELITE"
-          aria-controls="membModal"
-          aria-expanded="false"
-        >💎 Planes</button>
-
         <!-- Ko-fi -->
         <a
           id="btnKofi"
@@ -157,21 +129,13 @@
       </div>
     </div>
 
-    <div class="topbar__right" aria-label="Estado de sesión y plan">
-      <div id="authBox" class="row row--wrap authBox" aria-label="Sesión">
-        <span id="tierBadge" class="badge" title="Plan actual">FREE</span>
-        <span id="authUser" class="mini muted" title="Usuario">Sin sesión</span>
-
-        <!-- Importante: SIN atributo hidden; solo .hidden para que app.js pueda alternar -->
-        <button id="btnLogin" class="btn btn--sm" type="button">Entrar</button>
-        <button id="btnLogout" class="btn btn--sm hidden" type="button" aria-hidden="true">Salir</button>
-
-        <!-- Placeholders para compat con app.js (evitan errores si app.js espera estos IDs).
-             Los dejamos ocultos para que NO parezcan “duplicados” en header. -->
-        <button id="btnUpgrade" class="btn btn--primary btn--sm hidden" type="button" aria-hidden="true">Mejorar</button>
-        <button id="btnManage" class="btn btn--sm hidden" type="button" aria-hidden="true">Gestionar</button>
-      </div>
-
+    <!-- IMPORTANTE:
+         Aquí app.js inyecta automáticamente:
+         - Botón #btnMember
+         - Pill #memberPill
+         - Modal #memberModal
+         para login + plan. Si tú metes otra UI aquí, se duplica. -->
+    <div class="topbar__right" aria-label="Estado">
       <div id="status" class="status" role="status" aria-live="polite">Listo</div>
     </div>
   </header>
@@ -457,91 +421,6 @@
 
         <div class="mini muted">
           Si algún feed falla por CORS, la app intenta proxy automáticamente (CorsProxy / AllOrigins / CodeTabs / ThingProxy / Jina).
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL MEMBERSHIP (Planes FREE/PRO/ELITE) -->
-  <div
-    id="membModal"
-    class="modal hidden"
-    aria-hidden="true"
-    aria-modal="true"
-    role="dialog"
-    aria-label="Planes de membresía"
-  >
-    <div class="modal__panel">
-      <div class="modal__head">
-        <div>
-          <div class="modal__title">Planes</div>
-          <div class="mini muted">FREE · PRO · ELITE — la app aplica límites y opciones según tu plan.</div>
-        </div>
-        <button id="btnCloseMembModal" class="btn btn--sm" type="button">Cerrar</button>
-      </div>
-
-      <div class="modal__body">
-        <div class="row row--wrap membTopRow">
-          <span class="badge" id="membCurrentBadge">Plan actual: FREE</span>
-          <span class="mini muted" id="membMsg"></span>
-          <div class="spacer"></div>
-          <button id="btnMembLogin" class="btn btn--sm" type="button">Entrar</button>
-          <button id="btnMembManage" class="btn btn--sm hidden" type="button" aria-hidden="true">Gestionar</button>
-        </div>
-
-        <div id="tierCards" class="tierGrid" aria-label="Tarjetas de planes">
-          <!-- fallback visual (app.js puede reemplazar/ajustar) -->
-          <div class="tierCard" data-tier="free">
-            <div class="tierCard__head">
-              <div class="tierCard__name">FREE</div>
-              <div class="tierCard__price">0€</div>
-            </div>
-            <ul class="tierCard__perks">
-              <li>RSS + ticker básico</li>
-              <li>Resolver links (best-effort)</li>
-              <li>Copiar plantilla + abrir en X</li>
-            </ul>
-            <div class="tierCard__cta">
-              <button class="btn btn--sm" type="button" data-tier-choose="free">Usar FREE</button>
-            </div>
-          </div>
-
-          <div class="tierCard" data-tier="pro">
-            <div class="tierCard__head">
-              <div class="tierCard__name">PRO</div>
-              <div class="tierCard__price">4.99€/mes</div>
-            </div>
-            <ul class="tierCard__perks">
-              <li>Más feeds + más items</li>
-              <li>Auto-refresh más rápido</li>
-              <li>Más imágenes/OG + cachés</li>
-            </ul>
-            <div class="tierCard__cta">
-              <button class="btn btn--primary btn--sm" type="button" data-tier-choose="pro">Mejorar a PRO</button>
-            </div>
-          </div>
-
-          <div class="tierCard" data-tier="elite">
-            <div class="tierCard__head">
-              <div class="tierCard__name">ELITE</div>
-              <div class="tierCard__price">9.99€/mes</div>
-            </div>
-            <ul class="tierCard__perks">
-              <li>Máximo rendimiento (límite alto)</li>
-              <li>Auto-refresh ultra</li>
-              <li>Más extracción OG</li>
-            </ul>
-            <div class="tierCard__cta">
-              <button class="btn btn--primary btn--sm" type="button" data-tier-choose="elite">Mejorar a ELITE</button>
-            </div>
-          </div>
-        </div>
-
-        <hr class="hr" />
-
-        <div class="mini muted">
-          Nota: en GitHub Pages, el plan “real” se confirma con backend (recomendado: Cloudflare Worker). En modo demo, prueba:
-          <span class="mono">localStorage.setItem("tnp_membership_override","pro")</span>
         </div>
       </div>
     </div>
