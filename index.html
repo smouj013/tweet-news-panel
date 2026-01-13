@@ -1,8 +1,9 @@
 <!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CLEAN + PRO UI (NO INLINE CSS DUPES)
   ✅ 100% compatible con app.js v4.2.0 (IDs + modales + ticker + X mock + botones)
-  ✅ Evita “doble ocultación”: modales/gates usan SOLO .hidden (no hidden attr)
-  ✅ AUTH: Login Google (GIS) + Gate opcional
-  ✅ MEMBERSHIP: FREE / PRO / ELITE (modal “Planes”)
+  ✅ Evita “doble ocultación”: NO usa atributo hidden (solo .hidden)
+  ✅ FIX login UI: botones de sesión ya NO quedan “pegados” por hidden attr
+  ✅ FIX “botones duplicados”: dejamos UN CTA visible de planes (btnPricing) y mantenemos placeholders ocultos
+  ✅ Logo real en header (usa tus icons ya existentes)
   ✅ Cache-bust con BUILD_TAG + SW updateViaCache:"none" + Repair
   ✅ Carga /config/boot-config.js ANTES de app.js
   ✅ Ko-fi en topbar
@@ -15,7 +16,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
 
-  <!-- Tema (alineado con el nuevo styles.css “Aurora”) -->
+  <!-- Tema (alineado con styles.css “Aurora”) -->
   <meta name="theme-color" content="#060714" />
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F5F7FF" />
 
@@ -30,7 +31,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
-  <!-- 🔧 Build tag único (úsalo igual en scripts + SW abajo) -->
+  <!-- 🔧 Build tag único (NO CAMBIAR si no quieres “subir versión”) -->
   <meta name="tnp-build" content="tnp-v4.2.0_2026-01-12d" />
 
   <!-- Icons / Manifest -->
@@ -60,7 +61,7 @@
   <!-- Google Identity Services (Login Google). app.js lo usa si auth.enabled=true -->
   <script async defer src="https://accounts.google.com/gsi/client"></script>
 
-  <!-- Preload scripts (mejor sensación de “pro”, sin romper caché-bust) -->
+  <!-- Preload scripts (sensación pro, no rompe cache-bust) -->
   <link rel="preload" href="./config/boot-config.js?v=tnp-v4.2.0_2026-01-12d" as="script" />
   <link rel="preload" href="./app.js?v=tnp-v4.2.0_2026-01-12d" as="script" />
 </head>
@@ -74,8 +75,12 @@
       <div class="authGate__title">Inicia sesión para usar el panel</div>
       <div class="authGate__sub">
         Acceso con Google. Tu plan (FREE/PRO/ELITE) se aplica automáticamente.
-        <br/>Si estás en modo demo, el plan puede venir de <span class="mono">localStorage tnp_membership_override</span>.
+        <br />Si estás en modo demo, el plan puede venir de <span class="mono">localStorage tnp_membership_override</span>.
       </div>
+
+      <!-- (Opcional) Mount para GIS si app.js decide pintar botón oficial -->
+      <div id="gsiBtnMount" class="hidden" aria-hidden="true"></div>
+
       <div class="authGate__row">
         <button id="btnLoginGate" class="btn btn--primary" type="button">Entrar con Google</button>
         <button id="btnOpenPlansGate" class="btn" type="button" aria-controls="membModal" aria-expanded="false">Ver planes</button>
@@ -88,7 +93,18 @@
   <header class="topbar" id="topbar" role="banner">
     <div class="topbar__left">
       <div class="brand" aria-label="Marca">
-        <div class="brand__logo" aria-hidden="true">🛰️</div>
+        <!-- LOGO real (usa tus assets ya existentes) -->
+        <div class="brand__logo" aria-hidden="true">
+          <img
+            src="./assets/icons/icon-192.png"
+            width="36"
+            height="36"
+            alt=""
+            loading="eager"
+            decoding="async"
+          />
+        </div>
+
         <div class="brand__txt">
           <div class="brand__title">News → Tweet Panel</div>
           <div class="brand__sub">RSS directos · Links reales · Imágenes · Login · Membresía</div>
@@ -119,7 +135,7 @@
         <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
         <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
 
-        <!-- Planes / Membresía -->
+        <!-- Planes / Membresía (ÚNICO CTA visible en header para evitar “duplicados”) -->
         <button
           id="btnPricing"
           class="btn btn--sm"
@@ -145,10 +161,15 @@
       <div id="authBox" class="row row--wrap authBox" aria-label="Sesión">
         <span id="tierBadge" class="badge" title="Plan actual">FREE</span>
         <span id="authUser" class="mini muted" title="Usuario">Sin sesión</span>
+
+        <!-- Importante: SIN atributo hidden; solo .hidden para que app.js pueda alternar -->
         <button id="btnLogin" class="btn btn--sm" type="button">Entrar</button>
-        <button id="btnLogout" class="btn btn--sm" type="button" hidden>Salir</button>
-        <button id="btnUpgrade" class="btn btn--primary btn--sm" type="button">Mejorar</button>
-        <button id="btnManage" class="btn btn--sm" type="button" hidden>Gestionar</button>
+        <button id="btnLogout" class="btn btn--sm hidden" type="button" aria-hidden="true">Salir</button>
+
+        <!-- Placeholders para compat con app.js (evitan errores si app.js espera estos IDs).
+             Los dejamos ocultos para que NO parezcan “duplicados” en header. -->
+        <button id="btnUpgrade" class="btn btn--primary btn--sm hidden" type="button" aria-hidden="true">Mejorar</button>
+        <button id="btnManage" class="btn btn--sm hidden" type="button" aria-hidden="true">Gestionar</button>
       </div>
 
       <div id="status" class="status" role="status" aria-live="polite">Listo</div>
@@ -465,7 +486,7 @@
           <span class="mini muted" id="membMsg"></span>
           <div class="spacer"></div>
           <button id="btnMembLogin" class="btn btn--sm" type="button">Entrar</button>
-          <button id="btnMembManage" class="btn btn--sm" type="button" hidden>Gestionar</button>
+          <button id="btnMembManage" class="btn btn--sm hidden" type="button" aria-hidden="true">Gestionar</button>
         </div>
 
         <div id="tierCards" class="tierGrid" aria-label="Tarjetas de planes">
