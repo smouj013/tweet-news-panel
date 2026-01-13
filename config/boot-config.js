@@ -6,6 +6,9 @@
    ✅ Config “real” (API) o “demo” (override local)
    ✅ Alias compat: TNP_CONFIG.googleClientId
    ✅ URLs de config JSON (version/config/proxies/trends/feeds/keywords) para carga dinámica
+   ✅ Ko-fi actualizado (ko-fi.com/global_eye)
+   ✅ Descripciones/beneficios tiers ajustados a lo que REALMENTE hace la app (límites + frecuencia + OG/resolve)
+   ✅ Compatibilizado: expone membership.kofiUrl + ui.kofiUrl (si app.js lo usa) sin romper nada
 */
 (() => {
   "use strict";
@@ -17,7 +20,11 @@
   const GOOGLE_CLIENT_ID =
     "96486611781-9o20cpbk3vqt0r5qb6deifmjvk10sk67.apps.googleusercontent.com";
 
+  // ✅ TU KO-FI
+  const KOFI_URL = "https://ko-fi.com/global_eye";
+
   // Base para tus JSON (si los tienes en raíz, deja "./")
+  // Si los mueves a /config/, usa: "./config/"
   const CONFIG_BASE = "./";
 
   window.TNP_CONFIG = {
@@ -25,8 +32,7 @@
     buildTag: BUILD_TAG,
 
     /* ───────────────────────────── CONFIG URLS (JSON) ───────────────────────────── */
-    // Si tu app.js soporta cargar config externa, aquí tienes rutas coherentes.
-    // Puedes moverlos a /config/ si quieres: cambia CONFIG_BASE.
+    // Rutas coherentes para carga dinámica (si app.js lo soporta)
     configUrls: {
       version: `${CONFIG_BASE}tnp.version.json`,
       config: `${CONFIG_BASE}tnp.config.json`,
@@ -54,7 +60,7 @@
     /* ───────────────────────────── TRADUCCIÓN ───────────────────────────── */
     trEnabledDefault: true,
 
-    /* ───────────────────────────── LÍMITES BASE ───────────────────────────── */
+    /* ───────────────────────────── LÍMITES BASE (APP) ───────────────────────────── */
     maxItemsKeep: 600,
     visibleTranslateLimit: 80,
 
@@ -62,7 +68,7 @@
     auth: {
       enabled: true,
 
-      // Obligar login
+      // Obligar login (si true, el panel se bloquea hasta iniciar sesión)
       requireLogin: true,
 
       provider: "google",
@@ -88,18 +94,26 @@
       // apiBase: "https://tu-worker.workers.dev",
       apiBase: "",
 
-      // Allowlist local (opcional). Si tu app.js lo soporta, puedes usar member.json.
+      // Allowlist local (opcional). Si lo usas, suele ser "member.json" o "members.json".
       // allowlistUrl: `${CONFIG_BASE}member.json`,
       allowlistUrl: "",
       allowLocalOverride: true,
 
+      // ✅ Ko-fi (para que el UI pueda enlazarlo si app.js lee config)
+      kofiUrl: KOFI_URL,
+
       // Demo override:
+      // localStorage.setItem("tnp_membership_override", "free")
       // localStorage.setItem("tnp_membership_override", "pro")
       // localStorage.setItem("tnp_membership_override", "elite")
 
       // URLs si NO usas apiBase (Stripe/Gumroad/Ko-fi/etc.)
-      checkoutUrlTemplate: "https://tusitio.com/checkout?tier={{TIER}}",
-      manageUrl: "https://tusitio.com/account",
+      // Si tu estrategia es Ko-fi como “upgrade”, puedes dejar checkout a Ko-fi:
+      checkoutUrlTemplate: `${KOFI_URL}`,
+      manageUrl: `${KOFI_URL}`,
+
+      // ⚠️ Nota realista: OG/imagenes/resolve dependen de CORS, proxies y calidad del feed.
+      // Los tiers “mejoran límites y frecuencia”, no garantizan 100% de extracción.
 
       tiers: [
         {
@@ -109,9 +123,10 @@
           badge: "FREE",
           accent: "#9aa4b2",
           perks: [
-            "RSS + ticker básico",
-            "Resolver links (best-effort)",
-            "Copiar plantilla + abrir en X"
+            "Panel completo: RSS + lista + ticker + plantilla X",
+            "Resolver enlaces y extraer OG (best-effort, con límites)",
+            "Traducción/normalización ES prioritaria (best-effort)",
+            "Límites moderados para evitar bloqueos (ideal para empezar)"
           ],
           limits: {
             maxFeedsEnabled: 40,
@@ -125,14 +140,14 @@
         {
           id: "pro",
           name: "PRO",
-          priceLabel: "4.99€/mes",
+          priceLabel: "Apoyo Ko-fi",
           badge: "PRO",
           accent: "#2ED3B7",
           perks: [
-            "Más feeds + más items",
-            "Auto-refresh más rápido",
-            "Más OG/imágenes + cachés",
-            "Prioridad en proxies (si api)"
+            "Más feeds activos + más noticias por refresh",
+            "Auto-refresh más rápido (menos espera)",
+            "Más intentos de resolve + más OG/imagenes por ciclo",
+            "Ideal para directos: ticker más “vivo” sin saturar"
           ],
           limits: {
             maxFeedsEnabled: 90,
@@ -146,14 +161,14 @@
         {
           id: "elite",
           name: "ELITE",
-          priceLabel: "9.99€/mes",
+          priceLabel: "Apoyo Ko-fi+",
           badge: "ELITE",
           accent: "#F5C451",
           perks: [
-            "Máximo rendimiento (límite alto)",
-            "Auto-refresh ultra",
-            "Más extracción OG",
-            "Ready para features premium (tendencias API, etc.)"
+            "Máximos límites (feeds/items) para curación intensiva",
+            "Auto-refresh ultra (ideal para ‘última hora’ continua)",
+            "Más OG/imagenes + más resolve por ciclo",
+            "Preparado para features premium cuando uses backend (si lo activas)"
           ],
           limits: {
             maxFeedsEnabled: 200,
@@ -171,21 +186,29 @@
     ui: {
       showMembershipBar: true,
       showTierCards: true,
-      // si true, bloquea la app hasta login (además de requireLogin)
+
+      // ✅ extra compat: algunas UIs leen esto directamente
+      kofiUrl: KOFI_URL,
+
+      // Si true, bloquea el panel hasta login (además de auth.requireLogin)
       hardGate: true
     }
   };
 
   // ───────────────────────────── COMPAT SHIM ─────────────────────────────
-  // Por si tu app.js (o versiones previas) leen googleClientId en raíz:
+  // Por si app.js (o versiones previas) leen googleClientId en raíz:
   if (!window.TNP_CONFIG.googleClientId) {
     window.TNP_CONFIG.googleClientId =
       (window.TNP_CONFIG.auth && window.TNP_CONFIG.auth.googleClientId) || "";
   }
 
+  // Por si alguna parte lee KOFI en raíz:
+  if (!window.TNP_CONFIG.kofiUrl) window.TNP_CONFIG.kofiUrl = KOFI_URL;
+
   // Exponer build de forma cómoda (no rompe nada si no se usa)
   window.TNP_BUILD = { version: APP_VERSION, buildId: BUILD_ID, tag: BUILD_TAG };
 
-  // Opcional: “congelar” config para evitar mutaciones accidentales (si rompe algo, coméntalo)
-  try { Object.freeze(window.TNP_CONFIG); } catch (_) {}
+  // ⚠️ NO congelamos por defecto para evitar romper app.js si ajusta config en runtime.
+  // Si quieres “hardening” y estás seguro de que app.js no muta config, descomenta:
+  // try { Object.freeze(window.TNP_CONFIG); } catch (_) {}
 })();

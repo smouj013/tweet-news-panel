@@ -39,6 +39,14 @@ Fuente:
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
+  const cssEscape = (s) => {
+    try{
+      return (window.CSS && typeof CSS.escape === "function") ? CSS.escape(String(s)) : String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+    }catch{
+      return String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+    }
+  };
+
   function debounce(fn, ms){
     let t = null;
     return (...args) => {
@@ -120,12 +128,12 @@ Fuente:
       if ([...url.searchParams.keys()].length === 0) url.search = "";
       return url.toString();
     }catch{
-      return u;
+      return String(u || "");
     }
   }
 
   function absolutizeUrl(u, base){
-    try { return new URL(u, base).toString(); } catch { return u; }
+    try { return new URL(u, base).toString(); } catch { return String(u || ""); }
   }
 
   async function copyText(text){
@@ -609,15 +617,6 @@ Fuente:
     try{ localStorage.removeItem(LS_MEMBER); }catch{}
   }
 
-  function isAuthed(){
-    return !!(state.auth.email && state.auth.expMs && state.auth.expMs > nowMs());
-  }
-
-  function canUseApp(){
-    if (!BOOT.requireLogin) return true;
-    return isAuthed();
-  }
-
   function base64UrlToUtf8(s){
     try{
       s = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
@@ -795,7 +794,21 @@ Fuente:
 
     // auth gate overlay
     gateEl: null,
+
+    // DOM refs (render cache) -> rendimiento PRO (sin querySelector masivo)
+    dom: {
+      refs: new Map(), // id -> { row, ageEl, titleEl, linkEl }
+    },
   };
+
+  function isAuthed(){
+    return !!(state.auth.email && state.auth.expMs && state.auth.expMs > nowMs());
+  }
+
+  function canUseApp(){
+    if (!BOOT.requireLogin) return true;
+    return isAuthed();
+  }
 
   function tierLimits(){
     const t = normTier(state.member.tier);
@@ -1307,14 +1320,20 @@ Fuente:
 
     for (const it of nodes){
       const title = stripHtml(it.querySelector("title")?.textContent || "");
+
       let link = (it.querySelector("link")?.textContent || "").trim();
-      const guid = (it.querySelector("guid")?.textContent || "").trim();
+      const guidEl = it.querySelector("guid");
+      const guid = (guidEl?.textContent || "").trim();
+      const guidIsLink = String(guidEl?.getAttribute("isPermaLink") || "").toLowerCase() === "true";
 
       // Algunas RSS meten link como <link href="...">
       if (!link){
         const linkEl = it.querySelector("link[href]");
         if (linkEl) link = (linkEl.getAttribute("href") || "").trim();
       }
+
+      // Si no hay link y guid parece URL (o isPermaLink)
+      if (!link && guid && (guidIsLink || /^https?:\/\//i.test(guid))) link = guid;
 
       const pub =
         (it.querySelector("pubDate")?.textContent || "").trim() ||
@@ -1323,8 +1342,11 @@ Fuente:
       const dateMs = pub ? Date.parse(pub) : NaN;
       const ts = Number.isFinite(dateMs) ? dateMs : nowMs();
 
-      const url = cleanUrl(link || guid);
-      if (!url) continue;
+      const rawUrl = link || "";
+      const absUrl = absolutizeUrl(rawUrl, feed.url || rawUrl);
+      const url = cleanUrl(absUrl);
+
+      if (!url || !isHttpUrl(url)) continue;
 
       const item = baseItem(feed, url, ts, title);
       item.img = pickImageFromNode(it, url) || "";
@@ -1349,8 +1371,9 @@ Fuente:
       const dateMs = pub ? Date.parse(pub) : NaN;
       const ts = Number.isFinite(dateMs) ? dateMs : nowMs();
 
-      const url = cleanUrl(link);
-      if (!url) continue;
+      const absUrl = absolutizeUrl(link, feed.url || link);
+      const url = cleanUrl(absUrl);
+      if (!url || !isHttpUrl(url)) continue;
 
       const item = baseItem(feed, url, ts, title);
       item.img = pickImageFromNode(e, url) || "";
@@ -1411,16 +1434,68 @@ Fuente:
     }
   }
 
-  /* ───────────────────────────── LINK RESOLVE ───────────────────────────── */
+  /* ───────────────────────────── LINK RESOLVE (MEJORADO: fallback HTML/canonical) ───────────────────────────── */
   function shouldResolve(url){
     const d = domainOf(url);
-    return /news\.google\.com|feedproxy\.google\.com|t\.co|bit\.ly/.test(d);
+    return /news\.google\.com|feedproxy\.google\.com|t\.co|bit\.ly|trib\.al|tinyurl\.com|buff\.ly/.test(d);
+  }
+
+  function extractCanonicalOrOgUrl(html, baseUrl){
+    const pick = (re) => {
+      const m = String(html || "").match(re);
+      return (m && m[1]) ? m[1].trim() : "";
+    };
+
+    let u =
+      pick(/rel=["']canonical["'][^>]*href=["']([^"']+)["']/i) ||
+      pick(/href=["']([^"']+)["'][^>]*rel=["']canonical["']/i) ||
+      pick(/property=["']og:url["'][^>]*content=["']([^"']+)["']/i) ||
+      pick(/content=["']([^"']+)["'][^>]*property=["']og:url["']/i);
+
+    if (!u){
+      const m = String(html || "").match(/http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"']+)["']/i);
+      if (m && m[1]) u = m[1].trim();
+    }
+
+    if (!u){
+      u =
+        pick(/location\.href\s*=\s*["']([^"']+)["']/i) ||
+        pick(/window\.location\s*=\s*["']([^"']+)["']/i);
+    }
+
+    if (!u) return "";
+
+    u = u.replace(/&amp;/g, "&");
+    u = absolutizeUrl(u, baseUrl);
+    u = cleanUrl(u);
+    return isHttpUrl(u) ? u : "";
+  }
+
+  function extractGoogleNewsOriginal(html){
+    // Intenta sacar el “original” de enlaces intermediarios en el HTML (muy típico en Google News)
+    try{
+      const s = String(html || "");
+      const m1 = s.match(/https?:\/\/www\.google\.com\/url\?[^"'<>]*[?&]url=([^&"'<>]+)/i);
+      if (m1 && m1[1]){
+        const u = decodeURIComponent(m1[1]);
+        return isHttpUrl(u) ? cleanUrl(u) : "";
+      }
+      const m2 = s.match(/[?&]url=([^&"'<>]+)&amp;?/i);
+      if (m2 && m2[1]){
+        const u = decodeURIComponent(m2[1].replace(/&amp;.*$/,""));
+        return isHttpUrl(u) ? cleanUrl(u) : "";
+      }
+      return "";
+    }catch{
+      return "";
+    }
   }
 
   async function resolveUrl(url, signal){
     const k = url;
     if (state.resolveCache.has(k)) return state.resolveCache.get(k);
 
+    // 1) Intento rápido: redirect follow (si hay CORS, puede fallar)
     try{
       const { signal: s2, cancel } = withTimeout(9000, signal);
       try{
@@ -1434,7 +1509,29 @@ Fuente:
       }
     } catch {}
 
+    // 2) Fallback robusto: baja HTML vía proxy y extrae canonical/og:url
+    try{
+      const html = await fetchHtmlSmart(url, signal);
+      let u = extractCanonicalOrOgUrl(html, url);
+
+      // Si sigue siendo Google News, intenta extraer original
+      if (u && /news\.google\.com/.test(domainOf(u))){
+        const alt = extractGoogleNewsOriginal(html);
+        if (alt) u = alt;
+      } else if (!u && /news\.google\.com/.test(domainOf(url))){
+        const alt = extractGoogleNewsOriginal(html);
+        if (alt) u = alt;
+      }
+
+      if (u){
+        state.resolveCache.set(k, u);
+        saveCachesThrottled();
+        return u;
+      }
+    }catch{}
+
     state.resolveCache.set(k, url);
+    saveCachesThrottled();
     return url;
   }
 
@@ -1478,11 +1575,8 @@ Fuente:
   }
 
   function patchRenderedTitle(id, newTitle){
-    if (!els.newsList) return;
-    const row = els.newsList.querySelector(`.newsItem[data-id="${CSS.escape(id)}"]`);
-    if (!row) return;
-    const titleEl = row.querySelector(".newsTitle");
-    if (titleEl) titleEl.textContent = newTitle;
+    const ref = state.dom.refs.get(id);
+    if (ref?.titleEl) ref.titleEl.textContent = newTitle;
   }
 
   function kickTranslateVisible(){
@@ -1586,6 +1680,13 @@ Fuente:
     return 60 * 60 * 1000;
   }
 
+  function faviconForDomain(dom){
+    if (!BOOT.enableFavicons) return "";
+    if (!dom) return "";
+    // s2 favicons funciona bien y es barato
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(dom)}&sz=32`;
+  }
+
   function applyFilters(){
     const q = (els.searchBox?.value || "").trim().toLowerCase();
     const minAge = clamp(numOr(els.delayMin?.value, settings.delayMin || 0), 0, 60) * 60 * 1000;
@@ -1642,13 +1743,6 @@ Fuente:
 
   const applyFiltersDebounced = debounce(applyFilters, 90);
 
-  function faviconForDomain(dom){
-    if (!BOOT.enableFavicons) return "";
-    if (!dom) return "";
-    // s2 favicons funciona bien y es barato
-    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(dom)}&sz=32`;
-  }
-
   function renderNewsList(list){
     if (!els.newsList) return;
 
@@ -1658,6 +1752,9 @@ Fuente:
       return;
     }
     state.lastRenderSig = sig;
+
+    // Limpia refs para tick rápido
+    state.dom.refs.clear();
 
     els.newsList.innerHTML = "";
 
@@ -1773,12 +1870,8 @@ Fuente:
       main.append(top, title, link);
       row.append(thumb, main);
 
-      const onPick = () => selectItem(it.id);
-
-      row.addEventListener("click", onPick);
-      row.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(); }
-      });
+      // cache refs (para tick/patch sin querySelector)
+      state.dom.refs.set(it.id, { row, ageEl: b2, titleEl: title, linkEl: link });
 
       frag.appendChild(row);
     }
@@ -1954,13 +2047,17 @@ Fuente:
   }
 
   function patchSelectedRow(newId){
-    if (!els.newsList) return;
-    const prev = els.newsList.querySelector(".newsItem.sel");
+    const prev = els.newsList?.querySelector(".newsItem.sel");
     if (prev) prev.classList.remove("sel");
 
     if (!newId) return;
-    const row = els.newsList.querySelector(`.newsItem[data-id="${CSS.escape(newId)}"]`);
-    if (row) row.classList.add("sel");
+
+    const ref = state.dom.refs.get(newId);
+    if (ref?.row) ref.row.classList.add("sel");
+    else {
+      const row = els.newsList?.querySelector(`.newsItem[data-id="${cssEscape(newId)}"]`);
+      if (row) row.classList.add("sel");
+    }
   }
 
   function selectItem(id){
@@ -1988,8 +2085,12 @@ Fuente:
     state.used.add(state.selectedId);
     saveUsed();
 
-    const row = els.newsList?.querySelector(`.newsItem[data-id="${CSS.escape(state.selectedId)}"]`);
-    if (row) row.classList.add("used");
+    const ref = state.dom.refs.get(state.selectedId);
+    if (ref?.row) ref.row.classList.add("used");
+    else {
+      const row = els.newsList?.querySelector(`.newsItem[data-id="${cssEscape(state.selectedId)}"]`);
+      if (row) row.classList.add("used");
+    }
 
     if (els.optHideUsed?.checked) applyFiltersDebounced();
   }
@@ -2094,7 +2195,7 @@ Fuente:
       .map(w => w.replace(/[^\p{L}\p{N}]/gu, ""))
       .filter(w => w.length >= 6);
 
-    const stop = new Set(["últimahora","noticias","fuente","directo","gobierno","presidente","ministro","congreso"]);
+    const stop = new Set(["últimahora","ultimahora","noticias","fuente","directo","gobierno","presidente","ministro","congreso"]);
     const map = new Map();
     for (const w of words){
       const low = w.toLowerCase();
@@ -2177,7 +2278,7 @@ Fuente:
 
     try{
       const xml = await fetchTextSmart(String(src.url), signal);
-      const feed = { name: "Trends", cat: "trend" };
+      const feed = { name: "Trends", cat: "trend", url: String(src.url) };
       const items = parseFeed(xml, feed).slice(0, 20);
 
       const tags = [];
@@ -2204,7 +2305,7 @@ Fuente:
     }
   }
 
-  /* ───────────────────────────── UI TICK (sin re-render) ───────────────────────────── */
+  /* ───────────────────────────── UI TICK (sin re-render masivo) ───────────────────────────── */
   function startUiTick(){
     clearInterval(state.uiTickTimer);
     state.uiTickTimer = setInterval(() => {
@@ -2212,13 +2313,10 @@ Fuente:
         if (els.newsList && state.filtered.length){
           const now = nowMs();
           for (const it of state.filtered){
-            const row = els.newsList.querySelector(`.newsItem[data-id="${CSS.escape(it.id)}"]`);
-            if (!row) continue;
-            const ageEl = row.querySelector(".badge.age");
-            if (ageEl){
-              const m = Math.floor(Math.max(0, now - it.dateMs) / 60000);
-              ageEl.textContent = (m < 1) ? "ahora" : (m < 60 ? `${m}m` : fmtAge(it.dateMs));
-            }
+            const ref = state.dom.refs.get(it.id);
+            if (!ref?.ageEl) continue;
+            const m = Math.floor(Math.max(0, now - it.dateMs) / 60000);
+            ref.ageEl.textContent = (m < 1) ? "ahora" : (m < 60 ? `${m}m` : fmtAge(it.dateMs));
           }
         }
         if (document.activeElement === els.headline || document.activeElement === els.template || document.activeElement === els.hashtags || document.activeElement === els.sourceUrl){
@@ -2525,6 +2623,10 @@ Fuente:
               allItems.push(it);
               if (allItems.length >= cap * 2) break;
             }
+
+            // OK -> limpia backoff de ese feed
+            state.backoff.delete(f.url);
+
             ok++;
           }catch{
             fail++;
@@ -2568,6 +2670,9 @@ Fuente:
         const need = state.items.filter(it => shouldResolve(it.link)).slice(0, lim2.resolveLimit);
         await mapLimit(need, BOOT.maxConcurrentResolve, async (it) => {
           it.resolvedUrl = await resolveUrl(it.link, signal);
+          // si cambió, refresca el link visible si está renderizado
+          const ref = state.dom.refs.get(it.id);
+          if (ref?.linkEl) ref.linkEl.textContent = it.resolvedUrl || it.link || "";
         }, signal);
       }
 
@@ -2691,6 +2796,8 @@ Fuente:
       `;
     }).join("");
 
+    const origin = (() => { try{ return location.origin; }catch{ return ""; } })();
+
     modal.innerHTML = `
       <div class="modal__panel">
         <div class="modal__head">
@@ -2721,6 +2828,11 @@ Fuente:
             ${BOOT.googleClientId ? "Pulsa para iniciar sesión con Google." : "⚠️ Falta googleClientId en config/boot-config.js (login desactivado)."}
           </div>
 
+          <div class="mini muted" style="margin-bottom:10px;">
+            <span>Origen actual:</span>
+            <code style="margin-left:6px;">${origin}</code>
+          </div>
+
           <div class="row row--wrap">
             <div id="gsiBtn"></div>
             <button id="btnMemberSignOut" class="btn btn--danger btn--sm" type="button">Cerrar sesión</button>
@@ -2730,7 +2842,7 @@ Fuente:
           <div id="memberMsg" class="warn" style="margin-top:10px;"></div>
 
           <div class="mini muted" style="margin-top:12px;">
-            Tip: si usas allowlist, puedes tener modo “emails” o modo “hash (SHA-256)”.
+            Tip: si sale <code>invalid_client</code>, revisa que tu <code>googleClientId</code> coincida y que el <b>origen</b> (${origin}) esté en “Authorized JavaScript origins” del OAuth client.
           </div>
         </div>
       </div>
@@ -2823,9 +2935,15 @@ Fuente:
     if (!BOOT.googleClientId) return;
 
     const ok = await ensureGsiScript();
-    if (!ok) return;
+    if (!ok) {
+      updateMemberUi("⚠️ No se pudo cargar Google Sign-In (bloqueado o sin conexión).");
+      return;
+    }
 
-    if (!(window.google && window.google.accounts && window.google.accounts.id)) return;
+    if (!(window.google && window.google.accounts && window.google.accounts.id)) {
+      updateMemberUi("⚠️ Google Sign-In no está disponible (script no inicializó).");
+      return;
+    }
 
     try{
       window.google.accounts.id.initialize({
@@ -2895,13 +3013,18 @@ Fuente:
       const host = state.memberUi.modal?.querySelector("#gsiBtn");
       if (host){
         host.innerHTML = "";
-        window.google.accounts.id.renderButton(host, {
-          theme: "outline",
-          size: "large",
-          shape: "pill",
-          text: "signin_with",
-          locale: "es"
-        });
+        try{
+          window.google.accounts.id.renderButton(host, {
+            theme: "outline",
+            size: "large",
+            shape: "pill",
+            text: "signin_with",
+            locale: "es"
+          });
+        }catch{
+          // renderButton puede fallar si el client está mal configurado
+          updateMemberUi("⚠️ No se pudo renderizar el botón (revisa googleClientId/origen).");
+        }
       }
 
       // One Tap opcional
@@ -2911,7 +3034,7 @@ Fuente:
 
       gsiInited = true;
     }catch{
-      // ignore
+      updateMemberUi("⚠️ Error iniciando Google Sign-In (revisa googleClientId/origen).");
     }
   }
 
@@ -2964,6 +3087,23 @@ Fuente:
     if (els.hashtags && !els.hashtags.value && settings.defaultHashtags){
       els.hashtags.value = settings.defaultHashtags;
     }
+
+    // Delegación de eventos (rendimiento): un solo listener para toda la lista
+    els.newsList?.addEventListener("click", (e) => {
+      const row = e.target?.closest?.(".newsItem");
+      if (!row || !els.newsList.contains(row)) return;
+      const id = row.dataset?.id || "";
+      if (id) selectItem(id);
+    });
+
+    els.newsList?.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const row = e.target?.closest?.(".newsItem");
+      if (!row || !els.newsList.contains(row)) return;
+      e.preventDefault();
+      const id = row.dataset?.id || "";
+      if (id) selectItem(id);
+    });
 
     const saveFilterSettings = () => {
       settings.delayMin   = clamp(numOr(els.delayMin?.value, settings.delayMin), 0, 60);
