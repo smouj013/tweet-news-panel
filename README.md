@@ -115,120 +115,79 @@ Dentro puedes:
 
 Formato feed:
 
+```
 { "name":"El País — Portada (MRSS)", "url":"https://…", "enabled":true, "cat":"spain" }
+```
+
 5) Traducción a español (best-effort)
 Cuando está activo “Solo ES” y trEnabled:
-
 Traduce títulos visibles usando endpoint público de Google Translate (gtx).
-
 Guarda caché local para no repetir.
-
 Si un título ya parece español, lo deja como está.
-
 Si la traducción cambia el título y tú tenías esa noticia seleccionada, intenta actualizar el campo “Headline” de forma segura (sin pisarte lo que estabas editando).
 
 6) Imágenes (del feed o OG)
 El panel intenta imagen en este orden:
-
 media:content, media:thumbnail, enclosure, content:encoded (img tag) si viene en el feed.
-
 Si no hay, y enableOgImages está activo:
-
 descarga el HTML de la noticia (best-effort, con proxies),
-
 busca og:image / twitter:image / image_src.
-
 Notas:
-
 Algunas webs bloquean CORS o devuelven HTML “vacío” vía proxy: en esos casos puede salir sin imagen.
-
 Hay caché local de OG para no martillear.
 
 7) Resolución de enlaces (Google News, t.co, etc.)
 Si “Resolver enlaces” está activo:
-
 Sigue redirects para intentar recuperar el link final real.
-
 Guarda caché local para acelerar siguientes refresh.
-
 También limpia tracking típico (utm_*, fbclid, gclid…).
 
 8) Membresía + Login Google (GIS)
 Botón Membresía:
 
 Muestra tiers (cards)
-
 Renderiza el botón de Google (GIS)
-
 Muestra tu email, tier, expiración
-
 Permite cerrar sesión
-
 8.1 Cómo se decide el tier
 El panel verifica en este orden:
-
 Override local (si está permitido por config)
-
 Endpoint de verificación (POST con {email, credential, app, build})
-
 Allowlist JSON (dos modos):
-
 Hash mode: lista de hashes SHA-256(salt:email)
-
 Email mode: allow[] + roles{ email: "admin|pro|elite|basic" }
-
 Si auth.requireLogin=true:
-
 Sin sesión, el panel puede bloquear (modo “hardGate” si está activado).
 
 9) Service Worker (PWA) y updates
 El SW está pensado para GitHub Pages:
-
 Evita quedarse “pegado” con app.js viejo.
-
 Limpia caches antiguos.
-
 Responde a:
-
 SKIP_WAITING → aplica el nuevo SW
-
 CLEAR_CACHES → limpia caches tnp-*
-
 En la UI suelen existir:
-
 Check update: fuerza reg.update() y aplica si hay waiting.
-
 Hard reset: borra storage + caches + desregistra SW (reset total).
 
 10) Archivos clave (qué hace cada uno)
 index.html → UI, IDs y estructura.
-
 styles.css → tema/estilos.
-
 app.js → toda la lógica (feeds, parse, filtros, composer, GIS, membership, trends, caches).
-
 sw.js → caching/auto-update PWA.
-
 manifest.webmanifest → metadatos PWA.
-
 config/boot-config.js → configuración (auth/membership/ui/network/features).
-
 member.json → allowlist público (si lo usas en modo allowlist).
-
 monetization.json → enlaces de soporte/Ko-fi y (opcional) web monetization.
 
 11) “Trucos” rápidos
 Shift + Refrescar: fuerza refresh y resetea backoff.
-
 Si ves que “todo falla” (0 feeds OK), el panel puede auto-reparar cache/SW (modo emergencia).
-
 Si el tweet se pasa de 280: usa Trim o baja hashtags.
 
 12) Privacidad y notas
 Las caches (feeds/OG/translate/resolve) son locales (localStorage + caches del SW).
-
 member.json en GitHub Pages es público: no metas datos sensibles.
-
 El login GIS es “ID token” (credential) y el panel solo lo usa para leer email y verificar tier.
 
 © TNP — GlobalEyeTV / GlobalEye_TV
