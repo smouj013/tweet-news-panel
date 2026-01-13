@@ -1,4 +1,4 @@
-<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CLEAN + NO INLINE CSS DUPES
+<!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CLEAN + PRO UI (NO INLINE CSS DUPES)
   ✅ 100% compatible con app.js v4.2.0 (IDs + modales + ticker + X mock + botones)
   ✅ Evita “doble ocultación”: modales/gates usan SOLO .hidden (no hidden attr)
   ✅ AUTH: Login Google (GIS) + Gate opcional
@@ -11,12 +11,18 @@
 <html lang="es" data-theme="dark">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
-  <meta name="theme-color" content="#070A12" />
+
+  <!-- Tema (alineado con el nuevo styles.css “Aurora”) -->
+  <meta name="theme-color" content="#060714" />
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F5F7FF" />
+
   <meta name="description" content="Panel PRO para extraer noticias (RSS/Atom), resolver links reales, imágenes y generar plantilla lista para X. Incluye login y membresías." />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <meta name="robots" content="noindex,nofollow" />
+  <meta name="format-detection" content="telephone=no,date=no,address=no,email=no,url=no" />
 
   <!-- PWA -->
   <meta name="application-name" content="News → Tweet Template Panel" />
@@ -27,6 +33,7 @@
   <!-- 🔧 Build tag único (úsalo igual en scripts + SW abajo) -->
   <meta name="tnp-build" content="tnp-v4.2.0_2026-01-12d" />
 
+  <!-- Icons / Manifest -->
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./assets/icons/favicon-32.png" sizes="32x32" />
   <link rel="icon" href="./assets/icons/icon-192.png" sizes="192x192" />
@@ -52,6 +59,10 @@
 
   <!-- Google Identity Services (Login Google). app.js lo usa si auth.enabled=true -->
   <script async defer src="https://accounts.google.com/gsi/client"></script>
+
+  <!-- Preload scripts (mejor sensación de “pro”, sin romper caché-bust) -->
+  <link rel="preload" href="./config/boot-config.js?v=tnp-v4.2.0_2026-01-12d" as="script" />
+  <link rel="preload" href="./app.js?v=tnp-v4.2.0_2026-01-12d" as="script" />
 </head>
 
 <body>
@@ -59,7 +70,7 @@
 
   <!-- AUTH GATE (app.js lo mostrará/ocultará; por defecto oculto SOLO por .hidden) -->
   <div id="authGate" class="authGate hidden" aria-hidden="true">
-    <div class="authGate__panel" role="dialog" aria-label="Acceso requerido">
+    <div class="authGate__panel" role="dialog" aria-modal="true" aria-label="Acceso requerido">
       <div class="authGate__title">Inicia sesión para usar el panel</div>
       <div class="authGate__sub">
         Acceso con Google. Tu plan (FREE/PRO/ELITE) se aplica automáticamente.
@@ -67,16 +78,16 @@
       </div>
       <div class="authGate__row">
         <button id="btnLoginGate" class="btn btn--primary" type="button">Entrar con Google</button>
-        <button id="btnOpenPlansGate" class="btn" type="button">Ver planes</button>
+        <button id="btnOpenPlansGate" class="btn" type="button" aria-controls="membModal" aria-expanded="false">Ver planes</button>
         <span id="authGateMsg" class="mini muted authGate__msg"></span>
       </div>
     </div>
   </div>
 
   <!-- TOPBAR -->
-  <header class="topbar" id="topbar">
+  <header class="topbar" id="topbar" role="banner">
     <div class="topbar__left">
-      <div class="brand">
+      <div class="brand" aria-label="Marca">
         <div class="brand__logo" aria-hidden="true">🛰️</div>
         <div class="brand__txt">
           <div class="brand__title">News → Tweet Panel</div>
@@ -85,9 +96,16 @@
       </div>
 
       <div class="topbar__controls" aria-label="Controles principales">
-        <label class="field field--inline">
+        <label class="field field--inline" for="searchBox">
           <span class="field__label">Buscar</span>
-          <input id="searchBox" class="input input--sm" type="search" placeholder="Buscar titular / medio…" autocomplete="off" />
+          <input
+            id="searchBox"
+            class="input input--sm"
+            type="search"
+            placeholder="Buscar titular / medio…"
+            autocomplete="off"
+            inputmode="search"
+          />
         </label>
 
         <button
@@ -97,12 +115,19 @@
           title="Refrescar (Shift+click = force + reset backoff)"
         >Refrescar</button>
 
-        <button id="btnFeeds" class="btn btn--sm" type="button">Feeds</button>
+        <button id="btnFeeds" class="btn btn--sm" type="button" aria-controls="modal" aria-expanded="false">Feeds</button>
         <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
         <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
 
         <!-- Planes / Membresía -->
-        <button id="btnPricing" class="btn btn--sm" type="button" title="Ver planes FREE/PRO/ELITE">💎 Planes</button>
+        <button
+          id="btnPricing"
+          class="btn btn--sm"
+          type="button"
+          title="Ver planes FREE/PRO/ELITE"
+          aria-controls="membModal"
+          aria-expanded="false"
+        >💎 Planes</button>
 
         <!-- Ko-fi -->
         <a
@@ -117,7 +142,7 @@
     </div>
 
     <div class="topbar__right" aria-label="Estado de sesión y plan">
-      <div id="authBox" class="row row--wrap authBox">
+      <div id="authBox" class="row row--wrap authBox" aria-label="Sesión">
         <span id="tierBadge" class="badge" title="Plan actual">FREE</span>
         <span id="authUser" class="mini muted" title="Usuario">Sin sesión</span>
         <button id="btnLogin" class="btn btn--sm" type="button">Entrar</button>
@@ -139,7 +164,7 @@
     <div id="tnpTrendsPop" class="ticker__pop" aria-hidden="true"></div>
   </div>
 
-  <main id="main" class="layout">
+  <main id="main" class="layout" role="main">
     <div class="grid">
       <!-- LEFT: COMPOSER -->
       <section class="panel" aria-label="Compositor del tweet">
@@ -152,28 +177,28 @@
 
         <div class="panel__body">
           <div class="grid2">
-            <label class="field">
+            <label class="field" for="liveUrl">
               <span class="field__label">🔴 En vivo (tu link)</span>
               <input id="liveUrl" class="input" type="url" placeholder="https://twitch.tv/globaleyetv" inputmode="url" />
             </label>
 
-            <label class="field">
+            <label class="field" for="hashtags">
               <span class="field__label">Hashtags</span>
-              <input id="hashtags" class="input" type="text" placeholder="#ÚltimaHora #España …" autocomplete="off" />
+              <input id="hashtags" class="input" type="text" placeholder="#UltimaHora #España …" autocomplete="off" />
             </label>
           </div>
 
-          <label class="field">
+          <label class="field" for="headline">
             <span class="field__label">Titular</span>
             <input id="headline" class="input" type="text" placeholder="Se rellena al elegir noticia…" autocomplete="off" />
           </label>
 
-          <label class="field">
+          <label class="field" for="sourceUrl">
             <span class="field__label">URL de la fuente</span>
             <input id="sourceUrl" class="input" type="url" placeholder="https://…" inputmode="url" />
           </label>
 
-          <div class="row row--wrap">
+          <div class="row row--wrap" aria-label="Opciones de plantilla">
             <label class="chip">
               <input id="optIncludeLive" type="checkbox" checked />
               <span>Incluir #ENVIVO</span>
@@ -184,12 +209,12 @@
             </label>
           </div>
 
-          <label class="field">
+          <label class="field" for="template">
             <span class="field__label">Template</span>
             <textarea id="template" class="input input--area mono" rows="8" spellcheck="false"></textarea>
           </label>
 
-          <div class="row row--wrap">
+          <div class="row row--wrap" aria-label="Acciones de plantilla">
             <button id="btnTrim" class="btn btn--sm" type="button">Recortar titular</button>
             <button id="btnGenTags" class="btn btn--sm" type="button">Generar hashtags</button>
             <button id="btnCopyUrl" class="btn btn--sm" type="button">Copiar URL</button>
@@ -222,7 +247,14 @@
 
                 <div id="xMockText" class="xMock__text"></div>
 
-                <a id="xMockCard" class="xMock__card hidden" href="#" target="_blank" rel="noopener noreferrer" aria-hidden="true">
+                <a
+                  id="xMockCard"
+                  class="xMock__card hidden"
+                  href="#"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-hidden="true"
+                >
                   <div id="xMockCardImg" class="xMock__cardImg"></div>
                   <div class="xMock__cardMeta">
                     <div id="xMockCardTitle" class="xMock__cardTitle"></div>
@@ -237,7 +269,7 @@
 
           <div class="panel__title panel__title--sm">Opciones</div>
 
-          <div class="options">
+          <div class="options" aria-label="Opciones de filtrado">
             <label class="field field--inline">
               <span class="field__label">Ventana</span>
               <select id="timeFilter" class="input input--sm">
@@ -553,7 +585,7 @@
       // 🔧 Ajusta --topbarH real para que el sticky del ticker nunca se pise (si la topbar crece por wrap)
       function syncStickyHeights(){
         try{
-          var h = (topbarEl && topbarEl.offsetHeight) ? topbarEl.offsetHeight : 76;
+          var h = (topbarEl && topbarEl.offsetHeight) ? topbarEl.offsetHeight : 78;
           document.documentElement.style.setProperty("--topbarH", h + "px");
           if (tickerEl && tickerEl.offsetHeight){
             document.documentElement.style.setProperty("--tickerH", tickerEl.offsetHeight + "px");
