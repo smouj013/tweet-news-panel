@@ -114,7 +114,7 @@ Dentro puedes:
 - **Guardar**: guarda y fuerza refresh.
 
 Formato feed:
-```json
+
 { "name":"El País — Portada (MRSS)", "url":"https://…", "enabled":true, "cat":"spain" }
 5) Traducción a español (best-effort)
 Cuando está activo “Solo ES” y trEnabled:
