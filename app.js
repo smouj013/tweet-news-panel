@@ -405,6 +405,10 @@ Fuente:
   // Dev override
   const LS_MEM_OVERRIDE = "tnp_membership_override"; // "pro" | "elite" | "basic" | "free"
 
+  // ✅ NUEVO (sin romper nada): persistimos hints/backoff para estabilidad
+  const LS_PROXY_HINT = "tnp_proxy_hint_v4";  // { [feedUrl]: idx }
+  const LS_BACKOFF    = "tnp_backoff_v4";     // { [feedUrl]: {delayMs, untilMs} }
+
   /* ───────────────────────────── TRANSLATE (ES) ───────────────────────────── */
   const TR_ENABLED_DEFAULT = true;
   const TR_CONCURRENCY = 2;
@@ -656,6 +660,19 @@ Fuente:
     }
   }
 
+  // ✅ NUEVO: fetch con timeout (para membership, sin depender del resto del pipeline)
+  async function fetchWithTimeout(url, opts, ms){
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort("timeout"), ms);
+    try{
+      const o = Object.assign({}, opts || {});
+      o.signal = ctrl.signal;
+      return await fetch(url, o);
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
   async function verifyMembership({ email, credential }){
     email = String(email || "").toLowerCase().trim();
     if (!email) return { tier:"free", expMs:0 };
@@ -670,10 +687,12 @@ Fuente:
       return { tier:"free", expMs: 0 };
     }
 
+    const MEM_TIMEOUT = clamp(Math.round(BOOT.fetchTimeoutMs * 0.75), 6000, 18000);
+
     // A) Endpoint
     if (BOOT.membershipEndpoint){
       try{
-        const r = await fetch(BOOT.membershipEndpoint, {
+        const r = await fetchWithTimeout(BOOT.membershipEndpoint, {
           method: "POST",
           headers: { "Content-Type":"application/json" },
           cache: "no-store",
@@ -684,7 +703,8 @@ Fuente:
             app: APP_VERSION,
             build: BUILD_ID
           })
-        });
+        }, MEM_TIMEOUT);
+
         if (!r.ok) throw new Error("HTTP " + r.status);
         const j = await r.json();
         const tier = normTier(j.tier);
@@ -698,7 +718,7 @@ Fuente:
     // B) Allowlist (dos modos)
     if (BOOT.membershipAllowlistUrl){
       try{
-        const r = await fetch(BOOT.membershipAllowlistUrl, { cache:"no-store", credentials:"omit" });
+        const r = await fetchWithTimeout(BOOT.membershipAllowlistUrl, { cache:"no-store", credentials:"omit" }, MEM_TIMEOUT);
         if (!r.ok) throw new Error("HTTP " + r.status);
         const j = await r.json();
 
@@ -775,6 +795,9 @@ Fuente:
 
     lastBuiltTweet: "",
     lastRenderSig: "",
+
+    // ✅ NUEVO: referencias directas para ages (evita querySelector masivo)
+    ageElMap: new Map(),
 
     // Sessions
     auth: loadAuth(),
@@ -876,6 +899,58 @@ Fuente:
       if (v === null) state.trCache.set(k, null);
     }
   }
+
+  // ✅ NUEVO: carga hints/backoff persistidos (best-effort)
+  function loadProxyHints(){
+    try{
+      const raw = safeParseJSON(localStorage.getItem(LS_PROXY_HINT));
+      const o = asObject(raw, {});
+      for (const [k,v] of Object.entries(o)){
+        const n = Number(v);
+        if (k && Number.isFinite(n)) state.proxyHint.set(k, n);
+      }
+    }catch{}
+  }
+
+  function loadBackoff(){
+    try{
+      const raw = safeParseJSON(localStorage.getItem(LS_BACKOFF));
+      const o = asObject(raw, {});
+      for (const [k,v] of Object.entries(o)){
+        const vv = asObject(v, null);
+        if (!vv) continue;
+        const delayMs = Number(vv.delayMs || 0);
+        const untilMs = Number(vv.untilMs || 0);
+        if (k && Number.isFinite(delayMs) && Number.isFinite(untilMs)){
+          state.backoff.set(k, { delayMs, untilMs });
+        }
+      }
+    }catch{}
+  }
+
+  const saveProxyHintsThrottled = debounce(() => {
+    try{
+      const out = {};
+      let i = 0;
+      for (const [k,v] of state.proxyHint.entries()){
+        out[k] = v;
+        if (++i > 1200) break;
+      }
+      localStorage.setItem(LS_PROXY_HINT, JSON.stringify(out));
+    }catch{}
+  }, 700);
+
+  const saveBackoffThrottled = debounce(() => {
+    try{
+      const out = {};
+      let i = 0;
+      for (const [k,v] of state.backoff.entries()){
+        out[k] = { delayMs: Number(v?.delayMs || 0), untilMs: Number(v?.untilMs || 0) };
+        if (++i > 2000) break;
+      }
+      localStorage.setItem(LS_BACKOFF, JSON.stringify(out));
+    }catch{}
+  }, 700);
 
   const saveCachesThrottled = debounce(() => {
     try{
@@ -1166,6 +1241,7 @@ Fuente:
         const xml = extractXmlFromText(txt);
         if (!xml || xml.length < 40) throw new Error("empty");
         state.proxyHint.set(targetUrl, i);
+        saveProxyHintsThrottled(); // ✅ persistimos el hint
         return xml;
       }catch(e){
         lastErr = e;
@@ -1661,6 +1737,9 @@ Fuente:
 
     els.newsList.innerHTML = "";
 
+    // ✅ reset map refs (evita leaks)
+    state.ageElMap.clear();
+
     if (!list.length){
       const empty = document.createElement("div");
       empty.style.padding = "14px";
@@ -1736,6 +1815,9 @@ Fuente:
       const b2 = document.createElement("span");
       b2.className = "badge age";
       b2.textContent = fmtAge(it.dateMs);
+
+      // ✅ guardamos referencia para tick rápido
+      state.ageElMap.set(it.id, b2);
 
       meta.appendChild(b1);
       meta.appendChild(b2);
@@ -2209,16 +2291,13 @@ Fuente:
     clearInterval(state.uiTickTimer);
     state.uiTickTimer = setInterval(() => {
       try{
-        if (els.newsList && state.filtered.length){
+        if (state.filtered.length){
           const now = nowMs();
           for (const it of state.filtered){
-            const row = els.newsList.querySelector(`.newsItem[data-id="${CSS.escape(it.id)}"]`);
-            if (!row) continue;
-            const ageEl = row.querySelector(".badge.age");
-            if (ageEl){
-              const m = Math.floor(Math.max(0, now - it.dateMs) / 60000);
-              ageEl.textContent = (m < 1) ? "ahora" : (m < 60 ? `${m}m` : fmtAge(it.dateMs));
-            }
+            const ageEl = state.ageElMap.get(it.id);
+            if (!ageEl) continue;
+            const m = Math.floor(Math.max(0, now - it.dateMs) / 60000);
+            ageEl.textContent = (m < 1) ? "ahora" : (m < 60 ? `${m}m` : fmtAge(it.dateMs));
           }
         }
         if (document.activeElement === els.headline || document.activeElement === els.template || document.activeElement === els.hashtags || document.activeElement === els.sourceUrl){
@@ -2241,10 +2320,12 @@ Fuente:
     const prevDelay = cur?.delayMs || 0;
     const nextDelay = prevDelay ? Math.min(prevDelay * 2, 10 * 60 * 1000) : 30 * 1000;
     state.backoff.set(feedUrl, { delayMs: nextDelay, untilMs: nowMs() + nextDelay });
+    saveBackoffThrottled(); // ✅ persistimos backoff
   }
 
   function resetBackoff(){
     state.backoff.clear();
+    saveBackoffThrottled();
   }
 
   /* ───────────────────────────── SW MAINTENANCE + SELF-HEAL ───────────────────────────── */
@@ -2349,6 +2430,8 @@ Fuente:
       localStorage.removeItem(LS_BUILD_ID);
       localStorage.removeItem(LS_MEMBER);
       localStorage.removeItem(LS_MEM_OVERRIDE);
+      localStorage.removeItem(LS_PROXY_HINT);
+      localStorage.removeItem(LS_BACKOFF);
       try{ localStorage.removeItem(LS_AUTH); }catch{}
       try{ sessionStorage.removeItem(LS_AUTH); }catch{}
     }catch{}
@@ -2540,17 +2623,37 @@ Fuente:
 
       if (signal.aborted || mySeq !== state.refreshSeq) throw new Error("Abort");
 
-      const seen = new Set();
+      // ✅ Dedup mejorado: 1) por URL limpia 2) por dominio+título en ventana corta
+      const seenUrl = new Set();
+      const seenTitle = new Map(); // key -> dateMs
       const dedup = [];
+
       for (const it of allItems){
         const k = it.link;
         if (!k) continue;
         const kk = cleanUrl(k);
-        if (seen.has(kk)) continue;
-        seen.add(kk);
+
+        const dom = domainOf(kk);
+        const titleKey = normSpace(String(it.title || "").toLowerCase());
+        const titleDomKey = (dom && titleKey) ? (dom + "|" + titleKey) : "";
+
+        if (seenUrl.has(kk)) continue;
+
+        if (titleDomKey){
+          const prevTs = seenTitle.get(titleDomKey);
+          if (Number.isFinite(prevTs)){
+            // ventana 20 min para evitar clones con urls distintas
+            if (Math.abs(Number(it.dateMs || 0) - prevTs) <= 20 * 60 * 1000){
+              continue;
+            }
+          }
+          seenTitle.set(titleDomKey, Number(it.dateMs || nowMs()));
+        }
+
+        seenUrl.add(kk);
 
         it.link = kk;
-        it.domain = domainOf(kk);
+        it.domain = dom;
         if (BOOT.enableFavicons) it.favicon = faviconForDomain(it.domain);
         dedup.push(it);
       }
@@ -2811,7 +2914,10 @@ Fuente:
       s.async = true;
       s.defer = true;
       s.onload = () => resolve(true);
-      s.onerror = () => resolve(false);
+      s.onerror = () => {
+        try{ updateMemberUi("❌ No se pudo cargar Google GIS (gsi/client). Revisa red o bloqueadores."); }catch{}
+        resolve(false);
+      };
       document.head.appendChild(s);
     });
   }
@@ -3203,6 +3309,8 @@ Fuente:
 
     loadUsed();
     loadCaches();
+    loadProxyHints(); // ✅
+    loadBackoff();    // ✅
 
     state.feeds = loadFeeds();
     enforceEnabledFeedsLimit();

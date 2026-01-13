@@ -1,5 +1,5 @@
-/* sw.js — News → Tweet Template Panel (tnp-v4.1.3) — PWA Service Worker (AUTO-UPDATE REAL, HARDENED)
-   ✅ Alineado con app.js (tnp-v4.1.3 / 2026-01-12c)
+/* sw.js — News → Tweet Template Panel — PWA Service Worker (AUTO-UPDATE REAL, HARDENED)
+   ✅ Alineado con app.js (tnp-v4.2.0 / 2026-01-12d)
    ✅ GitHub Pages friendly: evita quedarte pegado con app.js viejo
    ✅ NAV/HTML: Network-first (cache fallback)
    ✅ Shell CRÍTICO (index/app/styles/manifest): Network-first + cache:"reload"
@@ -11,6 +11,7 @@
    ✅ skipWaiting + clients.claim
    ✅ message: SKIP_WAITING / CLEAR_CACHES
    ✅ Anti-explosión: normaliza cache-key quitando ?__tnp= y ?v= (y otros cb comunes)
+   ✅ Precache best-effort: member.json + monetization.json (y rutas variantes) sin romper si faltan
 */
 
 "use strict";
@@ -43,7 +44,14 @@ const SHELL_ASSETS = [
 
   // Config opcional (si existe). No rompe si falta.
   "./config/boot-config.js",
+
+  // ✅ Membership / monetización: probamos varias rutas (best-effort)
+  "./member.json",
+  "./members.json",
+  "./monetization.json",
+  "./config/member.json",
   "./config/members.json",
+  "./config/monetization.json",
 
   "./assets/icons/favicon-32.png",
   "./assets/icons/apple-touch-icon-152.png",
@@ -152,8 +160,8 @@ function isImageLike(reqUrl) {
 
 /* ───────────────────────────── CACHE KEY NORMALIZATION ─────────────────────────────
    IMPORTANT:
-   - index.html suele cargar app.js con `?v=...` para bustear caché (GH Pages).
-   - Si NO normalizamos `v`, se crean MIL entradas (una por build).
+   - index.html suele cargar app.js con `?v=...` o app.js mete `?__tnp=...`
+   - Si NO normalizamos, se crean MIL entradas
 */
 function normalizeCacheKeyRequest(req) {
   try {
@@ -255,7 +263,7 @@ async function cacheFirst(req, cacheName, timeoutMs = 12000, fetchCacheMode = "n
   }
 }
 
-// Terceros (Google GIS, etc.) => NO cache: evita “pegado” y evita llenar CACHE_RUNTIME con opaque
+// Terceros (Google GIS, etc.) => NO cache: evita “pegado” y evita llenar caches con opaque
 async function networkOnly(req, timeoutMs = 12000, fetchCacheMode = "no-store") {
   const { ctrl, cancel } = withTimeout(timeoutMs);
   try {
