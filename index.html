@@ -1,8 +1,11 @@
 <!-- index.html — TNP v4.2.0 (COMPAT app.js v4.2.0 AUTH+MEMBERSHIP) — CLEAN + NO INLINE CSS DUPES
-  ✅ 100% compatible con app.js v4.2.0 (IDs + modal feeds + ticker + X mock + botones)
-  ✅ Carga /config/boot-config.js ANTES de app.js
+  ✅ 100% compatible con app.js v4.2.0 (IDs + modales + ticker + X mock + botones)
+  ✅ Evita “doble ocultación”: modales/gates usan SOLO .hidden (no hidden attr)
+  ✅ AUTH: Login Google (GIS) + Gate opcional
+  ✅ MEMBERSHIP: FREE / PRO / ELITE (modal “Planes”)
   ✅ Cache-bust con BUILD_TAG + SW updateViaCache:"none" + Repair
-  ✅ Sin “doble ocultación” problemática: lo que maneja app.js usa hidden + .hidden de forma consistente
+  ✅ Carga /config/boot-config.js ANTES de app.js
+  ✅ Ko-fi en topbar
 -->
 <!doctype html>
 <html lang="es" data-theme="dark">
@@ -47,12 +50,28 @@
 
   <title>News → Tweet Template Panel</title>
 
-  <!-- Google Identity Services (Login Google). app.js lo usa si googleClientId existe -->
+  <!-- Google Identity Services (Login Google). app.js lo usa si auth.enabled=true -->
   <script async defer src="https://accounts.google.com/gsi/client"></script>
 </head>
 
 <body>
   <a class="skipLink" href="#main">Saltar a contenido</a>
+
+  <!-- AUTH GATE (app.js lo mostrará/ocultará; por defecto oculto SOLO por .hidden) -->
+  <div id="authGate" class="authGate hidden" aria-hidden="true">
+    <div class="authGate__panel" role="dialog" aria-label="Acceso requerido">
+      <div class="authGate__title">Inicia sesión para usar el panel</div>
+      <div class="authGate__sub">
+        Acceso con Google. Tu plan (FREE/PRO/ELITE) se aplica automáticamente.
+        <br/>Si estás en modo demo, el plan puede venir de <span class="mono">localStorage tnp_membership_override</span>.
+      </div>
+      <div class="authGate__row">
+        <button id="btnLoginGate" class="btn btn--primary" type="button">Entrar con Google</button>
+        <button id="btnOpenPlansGate" class="btn" type="button">Ver planes</button>
+        <span id="authGateMsg" class="mini muted authGate__msg"></span>
+      </div>
+    </div>
+  </div>
 
   <!-- TOPBAR -->
   <header class="topbar" id="topbar">
@@ -82,7 +101,10 @@
         <button id="btnCheckUpdate" class="btn btn--sm" type="button">Update</button>
         <button id="btnHardReset" class="btn btn--danger btn--sm" type="button">Reset</button>
 
-        <!-- Ko-fi (opcional; si prefieres que venga solo por config, puedes quitarlo) -->
+        <!-- Planes / Membresía -->
+        <button id="btnPricing" class="btn btn--sm" type="button" title="Ver planes FREE/PRO/ELITE">💎 Planes</button>
+
+        <!-- Ko-fi -->
         <a
           id="btnKofi"
           class="btn btn--sm"
@@ -94,8 +116,16 @@
       </div>
     </div>
 
-    <!-- app.js inyecta aquí el botón “Membresía” + pill -->
-    <div class="topbar__right" aria-label="Estado">
+    <div class="topbar__right" aria-label="Estado de sesión y plan">
+      <div id="authBox" class="row row--wrap authBox">
+        <span id="tierBadge" class="badge" title="Plan actual">FREE</span>
+        <span id="authUser" class="mini muted" title="Usuario">Sin sesión</span>
+        <button id="btnLogin" class="btn btn--sm" type="button">Entrar</button>
+        <button id="btnLogout" class="btn btn--sm" type="button" hidden>Salir</button>
+        <button id="btnUpgrade" class="btn btn--primary btn--sm" type="button">Mejorar</button>
+        <button id="btnManage" class="btn btn--sm" type="button" hidden>Gestionar</button>
+      </div>
+
       <div id="status" class="status" role="status" aria-live="polite">Listo</div>
     </div>
   </header>
@@ -192,8 +222,7 @@
 
                 <div id="xMockText" class="xMock__text"></div>
 
-                <!-- OJO: NO usar class="hidden" aquí (app.js solo alterna .hidden por atributo [hidden]) -->
-                <a id="xMockCard" class="xMock__card" href="#" target="_blank" rel="noopener noreferrer" hidden>
+                <a id="xMockCard" class="xMock__card hidden" href="#" target="_blank" rel="noopener noreferrer" aria-hidden="true">
                   <div id="xMockCardImg" class="xMock__cardImg"></div>
                   <div class="xMock__cardMeta">
                     <div id="xMockCardTitle" class="xMock__cardTitle"></div>
@@ -328,11 +357,10 @@
     </div>
   </main>
 
-  <!-- MODAL FEEDS (app.js lo controla) -->
+  <!-- MODAL FEEDS -->
   <div
     id="modal"
     class="modal hidden"
-    hidden
     aria-hidden="true"
     aria-modal="true"
     role="dialog"
@@ -381,12 +409,97 @@
     </div>
   </div>
 
+  <!-- MODAL MEMBERSHIP (Planes FREE/PRO/ELITE) -->
+  <div
+    id="membModal"
+    class="modal hidden"
+    aria-hidden="true"
+    aria-modal="true"
+    role="dialog"
+    aria-label="Planes de membresía"
+  >
+    <div class="modal__panel">
+      <div class="modal__head">
+        <div>
+          <div class="modal__title">Planes</div>
+          <div class="mini muted">FREE · PRO · ELITE — la app aplica límites y opciones según tu plan.</div>
+        </div>
+        <button id="btnCloseMembModal" class="btn btn--sm" type="button">Cerrar</button>
+      </div>
+
+      <div class="modal__body">
+        <div class="row row--wrap membTopRow">
+          <span class="badge" id="membCurrentBadge">Plan actual: FREE</span>
+          <span class="mini muted" id="membMsg"></span>
+          <div class="spacer"></div>
+          <button id="btnMembLogin" class="btn btn--sm" type="button">Entrar</button>
+          <button id="btnMembManage" class="btn btn--sm" type="button" hidden>Gestionar</button>
+        </div>
+
+        <div id="tierCards" class="tierGrid" aria-label="Tarjetas de planes">
+          <!-- fallback visual (app.js puede reemplazar/ajustar) -->
+          <div class="tierCard" data-tier="free">
+            <div class="tierCard__head">
+              <div class="tierCard__name">FREE</div>
+              <div class="tierCard__price">0€</div>
+            </div>
+            <ul class="tierCard__perks">
+              <li>RSS + ticker básico</li>
+              <li>Resolver links (best-effort)</li>
+              <li>Copiar plantilla + abrir en X</li>
+            </ul>
+            <div class="tierCard__cta">
+              <button class="btn btn--sm" type="button" data-tier-choose="free">Usar FREE</button>
+            </div>
+          </div>
+
+          <div class="tierCard" data-tier="pro">
+            <div class="tierCard__head">
+              <div class="tierCard__name">PRO</div>
+              <div class="tierCard__price">4.99€/mes</div>
+            </div>
+            <ul class="tierCard__perks">
+              <li>Más feeds + más items</li>
+              <li>Auto-refresh más rápido</li>
+              <li>Más imágenes/OG + cachés</li>
+            </ul>
+            <div class="tierCard__cta">
+              <button class="btn btn--primary btn--sm" type="button" data-tier-choose="pro">Mejorar a PRO</button>
+            </div>
+          </div>
+
+          <div class="tierCard" data-tier="elite">
+            <div class="tierCard__head">
+              <div class="tierCard__name">ELITE</div>
+              <div class="tierCard__price">9.99€/mes</div>
+            </div>
+            <ul class="tierCard__perks">
+              <li>Máximo rendimiento (límite alto)</li>
+              <li>Auto-refresh ultra</li>
+              <li>Más extracción OG</li>
+            </ul>
+            <div class="tierCard__cta">
+              <button class="btn btn--primary btn--sm" type="button" data-tier-choose="elite">Mejorar a ELITE</button>
+            </div>
+          </div>
+        </div>
+
+        <hr class="hr" />
+
+        <div class="mini muted">
+          Nota: en GitHub Pages, el plan “real” se confirma con backend (recomendado: Cloudflare Worker). En modo demo, prueba:
+          <span class="mono">localStorage.setItem("tnp_membership_override","pro")</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <noscript>
     <div class="noscript">Necesitas JavaScript para usar esta app.</div>
   </noscript>
 
   <!-- Banner de reparación (aparece si la app no “engancha” por caché/SW viejo) -->
-  <div id="bootDiag" class="bootDiag hidden" hidden aria-hidden="true">
+  <div id="bootDiag" class="bootDiag hidden" aria-hidden="true">
     <div class="bootDiag__title">⚠️ La app no ha arrancado (probable caché / Service Worker)</div>
     <div class="bootDiag__msg">
       Si ves que ningún botón responde o no se refresca nada, suele ser porque el navegador está sirviendo un <b>app.js viejo</b> desde caché.
@@ -422,21 +535,17 @@
       function setStatusSafe(msg) {
         try { if (statusEl) statusEl.textContent = msg; } catch {}
       }
-
       function showDiag() {
         try {
           if (!bootDiag) return;
           bootDiag.classList.remove("hidden");
-          bootDiag.hidden = false;
           bootDiag.setAttribute("aria-hidden", "false");
         } catch {}
       }
-
       function hideDiag() {
         try {
           if (!bootDiag) return;
           bootDiag.classList.add("hidden");
-          bootDiag.hidden = true;
           bootDiag.setAttribute("aria-hidden", "true");
         } catch {}
       }
