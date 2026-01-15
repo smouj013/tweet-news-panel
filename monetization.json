@@ -24,5 +24,26 @@
     "showSupportBadge": true,
     "supportBadgeText": "Apoya el proyecto ☕",
     "supportUrl": "https://ko-fi.com/global_eye"
-  }
+  },
+  "ads": {
+    "enabled": true,
+    "provider": "house",
+    "showForTiers": [
+      "free"
+    ],
+    "labelText": "Anuncio/Apoyo (solo FREE). En PRO/ELITE no sale.",
+    "adsense": {
+      "client": "",
+      "slot": "",
+      "format": "auto",
+      "fullWidthResponsive": true
+    }
+  },
+  "houseAds": [
+    {
+      "title": "GlobalEyeTV — Apóyalo ☕",
+      "tag": "Sponsor",
+      "text": "Si este panel te ahorra tiempo, apóyalo con un café o pásate a membresía para quitar anuncios."
+    }
+  ]
 }
