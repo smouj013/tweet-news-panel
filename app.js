@@ -18,438 +18,7 @@
     const tag = `${APP_VERSION}:${BUILD_ID}`;
     if (window.__TNP_APP_LOADED__?.tag === tag) return;
     window.__TNP_APP_LOADED__ = { tag, at: Date.now() };
-  
-  // ✅ Motion boot: entrada suave sin “pantalla en blanco” si algo falla.
-  //    - NO forzamos preload global aquí.
-  //    - El preload se activa SOLO cuando existe el Boot Splash.
-  //    - Fail-safe: si por cualquier razón queda preload activo sin splash, lo quitamos.
-  (function preloadFailSafe(){
-    try{
-      setTimeout(() => {
-        try{
-          if (!document.getElementById("tnpBootSplash")){
-            document.documentElement.classList.remove("tnp-preload");
-          }
-        }catch{}
-      }, 1800);
-    }catch{}
-  })();
-
-  function ensureMotionCss(){
-    try{
-      if (document.getElementById("tnpMotionCss")) return;
-      const css = `
-        /* ── TNP Motion Boot (auto-inyectado por app.js) ───────────────────────── */
-        .topbar, .ticker, .layout{ transition: opacity .45s ease, transform .45s ease; }
-        html.tnp-preload .topbar,
-        html.tnp-preload .ticker,
-        html.tnp-preload .layout{ opacity:0; transform: translateY(10px); }
-
-        /* Boot splash */
-        .tnpBootSplash{
-          position:fixed; inset:0; z-index:9999;
-          display:flex; align-items:center; justify-content:center;
-          background: rgba(7,10,18,0.92);
-          backdrop-filter: blur(10px);
-        }
-        .tnpBootSplash__card{
-          width:min(520px, calc(100vw - 40px));
-          padding: 18px 18px 16px;
-          border-radius: 16px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.06);
-          box-shadow: 0 14px 40px rgba(0,0,0,0.55);
-        }
-        .tnpBootSplash__row{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
-        .tnpBootSplash__title{ font-weight: 800; letter-spacing: .2px; }
-        .tnpBootSplash__mini{ opacity:.72; font-size: 12px; }
-        .tnpBootSplash__msg{ margin-top: 10px; opacity:.88; font-size: 13px; }
-        .tnpBootSplash__bar{
-          margin-top: 12px; height: 10px; border-radius: 999px;
-          background: rgba(255,255,255,0.10); overflow:hidden;
-          border: 1px solid rgba(255,255,255,0.12);
-        }
-        .tnpBootSplash__bar > i{
-          display:block; height:100%; width: 18%;
-          background: rgba(29,155,240,0.55);
-          border-right: 1px solid rgba(255,255,255,0.18);
-          transform: translateX(-30%);
-          animation: tnpBootBar 1.15s ease-in-out infinite;
-        }
-        @keyframes tnpBootBar{
-          0%{ transform: translateX(-35%); }
-          50%{ transform: translateX(420%); }
-          100%{ transform: translateX(420%); }
-        }
-        .tnpBootSplash--out{ opacity:0; transform: translateY(-6px); transition: opacity .35s ease, transform .35s ease; }
-
-        /* Entrada suave de rows solo en el primer render */
-        .newsItem.tnp-enter{ opacity:0; transform: translateY(8px); animation: tnpEnter .44s ease forwards; }
-        @keyframes tnpEnter{ to{ opacity:1; transform:none; } }
-
-        /* Ad dock (FREE) */
-        .tnpAdDock{
-          position: fixed; right: 14px; bottom: 14px; z-index: 1200;
-          width: min(360px, calc(100vw - 28px));
-          opacity: 0; transform: translateY(10px);
-          pointer-events: none;
-          transition: opacity .25s ease, transform .25s ease;
-        }
-        .tnpAdDock.is-on{ opacity:1; transform:none; pointer-events: auto; }
-        .tnpAdDock__card{
-          border-radius: 16px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.06);
-          box-shadow: 0 14px 40px rgba(0,0,0,0.55);
-          overflow:hidden;
-        }
-        .tnpAdDock__head{
-          display:flex; align-items:center; justify-content:space-between; gap:10px;
-          padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.10);
-          background: rgba(255,255,255,0.03);
-        }
-        .tnpAdDock__title{ font-weight: 800; font-size: 13px; opacity: .92; }
-        .tnpAdDock__btns{ display:flex; gap:8px; }
-        .tnpAdDock__btn{
-          width: 28px; height: 28px; border-radius: 10px;
-          border: 1px solid rgba(255,255,255,0.16);
-          background: rgba(255,255,255,0.06);
-          color: rgba(231,233,234,0.92);
-          cursor: pointer;
-        }
-        .tnpAdDock__body{ padding: 12px; }
-        .tnpAdDock__meta{ font-size: 12px; opacity: .74; margin-bottom: 8px; }
-        .tnpAdDock__ctaRow{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-        .tnpAdDock__ctaRow a{ text-decoration:none; }
-
-        @media (prefers-reduced-motion: reduce){
-          .topbar, .ticker, .layout, .tnpAdDock{ transition:none !important; }
-          html.tnp-preload .topbar,
-          html.tnp-preload .ticker,
-          html.tnp-preload .layout{ opacity:1 !important; transform:none !important; }
-          .tnpBootSplash__bar > i{ animation:none !important; }
-          .newsItem.tnp-enter{ animation:none !important; opacity:1 !important; transform:none !important; }
-        }
-      `;
-      const st = document.createElement("style");
-      st.id = "tnpMotionCss";
-      st.textContent = css;
-      (document.head || document.documentElement).appendChild(st);
-    }catch{}
-  }
-
-  ensureMotionCss();
-
-  function createBootSplash(){
-    try{
-      if (!document.body) return { step:()=>{}, finish:()=>{} };
-      try{ document.documentElement.classList.add("tnp-preload"); }catch{}
-      let el = document.getElementById("tnpBootSplash");
-      if (!el){
-        el = document.createElement("div");
-        el.id = "tnpBootSplash";
-        el.className = "tnpBootSplash";
-        // Fallback inline styles (por si algo impide inyectar CSS)
-        try{ el.style.cssText = "position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(7,10,18,0.92)"; }catch{}
-        el.innerHTML = `
-          <div class="tnpBootSplash__card" role="status" aria-live="polite">
-            <div class="tnpBootSplash__row">
-              <div class="tnpBootSplash__title">TNP</div>
-              <div class="tnpBootSplash__mini">Cargando…</div>
-            </div>
-            <div class="tnpBootSplash__msg" id="tnpBootMsg">Preparando panel…</div>
-            <div class="tnpBootSplash__bar" aria-hidden="true"><i></i></div>
-          </div>
-        `;
-        document.body.appendChild(el);
-        // Fallback card style
-        try{
-          const card = el.querySelector(".tnpBootSplash__card");
-          if (card) card.style.cssText = "width:min(520px,calc(100vw - 40px));padding:18px 18px 16px;border-radius:16px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);box-shadow:0 14px 40px rgba(0,0,0,0.55)";
-        }catch{}
-      }
-      const mini = el.querySelector(".tnpBootSplash__mini");
-      const msgEl = el.querySelector("#tnpBootMsg");
-
-      let done = false;
-      const t0 = Date.now();
-      const minVisibleMs = 650;
-
-      const api = {
-        step(text, pct){
-          try{
-            if (done) return;
-            if (mini) mini.textContent = (typeof pct === "number" && isFinite(pct)) ? `Cargando… ${Math.max(0, Math.min(99, Math.round(pct)))}%` : "Cargando…";
-            if (msgEl && text) msgEl.textContent = String(text);
-          }catch{}
-        },
-        finish(){
-          try{
-            if (done) return;
-            done = true;
-            const dt = Date.now() - t0;
-            const wait = Math.max(0, minVisibleMs - dt);
-            setTimeout(() => {
-              try{
-                el.classList.add("tnpBootSplash--out");
-                // Activa entrada de UI
-                try{ document.documentElement.classList.remove("tnp-preload"); }catch{}
-                setTimeout(() => { try{ el.remove(); }catch{} }, 420);
-              }catch{}
-            }, wait);
-          }catch{}
-        }
-      };
-      return api;
-    }catch{
-      return { step:()=>{}, finish:()=>{} };
-    }
-  }
-
-  // Monetización / Ads / Support (config via monetization.json)
-  async function loadMonetizationJson(){
-    try{
-      if (!state || !state.monetization) return null;
-      if (state.monetization.loaded) return state.monetization.cfg;
-      let cfg = null;
-      try{
-        const r = await fetch("./monetization.json", { cache:"no-store" });
-        if (r && r.ok) cfg = await r.json();
-      }catch{}
-      state.monetization.cfg = cfg;
-      state.monetization.loaded = true;
-
-      // Web Monetization meta (opcional)
-      try{
-        const wm = cfg && cfg.webMonetization ? cfg.webMonetization : null;
-        if (wm && wm.enabled && wm.autoInjectMeta && wm.paymentPointer){
-          const name = wm.metaTagName || "monetization";
-          let meta = document.querySelector(`meta[name="${name}"]`);
-          if (!meta){
-            meta = document.createElement("meta");
-            meta.setAttribute("name", name);
-            document.head.appendChild(meta);
-          }
-          meta.setAttribute("content", String(wm.paymentPointer));
-        }
-      }catch{}
-
-      return cfg;
-    }catch{
-      try{ if (state && state.monetization){ state.monetization.loaded = true; } }catch{}
-      return null;
-    }
-  }
-
-  function readAdsDismissUntil(){
-    try{
-      const v = Number(localStorage.getItem("tnp_ads_dismiss_until_ms") || 0);
-      return Number.isFinite(v) ? v : 0;
-    }catch{ return 0; }
-  }
-  function writeAdsDismissUntil(ms){
-    try{ localStorage.setItem("tnp_ads_dismiss_until_ms", String(ms)); }catch{}
-  }
-
-  function injectMonetizationUi(){
-    try{
-      if (!state || !state.monetization) return;
-      if (state.monetization.ui && state.monetization.ui.dock) return;
-
-      const topRight =
-        document.querySelector(".topbar__right") ||
-        document.querySelector(".topbar") ||
-        (document.getElementById("status")?.parentElement || null);
-
-      // Support badge (siempre que esté habilitado)
-      let btnSupport = document.getElementById("btnSupport");
-      if (!btnSupport){
-        btnSupport = document.createElement("a");
-        btnSupport.id = "btnSupport";
-        btnSupport.className = "btn btn--sm btn--x";
-        btnSupport.target = "_blank";
-        btnSupport.rel = "noopener noreferrer";
-        btnSupport.href = "https://ko-fi.com/global_eye";
-        btnSupport.textContent = "Apoya ☕";
-        btnSupport.style.marginLeft = "8px";
-        if (topRight) topRight.appendChild(btnSupport);
-      }
-
-      // Ad dock (solo FREE)
-      let dock = document.getElementById("tnpAdDock");
-      if (!dock){
-        dock = document.createElement("div");
-        dock.id = "tnpAdDock";
-        dock.className = "tnpAdDock";
-        dock.innerHTML = `
-          <div class="tnpAdDock__card" role="complementary" aria-label="Anuncio / Apoyo">
-            <div class="tnpAdDock__head">
-              <div class="tnpAdDock__title">Apoya / Sin anuncios</div>
-              <div class="tnpAdDock__btns">
-                <button class="tnpAdDock__btn" type="button" data-act="min" title="Minimizar" aria-label="Minimizar">–</button>
-                <button class="tnpAdDock__btn" type="button" data-act="close" title="Cerrar" aria-label="Cerrar">×</button>
-              </div>
-            </div>
-            <div class="tnpAdDock__body">
-              <div class="tnpAdDock__meta" id="tnpAdDockMeta">Cargando…</div>
-              <div id="tnpAdDockSlot"></div>
-              <div style="height:10px"></div>
-              <div class="tnpAdDock__ctaRow" id="tnpAdDockCtas"></div>
-            </div>
-          </div>
-        `;
-        document.body.appendChild(dock);
-
-        const onClose = () => {
-          try{
-            const until = Date.now() + 6*60*60*1000; // 6h
-            state.monetization.dismissUntilMs = until;
-            writeAdsDismissUntil(until);
-            dock.classList.remove("is-on");
-          }catch{}
-        };
-        const onMin = () => {
-          try{
-            dock.classList.remove("is-on");
-            const until = Date.now() + 30*60*1000; // 30m
-            state.monetization.dismissUntilMs = until;
-            writeAdsDismissUntil(until);
-          }catch{}
-        };
-
-        dock.querySelector('[data-act="close"]')?.addEventListener("click", onClose);
-        dock.querySelector('[data-act="min"]')?.addEventListener("click", onMin);
-      }
-
-      state.monetization.ui = { dock, btnSupport };
-    }catch{}
-  }
-
-  function updateMonetizationUi(){
-    try{
-      if (!state || !state.monetization) return;
-      const ui = state.monetization.ui;
-      if (!ui || !ui.dock) return;
-
-      const cfg = state.monetization.cfg || {};
-      const uiCfg = cfg.ui || {};
-      const donations = cfg.donations || {};
-      const ads = cfg.ads || {};
-
-      // support badge
-      if (ui.btnSupport){
-        const show = !!(uiCfg && uiCfg.showSupportBadge);
-        ui.btnSupport.style.display = show ? "" : "none";
-        ui.btnSupport.textContent = uiCfg.supportBadgeText ? String(uiCfg.supportBadgeText) : "Apoya ☕";
-        ui.btnSupport.href = uiCfg.supportUrl ? String(uiCfg.supportUrl) : (donations?.links?.kofi || "https://ko-fi.com/global_eye");
-      }
-
-      const tier = (state.member && state.member.tier) ? String(state.member.tier) : "free";
-      const showFor = asArray(ads.showForTiers, ["free"]).map(x => String(x||"").toLowerCase());
-      const enabled = !!ads.enabled;
-
-      const dismissUntil = state.monetization.dismissUntilMs || readAdsDismissUntil() || 0;
-      state.monetization.dismissUntilMs = dismissUntil;
-
-      const canShow = enabled && showFor.includes(String(tier).toLowerCase()) && (Date.now() > dismissUntil);
-
-      // No enseñes anuncios en tiers superiores
-      if (!canShow){
-        ui.dock.classList.remove("is-on");
-        return;
-      }
-
-      // Relleno contenido
-      const meta = ui.dock.querySelector("#tnpAdDockMeta");
-      const slot = ui.dock.querySelector("#tnpAdDockSlot");
-      const ctas = ui.dock.querySelector("#tnpAdDockCtas");
-
-      if (meta){
-        meta.textContent = (ads.labelText ? String(ads.labelText) : "Anuncio/Apoyo (solo FREE). Pásate a PRO/ELITE para ocultarlo.");
-      }
-      if (ctas){
-        ctas.innerHTML = "";
-        const supportUrl = (uiCfg.supportUrl || donations?.links?.kofi || "https://ko-fi.com/global_eye");
-        const a1 = document.createElement("a");
-        a1.className = "btn btn--sm btn--x";
-        a1.href = supportUrl;
-        a1.target = "_blank";
-        a1.rel = "noopener noreferrer";
-        a1.textContent = "Apoyar ☕";
-        ctas.appendChild(a1);
-
-        const a2 = document.createElement("button");
-        a2.className = "btn btn--sm";
-        a2.type = "button";
-        a2.textContent = "Quitar anuncios (Membresía)";
-        a2.addEventListener("click", () => { try{ setMemberModalOpen(true); }catch{} });
-        ctas.appendChild(a2);
-      }
-
-      // Provider: adsense o house
-      if (slot){
-        slot.innerHTML = "";
-        const provider = String(ads.provider || "house").toLowerCase();
-        if (provider === "adsense" && ads.adsense && ads.adsense.client && ads.adsense.slot){
-          const client = String(ads.adsense.client);
-          const adSlot = String(ads.adsense.slot);
-          // Script adsense (solo 1 vez)
-          if (!document.querySelector('script[data-tnp-adsense="1"]')){
-            const sc = document.createElement("script");
-            sc.async = true;
-            sc.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=" + encodeURIComponent(client);
-            sc.crossOrigin = "anonymous";
-            sc.setAttribute("data-tnp-adsense","1");
-            document.head.appendChild(sc);
-          }
-          const ins = document.createElement("ins");
-          ins.className = "adsbygoogle";
-          ins.style.display = "block";
-          ins.setAttribute("data-ad-client", client);
-          ins.setAttribute("data-ad-slot", adSlot);
-          ins.setAttribute("data-ad-format", String(ads.adsense.format || "auto"));
-          ins.setAttribute("data-full-width-responsive", String(ads.adsense.fullWidthResponsive !== false));
-          slot.appendChild(ins);
-          try{ (window.adsbygoogle = window.adsbygoogle || []).push({}); }catch{}
-        }else{
-          // House ad simple
-          const h = (Array.isArray(cfg.houseAds) && cfg.houseAds.length) ? cfg.houseAds[0] : null;
-          const box = document.createElement("div");
-          box.className = "panel";
-          box.style.margin = "0";
-          box.innerHTML = `
-            <div class="panel__head" style="padding:10px 10px 8px;">
-              <div class="panel__title panel__title--sm">${h?.title ? String(h.title) : "Apoya el proyecto"}</div>
-              <div class="mini muted">${h?.tag ? String(h.tag) : "Sponsor"}</div>
-            </div>
-            <div style="padding:10px;">
-              <div class="mini" style="opacity:.86; line-height:1.35;">${h?.text ? String(h.text) : "Si te sirve el panel, apóyalo con un café o pásate a membresía para quitar anuncios."}</div>
-            </div>
-          `;
-          slot.appendChild(box);
-        }
-      }
-
-      // Mostrar con pequeño delay para que no aparezca “de golpe”
-      if (!state.monetization.shownOnce){
-        state.monetization.shownOnce = true;
-        setTimeout(() => { try{ ui.dock.classList.add("is-on"); }catch{} }, 1100);
-      }else{
-        ui.dock.classList.add("is-on");
-      }
-    }catch{}
-  }
-
-  async function initMonetization(){
-    try{
-      if (!state || !state.monetization) return;
-      await loadMonetizationJson();
-      injectMonetizationUi();
-      updateMonetizationUi();
-    }catch{}
-  }
-
-}catch{}
+  }catch{}
 
   /* ───────────────────────────── TEMPLATE ───────────────────────────── */
   const DEFAULT_TEMPLATE =
@@ -614,7 +183,7 @@ Fuente:
 
   /* ───────────────────────────── BOOT CONFIG (/config/boot-config.js) ───────────────────────────── */
   const BOOT = (() => {
-    const c = (window.TNP_CONFIG || window.TNP_BOOT_CONFIG || window.__TNP_CONFIG__ || window.__TNP_BOOT__ || window.__TNP_BOOT_CONFIG__ || null);
+    const c = (window.TNP_CONFIG || window.TNP_BOOT_CONFIG || window.__TNP_CONFIG__ || null);
     const cfg = (c && typeof c === "object" && !Array.isArray(c)) ? c : {};
 
     const auth = asObject(cfg.auth, {});
@@ -1198,18 +767,6 @@ Fuente:
     items: [],
     filtered: [],
     selectedId: null,
-
-    // UX
-    hasRenderedOnce: false,
-    bootSplashShown: false,
-
-    monetization: {
-      loaded: false,
-      cfg: null,
-      ui: null,
-      dismissUntilMs: 0,
-      shownOnce: false,
-    },
 
     used: new Set(),
 
@@ -2198,17 +1755,11 @@ Fuente:
 
     const frag = document.createDocumentFragment();
 
-    let i = 0;
     for (const it of list){
       const row = document.createElement("div");
       row.className = "newsItem" + (state.used.has(it.id) ? " used" : "") + (it.id === state.selectedId ? " sel" : "");
       row.tabIndex = 0;
       row.dataset.id = it.id;
-
-      if (!state.hasRenderedOnce){
-        row.classList.add("tnp-enter");
-        row.style.animationDelay = `${Math.min(i, 14) * 28}ms`;
-      }
 
       const thumb = document.createElement("div");
       thumb.className = "thumb";
@@ -2312,11 +1863,9 @@ Fuente:
       });
 
       frag.appendChild(row);
-      i++;
     }
 
     els.newsList.appendChild(frag);
-    state.hasRenderedOnce = true;
   }
 
   function suggestHashtags(title, cat){
@@ -2984,9 +2533,6 @@ Fuente:
       setStatus("🔒 Login requerido. Abre ‘Membresía’ para iniciar sesión.");
       setMemberModalOpen(true);
       ensureGateOverlay();
-
-    // Monetización (ads/support) — best-effort
-    try{ initMonetization(); }catch{}
       return;
     }
 
@@ -3353,9 +2899,6 @@ Fuente:
       if (exp) exp.textContent = state.member.expMs ? ("tier exp: " + new Date(state.member.expMs).toLocaleString()) : "";
       if (box) box.textContent = msg ? String(msg) : "";
     }
-
-    // Actualiza UI de monetización cuando cambia tier/login
-    try{ updateMonetizationUi(); }catch{}
   }
 
   function ensureGsiScript(){
@@ -3748,14 +3291,8 @@ Fuente:
   async function init(){
     if (!uiOk()){
       console.error("Faltan elementos UI (revisa IDs en index.html)");
-      try{ document.documentElement.classList.remove("tnp-preload"); }catch{}
       return;
     }
-
-    // Boot splash (entrada suave)
-    const boot = createBootSplash();
-    try{ boot.step("Cargando configuración…", 10); }catch{}
-    const bootFailSafe = setTimeout(() => { try{ boot.finish(); }catch{} }, 4500);
 
     window.addEventListener("error", (e) => {
       try{
@@ -3775,8 +3312,6 @@ Fuente:
     loadProxyHints(); // ✅
     loadBackoff();    // ✅
 
-    try{ boot.step("Cargando fuentes…", 35); }catch{}
-
     state.feeds = loadFeeds();
     enforceEnabledFeedsLimit();
     saveFeeds();
@@ -3784,12 +3319,8 @@ Fuente:
     bindUI();
     updatePreview();
 
-    try{ boot.step("Preparando UI…", 55); }catch{}
-
     await attachSwMaintenance();
     await selfHealIfBuildChanged();
-
-    try{ boot.step("Sincronizando caché…", 72); }catch{}
 
     applyFilters();
     startAuto();
@@ -3802,20 +3333,11 @@ Fuente:
       try{ setTimeout(() => setMemberModalOpen(true), 250); }catch{}
     }
 
-    try{ boot.step("Actualizando titulares…", 88); }catch{}
-
-    refreshAll({ force:true, user:false })
-      .finally(() => {
-        try{ clearTimeout(bootFailSafe); boot.finish(); }catch{}
-      })
-      .catch(()=>{});
+    refreshAll({ force:true, user:false }).catch(()=>{});
   }
 
   init().catch((e) => {
     console.error(e);
-    try{ document.documentElement.classList.remove("tnp-preload"); }catch{}
-    try{ document.getElementById("tnpBootSplash")?.remove(); }catch{}
-    try{ showBootDiag(); }catch{}
     setStatus("❌ Error init (revisa consola)");
   });
 
